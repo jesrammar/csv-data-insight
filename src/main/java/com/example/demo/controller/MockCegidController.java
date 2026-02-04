@@ -4,10 +4,12 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpHeaders;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import java.nio.charset.StandardCharsets;
 
 @RestController
 @RequestMapping
@@ -226,18 +228,18 @@ public class MockCegidController {
 
     @GetMapping(value = "/export/customers.csv", produces = "text/csv")
     public ResponseEntity<String> exportCustomersCsv() {
-        String body = """
+        String body = "\uFEFF" + """
             customer_id,name,segment,country,status,last_activity
             C-1001,Distribuciones Atlas,Retail,ES,active,2026-02-03
             C-1002,Grupo Nébula,Hospitality,PT,active,2026-02-02
             C-1003,Logística Sur,Logistics,ES,pending,2026-01-30
             """;
-        return ResponseEntity.ok(body);
+        return csvAttachment("customers.csv", body);
     }
 
     @GetMapping(value = "/export/kpis.csv", produces = "text/csv")
     public ResponseEntity<String> exportKpisCsv() {
-        String body = """
+        String body = "\uFEFF" + """
             period,tenants,datasets_ingested,quality_score_avg,alerts
             2025-08,9,52,92.1,5
             2025-09,10,61,93.4,4
@@ -246,7 +248,14 @@ public class MockCegidController {
             2025-12,12,79,95.7,2
             2026-01,12,84,96.4,2
             """;
-        return ResponseEntity.ok(body);
+        return csvAttachment("kpis.csv", body);
+    }
+
+    private ResponseEntity<String> csvAttachment(String filename, String body) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(new MediaType("text", "csv", StandardCharsets.UTF_8));
+        headers.set(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"");
+        return new ResponseEntity<>(body, headers, HttpStatus.OK);
     }
 
     @GetMapping(value = "/demo", produces = MediaType.TEXT_HTML_VALUE)
@@ -602,11 +611,17 @@ public class MockCegidController {
                       <h3>Exportación CSV</h3>
                       <div class="endpoint">
                         <code>GET /export/customers.csv</code>
-                        <button class="btn" onclick="call('/export/customers.csv', 'csv-customers')">Probar</button>
+                        <div>
+                          <a class="btn" href="/export/customers.csv" download>Descargar</a>
+                          <button class="btn secondary" onclick="call('/export/customers.csv', 'csv-customers')">Ver</button>
+                        </div>
                       </div>
                       <div class="endpoint">
                         <code>GET /export/kpis.csv</code>
-                        <button class="btn" onclick="call('/export/kpis.csv', 'csv-kpis')">Probar</button>
+                        <div>
+                          <a class="btn" href="/export/kpis.csv" download>Descargar</a>
+                          <button class="btn secondary" onclick="call('/export/kpis.csv', 'csv-kpis')">Ver</button>
+                        </div>
                       </div>
                       <div id="csv-customers" class="result"></div>
                       <div id="csv-kpis" class="result"></div>
