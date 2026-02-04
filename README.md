@@ -1,36 +1,114 @@
-# csv-data-insight
+# CSV Data Insight
 
-Framework para **ingesta, limpieza, normalización y visualización** de datos a partir de **CSV heterogéneos**.  
-Permite al usuario subir cualquier dataset en CSV, transformarlo a un formato estándar, generar métricas automáticas y exponerlo a herramientas de BI como **Power BI, Superset o Metabase**.  
-Incluye de forma opcional un **chatbot en lenguaje natural** para consultas sobre los datos.
-
----
-
-## 🚀 Características
-
-- 📂 Ingesta de múltiples CSV de distintos contextos.  
-- 🧹 Limpieza y normalización mediante reglas configurables.  
-- 📊 Generación automática de métricas y gráficos.  
-- 📈 Cuadros de mando interactivos (React + Vega-Lite/ECharts).  
-- 🔗 Integración directa con herramientas BI externas (PostgreSQL).  
-- 🤖 Chat NL→SQL (opcional).
+Plataforma para **ingesta, limpieza, normalización y publicación de datos** a partir de CSV heterogéneos.  
+Entrega datasets listos para BI (Power BI, Superset, Metabase) y permite demostrar el flujo completo incluso sin credenciales reales.
 
 ---
 
-## 🧱 Arquitectura
+## Highlights
 
-- **Backend (Java, Spring Boot):** orquesta datasets, mappings, calidad y persistencia en PostgreSQL.  
-- **Microservicio (Python, FastAPI):** procesamiento de datos, profiling y generación de especificaciones de gráficos automáticos.  
-- **Frontend (React):** interfaz ligera para carga de CSV, vista de calidad y dashboards.  
-- **Base de datos (PostgreSQL):** almacenamiento en capas `raw`, `core`, `mart`, `audit`, `meta`.
+- Pipeline completo: **ingesta → calidad → publicación BI**.  
+- Endpoints **BI‑friendly** (JSON plano + CSV).  
+- **Swagger local** para demo rápida.  
+- Modo **mock** para presentar sin bloqueos.
 
 ---
 
-## 📦 Quickstart
+## Demo Local (sin credenciales)
 
-Clona el repositorio y levanta los servicios con Docker Compose:
+Arranca la app:
 
 ```bash
-git clone https://github.com/jesrammar/csv-data-insight.git
-cd csv-data-insight
-docker compose -f infra/docker-compose.yml up --build
+mvn spring-boot:run
+```
+
+Abre el panel:
+
+```
+http://localhost:8080/demo
+```
+
+Documentación local (Swagger):
+
+```
+http://localhost:8080/swagger-ui/index.html
+```
+
+OpenAPI JSON:
+
+```
+http://localhost:8080/v3/api-docs
+```
+
+---
+
+## Endpoints clave
+
+**Flujo core**
+
+```
+GET /demo/health
+GET /demo/flow
+GET /tokenprovider/Token
+GET /storage/api/V1/storages/GetSASTokenLR
+GET /datasource/api/V2/datasources/tenant/{providerId}
+```
+
+**BI listo (JSON plano)**
+
+```
+GET /bi/customers
+GET /bi/kpis
+GET /bi/alerts
+```
+
+**Exportación CSV (Power BI)**
+
+```
+GET /export/customers.csv
+GET /export/kpis.csv
+```
+
+---
+
+## Integración real (Cegid)
+
+1. Activa tu **Subscription Key** en el portal de Cegid.  
+2. Obtén **api‑key‑id** y **api‑key‑secret** (si aplica).  
+3. Desactiva el mock:
+
+```yaml
+cegid:
+  mock:
+    enabled: false
+```
+
+Cuando tengas credenciales reales, el flujo es:
+
+```
+Token Provider → SAS Token → Datasources/Collections → Publicación BI
+```
+
+---
+
+## Arquitectura (visión)
+
+- **Backend (Java, Spring Boot)**: orquesta datasets, calidad y persistencia.  
+- **Microservicio (Python, FastAPI)**: profiling, métricas y especificaciones gráficas.  
+- **Frontend (React)**: carga de CSV, calidad y dashboards.  
+- **PostgreSQL**: capas `raw`, `core`, `mart`, `audit`, `meta`.
+
+---
+
+## Roadmap corto
+
+- Conector real a Cegid con flujo completo.  
+- Programación de ingestas (schedulers).  
+- Panel de calidad con alertas y tendencias.  
+- Exportación directa a Power BI datasets.
+
+---
+
+## Licencia
+
+MIT — ver `LICENSE`.

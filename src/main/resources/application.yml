@@ -1,0 +1,5 @@
+cegid:
+  base-url: https://api.cegid.com/cda-customers-00
+  subscription-key: ${CEGID_SUBSCRIPTION_KEY:}
+  mock:
+    enabled: true
