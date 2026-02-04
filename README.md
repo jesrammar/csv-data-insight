@@ -42,6 +42,39 @@ http://localhost:8080/v3/api-docs
 
 ---
 
+## Vista rápida
+
+![Demo Preview](docs/demo-preview.svg)
+
+---
+
+## Power BI Quick Connect
+
+### Opción A — JSON (Web)
+1. Power BI Desktop → **Obtener datos** → **Web**.  
+2. URL: `http://localhost:8080/bi/customers`  
+3. Repite con:
+   - `http://localhost:8080/bi/kpis`
+   - `http://localhost:8080/bi/alerts`
+
+### Opción B — CSV (Web)
+1. Power BI Desktop → **Obtener datos** → **Web**.  
+2. URL: `http://localhost:8080/export/kpis.csv`  
+3. Repite con:
+   - `http://localhost:8080/export/customers.csv`
+
+---
+
+## Demo Script
+
+Guion listo para presentar en 3–5 minutos:
+
+```
+docs/demo-script.md
+```
+
+---
+
 ## Endpoints clave
 
 **Flujo core**
