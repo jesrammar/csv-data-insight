@@ -44,7 +44,7 @@ http://localhost:8080/v3/api-docs
 
 ## Vista rápida
 
-![Demo Preview](docs/demo-preview.svg)
+![Demo Preview](docs/demo-preview.png)
 
 ---
 
