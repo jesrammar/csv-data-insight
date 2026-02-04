@@ -1,0 +1,12 @@
+﻿services:
+  app:
+    image: ghcr.io/${IMAGE_OWNER:-jesrammar}/csv-data-insight:latest
+    container_name: csv-data-insight
+    ports:
+      - "8080:8080"
+    environment:
+      CEGID_SUBSCRIPTION_KEY: ${CEGID_SUBSCRIPTION_KEY:-}
+      CEGID_MOCK_ENABLED: ${CEGID_MOCK_ENABLED:-true}
+      CEGID_BASE_URL: ${CEGID_BASE_URL:-https://api.cegid.com/cda-customers-00}
+      JAVA_OPTS: ${JAVA_OPTS:-}
+    restart: unless-stopped
