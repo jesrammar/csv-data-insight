@@ -1,0 +1,32 @@
+server:
+  port: 8080
+
+spring:
+  datasource:
+    url: jdbc:postgresql://postgres:5432/enterpriseiq
+    username: enterpriseiq
+    password: enterpriseiq
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+app:
+  jwt:
+    secret: "change-this-in-prod-please-change-this-in-prod"
+    expiration-minutes: 60
+  storage:
+    imports: ./storage/imports
+    reports: ./storage/reports
+  scheduler:
+    import-fixed-delay-ms: 120000
+
+logging:
+  level:
+    com.asecon.enterpriseiq: INFO
+
+cors:
+  allowed-origins: "http://localhost:5173"

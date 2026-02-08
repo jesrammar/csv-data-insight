@@ -1,147 +1,60 @@
-# CSV Data Insight
+# EnterpriseIQ (TFG Demo)
 
-Plataforma para **ingesta, limpieza, normalización y publicación de datos** a partir de CSV heterogéneos.  
-Entrega datasets listos para BI (Power BI, Superset, Metabase) y permite demostrar el flujo completo incluso sin credenciales reales.
+Plataforma demo para ASECON con multiempresa, importaci�n CSV, KPIs mensuales y reportes HTML.
 
----
+## Stack
+- Backend: Java 21 + Spring Boot 3 (Maven), Spring Web/Security/Data JPA/Validation
+- DB: PostgreSQL
+- Migraciones: Flyway
+- Frontend: React + TypeScript (Vite) + React Router + TanStack Query
+- Auth: JWT (access token)
+- Infra: Docker + docker-compose
 
-## Highlights
+## Arquitectura (resumen)
+- Backend Spring Boot expone API REST con JWT y autorizaci�n por rol.
+- PostgreSQL almacena usuarios, empresas, imports, staging, transacciones, KPIs, alertas y reportes.
+- Flyway crea esquema y carga datos seed (ADMIN, CONSULTOR, CLIENTE y 2 empresas).
+- Importaciones CSV se suben por API (multipart) y se guardan en filesystem.
+- Scheduler procesa imports PENDING, valida, carga staging y normaliza transacciones.
+- Servicio de KPIs recalcula m�tricas mensuales y dispara alertas si net_flow < umbral.
+- Reportes se generan como HTML y se guardan en filesystem con metadata en DB.
+- Frontend React consume API, permite login, selecci�n de empresa, dashboard, imports y reportes.
+- Multi-tenant l�gico: cada tabla clave tiene `company_id` y acceso se valida por rol.
+- CORS configurado para frontend local.
 
-- Pipeline completo: **ingesta → calidad → publicación BI**.  
-- Endpoints **BI‑friendly** (JSON plano + CSV).  
-- **Swagger local** para demo rápida.  
-- Modo **mock** para presentar sin bloqueos.
+## CSV esperado
+Columnas obligatorias:
+- `txn_date` (YYYY-MM-DD)
+- `amount` (decimal; positivo=entrada, negativo=salida)
 
----
+Columnas opcionales:
+- `description` (string)
+- `counterparty` (string)
+- `balance_end` (decimal)
 
-## Demo Local (sin credenciales)
+Se permiten columnas extra y se ignoran.
 
-Arranca la app:
+Reglas de validaci�n:
+- Falta `txn_date` o `amount` -> ERROR
+- Fecha inv�lida -> WARNING (fila se salta)
+- amount no num�rico -> WARNING (fila se salta)
 
-```bash
-mvn spring-boot:run
-```
+## Credenciales seed
+- ADMIN: `admin@asecon.local` / `password`
+- CONSULTOR: `consultor@asecon.local` / `password`
+- CLIENTE: `cliente@acme.local` / `password`
 
-Abre el panel:
+## Levantar con Docker
+1. `docker-compose up --build`
+2. Backend en `http://localhost:8080`
+3. Frontend en `http://localhost:5173`
 
-```
-http://localhost:8080/demo
-```
+## Ejemplos CSV
+- `samples/sample-ok.csv`
+- `samples/sample-warnings.csv`
 
-Documentación local (Swagger):
+## API futuro
+La integraci�n con Cegid API no est� implementada; se considera conector futuro.
 
-```
-http://localhost:8080/swagger-ui/index.html
-```
-
-OpenAPI JSON:
-
-```
-http://localhost:8080/v3/api-docs
-```
-
----
-
-## Vista rápida
-
-![Demo Preview](docs/demo-preview.png)
-
----
-
-## Power BI Quick Connect
-
-### Opción A — JSON (Web)
-1. Power BI Desktop → **Obtener datos** → **Web**.  
-2. URL: `http://localhost:8080/bi/customers`  
-3. Repite con:
-   - `http://localhost:8080/bi/kpis`
-   - `http://localhost:8080/bi/alerts`
-
-### Opción B — CSV (Web)
-1. Power BI Desktop → **Obtener datos** → **Web**.  
-2. URL: `http://localhost:8080/export/kpis.csv`  
-3. Repite con:
-   - `http://localhost:8080/export/customers.csv`
-
----
-
-## Demo Script
-
-Guion listo para presentar en 3–5 minutos:
-
-```
-docs/demo-script.md
-```
-
----
-
-## Endpoints clave
-
-**Flujo core**
-
-```
-GET /demo/health
-GET /demo/flow
-GET /tokenprovider/Token
-GET /storage/api/V1/storages/GetSASTokenLR
-GET /datasource/api/V2/datasources/tenant/{providerId}
-```
-
-**BI listo (JSON plano)**
-
-```
-GET /bi/customers
-GET /bi/kpis
-GET /bi/alerts
-```
-
-**Exportación CSV (Power BI)**
-
-```
-GET /export/customers.csv
-GET /export/kpis.csv
-```
-
----
-
-## Integración real (Cegid)
-
-1. Activa tu **Subscription Key** en el portal de Cegid.  
-2. Obtén **api‑key‑id** y **api‑key‑secret** (si aplica).  
-3. Desactiva el mock:
-
-```yaml
-cegid:
-  mock:
-    enabled: false
-```
-
-Cuando tengas credenciales reales, el flujo es:
-
-```
-Token Provider → SAS Token → Datasources/Collections → Publicación BI
-```
-
----
-
-## Arquitectura (visión)
-
-- **Backend (Java, Spring Boot)**: orquesta datasets, calidad y persistencia.  
-- **Microservicio (Python, FastAPI)**: profiling, métricas y especificaciones gráficas.  
-- **Frontend (React)**: carga de CSV, calidad y dashboards.  
-- **PostgreSQL**: capas `raw`, `core`, `mart`, `audit`, `meta`.
-
----
-
-## Roadmap corto
-
-- Conector real a Cegid con flujo completo.  
-- Programación de ingestas (schedulers).  
-- Panel de calidad con alertas y tendencias.  
-- Exportación directa a Power BI datasets.
-
----
-
-## Licencia
-
-MIT — ver `LICENSE`.
+## TODO PDF
+El reporte se genera en HTML. Para PDF, se propone usar OpenHTMLtoPDF y exponer descarga.
