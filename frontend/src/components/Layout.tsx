@@ -1,4 +1,4 @@
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, NavLink, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { getCompanies } from '../api'
 import CompanySelector from './CompanySelector'
@@ -16,11 +16,18 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   return (
     <div>
       <div className="nav">
-        <strong>EnterpriseIQ</strong>
-        <Link to="/dashboard">Dashboard</Link>
-        <Link to="/imports">Imports</Link>
-        <Link to="/reports">Reports</Link>
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 12, alignItems: 'center' }}>
+        <span className="brand">EnterpriseIQ</span>
+        <NavLink to="/dashboard" className={({ isActive }) => (isActive ? 'active' : undefined)}>
+          Dashboard
+        </NavLink>
+        <NavLink to="/imports" className={({ isActive }) => (isActive ? 'active' : undefined)}>
+          Imports
+        </NavLink>
+        <NavLink to="/reports" className={({ isActive }) => (isActive ? 'active' : undefined)}>
+          Reports
+        </NavLink>
+        <div className="nav-actions">
+          <span className="pill">ASECON Platform</span>
           <CompanySelector companies={companies || []} />
           <button onClick={logout}>Salir</button>
         </div>

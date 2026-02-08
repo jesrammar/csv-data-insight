@@ -39,39 +39,59 @@ export default function ReportsPage() {
 
   return (
     <div>
-      <h2>Reportes</h2>
-      <div className="card" style={{ marginBottom: 16 }}>
-        <input value={period} onChange={(e) => setPeriod(e.target.value)} placeholder="YYYY-MM" />
-        <button onClick={handleGenerate}>Generar reporte</button>
-        {error && <p className="error">{error}</p>}
+      <div className="hero">
+        <div>
+          <h1 className="hero-title">Reportes mensuales</h1>
+          <p className="hero-sub">Genera informes en HTML listos para exportar a PDF.</p>
+        </div>
+        <div className="card soft">
+          <h3 style={{ marginTop: 0 }}>Estado del mes</h3>
+          <p className="hero-sub">Configura el periodo y dispara la generación.</p>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            <input value={period} onChange={(e) => setPeriod(e.target.value)} placeholder="YYYY-MM" />
+            <button onClick={handleGenerate}>Generar reporte</button>
+          </div>
+          {error && <p className="error">{error}</p>}
+        </div>
       </div>
-      <div className="card">
-        <table className="table">
-          <thead>
-            <tr>
-              <th>ID</th>
-              <th>Periodo</th>
-              <th>Formato</th>
-              <th>Status</th>
-              <th>Acciones</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(data || []).map((rep: any) => (
-              <tr key={rep.id}>
-                <td>{rep.id}</td>
-                <td>{rep.period}</td>
-                <td>{rep.format}</td>
-                <td>{rep.status}</td>
-                <td><button onClick={() => handleView(rep.id)}>Ver HTML</button></td>
+
+      <div className="card section">
+        <h3 style={{ marginTop: 0 }}>Historial</h3>
+        {!data?.length ? (
+          <div className="empty">No hay reportes todavía.</div>
+        ) : (
+          <table className="table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Periodo</th>
+                <th>Formato</th>
+                <th>Status</th>
+                <th>Acciones</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {(data || []).map((rep: any) => (
+                <tr key={rep.id}>
+                  <td>{rep.id}</td>
+                  <td>{rep.period}</td>
+                  <td>{rep.format}</td>
+                  <td>{rep.status}</td>
+                  <td>
+                    <button className="secondary" onClick={() => handleView(rep.id)}>
+                      Ver HTML
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
+
       {html && (
-        <div className="card" style={{ marginTop: 16 }}>
-          <h3>Vista HTML</h3>
+        <div className="card section">
+          <h3 style={{ marginTop: 0 }}>Vista HTML</h3>
           <div dangerouslySetInnerHTML={{ __html: html }} />
         </div>
       )}
