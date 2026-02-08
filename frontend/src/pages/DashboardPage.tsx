@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { getDashboard } from '../api'
+import KpiChart from '../components/KpiChart'
 
 function getSelectedCompanyId(): number | null {
   const value = localStorage.getItem('companyId')
@@ -35,6 +36,7 @@ export default function DashboardPage() {
   })
 
   const latest = data?.kpis?.[data?.kpis.length - 1]
+  const chartPoints = (data?.kpis || []).map((k: any) => ({ label: k.period, value: Number(k.netFlow) }))
 
   return (
     <div>
@@ -86,6 +88,11 @@ export default function DashboardPage() {
           {!data?.kpis?.length ? (
             <div className="empty">Sin datos todavía. Importa un CSV.</div>
           ) : (
+            <div style={{ marginBottom: 16 }}>
+              <KpiChart title="Net Flow (últimos 6 meses)" points={chartPoints} />
+            </div>
+          )}
+          {!data?.kpis?.length ? null : (
             <table className="table">
               <thead>
                 <tr>
