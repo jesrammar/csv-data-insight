@@ -1,16 +1,22 @@
 import { Link, NavLink, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { getCompanies } from '../api'
+import { clearTokens, getCompanies, logout } from '../api'
 import CompanySelector from './CompanySelector'
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate()
   const { data: companies } = useQuery({ queryKey: ['companies'], queryFn: getCompanies })
 
-  function logout() {
-    localStorage.removeItem('token')
-    navigate('/')
-    window.location.reload()
+  async function handleLogout() {
+    try {
+      await logout()
+    } catch {
+      // ignore network errors on logout
+    } finally {
+      clearTokens()
+      navigate('/')
+      window.location.reload()
+    }
   }
 
   return (
@@ -29,7 +35,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         <div className="nav-actions">
           <span className="pill">ASECON Platform</span>
           <CompanySelector companies={companies || []} />
-          <button onClick={logout}>Salir</button>
+          <button onClick={handleLogout}>Salir</button>
         </div>
       </div>
       <div className="container">{children}</div>

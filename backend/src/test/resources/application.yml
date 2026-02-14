@@ -1,11 +1,8 @@
-server:
-  port: 8080
-
 spring:
   datasource:
-    url: jdbc:postgresql://postgres:5432/enterpriseiq
-    username: enterpriseiq
-    password: enterpriseiq
+    url: jdbc:h2:mem:enterpriseiq_test;MODE=PostgreSQL;DB_CLOSE_DELAY=-1
+    username: sa
+    password:
   jpa:
     hibernate:
       ddl-auto: validate
@@ -13,24 +10,17 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
+  task:
+    scheduling:
+      enabled: false
 
 app:
   jwt:
-    secret: "change-this-in-prod-please-change-this-in-prod"
+    secret: "test-secret-test-secret-test-secret-1234"
     access-expiration-minutes: 60
     refresh-expiration-days: 30
     issuer: "enterpriseiq"
-  storage:
-    imports: ./storage/imports
-    reports: ./storage/reports
   scheduler:
     import-fixed-delay-ms: 120000
     token-cleanup-fixed-delay-ms: 86400000
     refresh-revoked-retention-days: 7
-
-logging:
-  level:
-    com.asecon.enterpriseiq: INFO
-
-cors:
-  allowed-origins: "http://localhost:5173"

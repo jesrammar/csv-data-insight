@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { login, setToken } from '../api'
+import { login, setTokens } from '../api'
 
 export default function LoginPage() {
   const [email, setEmail] = useState('admin@asecon.local')
@@ -11,7 +11,7 @@ export default function LoginPage() {
     setError('')
     try {
       const res = await login(email, password)
-      setToken(res.accessToken)
+      setTokens(res.accessToken, res.refreshToken)
       window.location.reload()
     } catch (err: any) {
       setError(err.message)
