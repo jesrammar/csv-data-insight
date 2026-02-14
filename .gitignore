@@ -1,4 +1,4 @@
-﻿# Compiled class file
+# Compiled class file
 *.class
 
 # Log file
@@ -46,3 +46,7 @@ replay_pid*
 
 # OS
 .DS_Store
+
+# Local artifacts
+DEMITO.png
+qc
