@@ -37,7 +37,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       VPS_HOST: ${{ secrets.VPS_HOST }}
-    if: ${{ env.VPS_HOST != '' }}
+      CEGID_SUBSCRIPTION_KEY: ${{ secrets.CEGID_SUBSCRIPTION_KEY }}
+    if: ${{ env.VPS_HOST != '' && env.CEGID_SUBSCRIPTION_KEY != '' }}
     steps:
       - name: Copy docker-compose.yml
         uses: appleboy/scp-action@v0.1.7
