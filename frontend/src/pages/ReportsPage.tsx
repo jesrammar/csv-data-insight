@@ -46,7 +46,7 @@ export default function ReportsPage() {
         </div>
         <div className="card soft">
           <h3 style={{ marginTop: 0 }}>Estado del mes</h3>
-          <p className="hero-sub">Configura el periodo y dispara la generación.</p>
+          <p className="hero-sub">Configura el periodo y dispara la generaciÃ³n.</p>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
             <input value={period} onChange={(e) => setPeriod(e.target.value)} placeholder="YYYY-MM" />
             <button onClick={handleGenerate}>Generar reporte</button>
@@ -58,7 +58,7 @@ export default function ReportsPage() {
       <div className="card section">
         <h3 style={{ marginTop: 0 }}>Historial</h3>
         {!data?.length ? (
-          <div className="empty">No hay reportes todavía.</div>
+          <div className="empty">No hay reportes todavÃ­a.</div>
         ) : (
           <table className="table">
             <thead>
