@@ -25,7 +25,7 @@ export default function ImportsPage() {
     try {
       await uploadImport(companyId, period, file)
       await queryClient.invalidateQueries({ queryKey: ['imports', companyId] })
-      setMessage('Import encolado, ser· procesado por el scheduler.')
+      setMessage('Import encolado, ser√° procesado por el scheduler.')
     } catch (err: any) {
       setMessage(err.message)
     }
@@ -35,7 +35,7 @@ export default function ImportsPage() {
     <div>
       <div className="hero">
         <div>
-          <h1 className="hero-title">ImportaciÛn de CSV</h1>
+          <h1 className="hero-title">Importaci√≥n de CSV</h1>
           <p className="hero-sub">Sube movimientos por periodo y deja que EnterpriseIQ valide y normalice.</p>
         </div>
         <div className="card soft">
@@ -59,7 +59,7 @@ export default function ImportsPage() {
       <div className="card section">
         <h3 style={{ marginTop: 0 }}>Historial de imports</h3>
         {!data?.length ? (
-          <div className="empty">No hay imports todavÌa.</div>
+          <div className="empty">No hay imports todav√≠a.</div>
         ) : (
           <table className="table">
             <thead>
