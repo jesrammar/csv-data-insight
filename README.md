@@ -1,25 +1,25 @@
 # EnterpriseIQ (TFG Demo)
 
-Plataforma demo para ASECON con multiempresa, importación CSV, KPIs mensuales y reportes HTML.
+Plataforma demo para ASECON con multiempresa, importaciï¿½n CSV, KPIs mensuales y reportes HTML.
 
 ## Stack
 - Backend: Java 21 + Spring Boot 3 (Maven), Spring Web/Security/Data JPA/Validation
 - DB: PostgreSQL
 - Migraciones: Flyway
 - Frontend: React + TypeScript (Vite) + React Router + TanStack Query
-- Auth: JWT (access token)
+- Auth: JWT (access token + refresh token con rotacion)
 - Infra: Docker + docker-compose
 
 ## Arquitectura (resumen)
-- Backend Spring Boot expone API REST con JWT y autorización por rol.
+- Backend Spring Boot expone API REST con JWT y autorizaciï¿½n por rol.
 - PostgreSQL almacena usuarios, empresas, imports, staging, transacciones, KPIs, alertas y reportes.
 - Flyway crea esquema y carga datos seed (ADMIN, CONSULTOR, CLIENTE y 2 empresas).
 - Importaciones CSV se suben por API (multipart) y se guardan en filesystem.
 - Scheduler procesa imports PENDING, valida, carga staging y normaliza transacciones.
-- Servicio de KPIs recalcula métricas mensuales y dispara alertas si net_flow < umbral.
+- Servicio de KPIs recalcula mï¿½tricas mensuales y dispara alertas si net_flow < umbral.
 - Reportes se generan como HTML y se guardan en filesystem con metadata en DB.
-- Frontend React consume API, permite login, selección de empresa, dashboard, imports y reportes.
-- Multi-tenant lógico: cada tabla clave tiene `company_id` y acceso se valida por rol.
+- Frontend React consume API, permite login, selecciï¿½n de empresa, dashboard, imports y reportes.
+- Multi-tenant lï¿½gico: cada tabla clave tiene `company_id` y acceso se valida por rol.
 - CORS configurado para frontend local.
 
 ## CSV esperado
@@ -34,10 +34,10 @@ Columnas opcionales:
 
 Se permiten columnas extra y se ignoran.
 
-Reglas de validación:
+Reglas de validaciï¿½n:
 - Falta `txn_date` o `amount` -> ERROR
-- Fecha inválida -> WARNING (fila se salta)
-- amount no numérico -> WARNING (fila se salta)
+- Fecha invï¿½lida -> WARNING (fila se salta)
+- amount no numï¿½rico -> WARNING (fila se salta)
 
 ## Credenciales seed
 - ADMIN: `admin@asecon.local` / `password`
@@ -54,7 +54,14 @@ Reglas de validación:
 - `samples/sample-warnings.csv`
 
 ## API futuro
-La integración con Cegid API no está implementada; se considera conector futuro.
+La integraciï¿½n con Cegid API no estï¿½ implementada; se considera conector futuro.
 
 ## TODO PDF
 El reporte se genera en HTML. Para PDF, se propone usar OpenHTMLtoPDF y exponer descarga.
+
+## Autenticacion (JWT)
+- Login: POST /api/auth/login devuelve ccessToken, efreshToken, ole, userId
+- Refresh: POST /api/auth/refresh rota el refresh token y entrega nuevos tokens
+- Logout: POST /api/auth/logout revoca access y refresh tokens
+
+El frontend guarda ambos tokens en localStorage y renueva el ccessToken automaticamente si el backend responde 401.
