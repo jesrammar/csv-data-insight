@@ -21,6 +21,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="app-shell">
+      <div className="ambient-orb orb-1" aria-hidden="true" />
+      <div className="ambient-orb orb-2" aria-hidden="true" />
+      <div className="ambient-orb orb-3" aria-hidden="true" />
       <aside className="side-nav">
         <div className="brand-stack">
           <div className="brand">EnterpriseIQ</div>
