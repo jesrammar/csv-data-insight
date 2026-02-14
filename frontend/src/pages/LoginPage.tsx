@@ -19,16 +19,27 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="container">
-      <div className="hero">
+    <div className="login-shell">
+      <div className="login-hero">
         <div>
           <h1 className="hero-title">EnterpriseIQ</h1>
           <p className="hero-sub">
-            Inteligencia financiera operativa para consultoras. Accede a KPIs, alertas e informes mensuales con control multiempresa.
+            Inteligencia financiera operativa para consultoras. KPIs, alertas e informes mensuales con control multiempresa.
           </p>
+          <div className="login-stats">
+            <div className="stat-card">
+              <span>+2.3M</span>
+              <small>movimientos analizados</small>
+            </div>
+            <div className="stat-card">
+              <span>98%</span>
+              <small>automatización de reporting</small>
+            </div>
+          </div>
         </div>
-        <div className="card fade-up">
-          <h2 style={{ marginTop: 0 }}>Ingreso seguro</h2>
+        <div className="card login-panel fade-up">
+          <div className="login-badge">Acceso seguro</div>
+          <h2 style={{ marginTop: 6 }}>Ingreso</h2>
           <p className="hero-sub">Usuarios demo: admin, consultor y cliente.</p>
           <form onSubmit={handleSubmit}>
             <div>
