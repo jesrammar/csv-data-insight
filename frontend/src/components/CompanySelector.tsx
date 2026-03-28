@@ -34,7 +34,13 @@ export default function CompanySelector({ companies }: { companies: Company[] })
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
       <span className={`badge ${planTone}`}>{plan}</span>
-      <select aria-label="Seleccionar empresa" value={selected} onChange={(e) => setSelected(Number(e.target.value))}>
+      <select
+        aria-label="Seleccionar empresa"
+        value={selected ?? ''}
+        disabled={companies.length === 0}
+        onChange={(e) => setSelected(Number(e.target.value))}
+      >
+        {companies.length === 0 ? <option value="">Sin empresas</option> : null}
         {companies.map((c) => (
           <option key={c.id} value={c.id}>
             {c.name}
