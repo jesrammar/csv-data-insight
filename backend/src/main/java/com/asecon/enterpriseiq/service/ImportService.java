@@ -23,7 +23,9 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVRecord;
 import org.apache.poi.ss.usermodel.DataFormatter;
@@ -31,10 +33,12 @@ import org.apache.poi.ss.usermodel.DateUtil;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.springframework.http.HttpStatus;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class ImportService {
@@ -62,7 +66,12 @@ public class ImportService {
         this.kpiService = kpiService;
         this.alertService = alertService;
         this.objectMapper = objectMapper;
-        this.importsRoot = Path.of(importsRoot);
+        this.importsRoot = Path.of(importsRoot).toAbsolutePath().normalize();
+        try {
+            Files.createDirectories(this.importsRoot);
+        } catch (IOException ex) {
+            throw new IllegalStateException("Cannot create imports storage dir: " + this.importsRoot, ex);
+        }
     }
 
     public ImportJob createImport(Long companyId, String period, MultipartFile file) throws IOException {
@@ -83,8 +92,25 @@ public class ImportService {
         Files.createDirectories(importsRoot);
         String ext = detectExtension(job.getOriginalFilename(), file.getContentType());
         String storageRef = "import-" + job.getId() + "-" + UUID.randomUUID() + ext;
-        Path target = importsRoot.resolve(storageRef);
-        file.transferTo(target.toFile());
+        Path target = importsRoot.resolve(storageRef).toAbsolutePath().normalize();
+        Files.createDirectories(target.getParent());
+        file.transferTo(target);
+
+        try {
+            requireTxnHeaders(target);
+        } catch (ResponseStatusException ex) {
+            try { Files.deleteIfExists(target); } catch (IOException ignored) {}
+            job.setStatus(ImportStatus.DEAD);
+            job.setProcessedAt(Instant.now());
+            job.setUpdatedAt(job.getProcessedAt());
+            job.setErrorCount(1);
+            job.setWarningCount(0);
+            job.setLastError(ex.getReason() != null ? ex.getReason() : ex.getMessage());
+            job.setErrorSummary("Invalid import file: " + job.getLastError());
+            importJobRepository.save(job);
+            throw ex;
+        }
+
         job.setStorageRef(storageRef);
         job.setUpdatedAt(Instant.now());
         importJobRepository.save(job);
@@ -267,6 +293,58 @@ public class ImportService {
         String name = filePath.getFileName().toString().toLowerCase();
         if (name.endsWith(".xlsx")) return readXlsx(filePath);
         return readCsv(filePath);
+    }
+
+    private void requireTxnHeaders(Path filePath) throws IOException {
+        Set<String> headers = readHeaders(filePath);
+        if (!headers.contains("txn_date") || !headers.contains("amount")) {
+            throw new ResponseStatusException(
+                HttpStatus.BAD_REQUEST,
+                "Formato incorrecto. Se esperan columnas: txn_date, amount (opcionales: description, counterparty, balance_end)."
+            );
+        }
+    }
+
+    private Set<String> readHeaders(Path filePath) throws IOException {
+        String name = filePath.getFileName().toString().toLowerCase();
+        if (name.endsWith(".xlsx")) return readXlsxHeaders(filePath);
+        return readCsvHeaders(filePath);
+    }
+
+    private Set<String> readCsvHeaders(Path filePath) throws IOException {
+        char delimiter = detectDelimiter(filePath);
+        try (BufferedReader reader = Files.newBufferedReader(filePath, StandardCharsets.UTF_8)) {
+            var parser = CSVFormat.DEFAULT.builder()
+                .setDelimiter(delimiter)
+                .setHeader()
+                .setSkipHeaderRecord(true)
+                .build()
+                .parse(reader);
+            return parser.getHeaderMap().keySet().stream()
+                .map((h) -> h == null ? "" : h.trim().toLowerCase())
+                .filter((h) -> !h.isBlank())
+                .collect(Collectors.toSet());
+        }
+    }
+
+    private Set<String> readXlsxHeaders(Path filePath) throws IOException {
+        try (InputStream is = Files.newInputStream(filePath); var wb = new XSSFWorkbook(is)) {
+            Sheet sheet = wb.getNumberOfSheets() > 0 ? wb.getSheetAt(0) : null;
+            if (sheet == null) return Set.of();
+            DataFormatter formatter = new DataFormatter();
+            Row headerRow = sheet.getRow(sheet.getFirstRowNum());
+            if (headerRow == null) return Set.of();
+            int lastCell = headerRow.getLastCellNum();
+            var out = new java.util.HashSet<String>();
+            for (int i = 0; i < lastCell; i++) {
+                String h = formatter.formatCellValue(headerRow.getCell(i));
+                if (h != null) {
+                    String norm = h.trim().toLowerCase();
+                    if (!norm.isBlank()) out.add(norm);
+                }
+            }
+            return out;
+        }
     }
 
     private List<Map<String, String>> readCsv(Path filePath) throws IOException {
