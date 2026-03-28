@@ -828,6 +828,17 @@ select:focus {
   align-items: center;
 }
 
+.segmented {
+  display: inline-flex;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 999px;
+  background: rgba(10, 16, 28, 0.42);
+  border: 1px solid rgba(96, 165, 250, 0.16);
+  box-shadow: var(--shadow-soft);
+  backdrop-filter: blur(12px);
+}
+
 .upload-panel {
   display: grid;
   grid-template-columns: 1.4fr 0.6fr;
