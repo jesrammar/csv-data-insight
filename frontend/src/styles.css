@@ -83,6 +83,22 @@ body {
   color: var(--ink);
 }
 
+body.body-client {
+  background:
+    radial-gradient(1200px 700px at 15% -10%, rgba(96, 165, 250, 0.18), transparent 60%),
+    radial-gradient(900px 600px at 110% 10%, rgba(20, 184, 166, 0.14), transparent 55%),
+    #0b1220;
+}
+
+body.body-client::before {
+  opacity: 0.35;
+}
+
+body.body-client::after {
+  opacity: 0.35;
+  animation: none;
+}
+
 body::before,
 body::after {
   content: "";
@@ -122,6 +138,32 @@ a {
   display: grid;
   grid-template-columns: 260px 1fr;
   min-height: 100vh;
+}
+
+.mode-client .ambient-orb {
+  opacity: 0.18;
+  filter: blur(42px);
+}
+
+.mode-client .top-title {
+  font-size: 14px;
+  letter-spacing: 0.4px;
+}
+
+.mode-client .card {
+  box-shadow: var(--shadow-soft);
+  border-color: rgba(96, 165, 250, 0.14);
+}
+
+.mode-client .card:hover {
+  transform: none;
+  box-shadow: var(--shadow-soft);
+  border-color: rgba(96, 165, 250, 0.2);
+}
+
+.mode-client .card:hover::before,
+.mode-client .card:hover::after {
+  opacity: 0.45;
 }
 
 .app-shell::before {
@@ -227,6 +269,14 @@ a {
 .side-links {
   display: grid;
   gap: 10px;
+}
+
+.nav-section {
+  margin: 12px 10px 2px;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(160, 195, 255, 0.65);
 }
 
 .nav-link {
@@ -512,6 +562,18 @@ a {
   background: rgba(29, 78, 216, 0.18);
   border: 1px solid rgba(96, 165, 250, 0.35);
   font-size: 12px;
+}
+
+.pill.pill-client {
+  background: rgba(20, 184, 166, 0.14);
+  border-color: rgba(20, 184, 166, 0.34);
+  color: rgba(184, 255, 244, 0.95);
+}
+
+.pill.pill-consultant {
+  background: rgba(29, 78, 216, 0.16);
+  border-color: rgba(96, 165, 250, 0.32);
+  color: rgba(230, 237, 248, 0.86);
 }
 
 button {
