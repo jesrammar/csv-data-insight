@@ -1,5 +1,6 @@
 import { NavLink, useNavigate } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useEffect } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { clearTokens, getCompanies, getUserRole, logout } from '../api'
 import CompanySelector from './CompanySelector'
 import { useCompanySelection } from '../hooks/useCompany'
@@ -8,11 +9,29 @@ import Button from './ui/Button'
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate()
-  const { data: companies } = useQuery({ queryKey: ['companies'], queryFn: getCompanies })
+  const queryClient = useQueryClient()
+  const { data: companies, error: companiesError, isPending: companiesPending } = useQuery({
+    queryKey: ['companies'],
+    queryFn: getCompanies,
+    retry: 1
+  })
   const { plan } = useCompanySelection()
   const hasGold = plan === 'GOLD' || plan === 'PLATINUM'
   const role = getUserRole()
   const isClient = role === 'CLIENTE'
+
+  useEffect(() => {
+    const list = (companies || []) as any[]
+    if (!list.length) return
+    const rawId = localStorage.getItem('companyId')
+    const currentId = rawId ? Number(rawId) : null
+    const exists = currentId ? list.some((c) => c.id === currentId) : false
+    if (!currentId || !exists) {
+      localStorage.setItem('companyId', String(list[0].id))
+      localStorage.setItem('companyPlan', String(list[0].plan || 'BRONZE'))
+      window.dispatchEvent(new Event('company-change'))
+    }
+  }, [companies])
 
   async function handleLogout() {
     try {
@@ -93,10 +112,29 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           <div className="top-left">
             <div className="status-dot" />
             <span className="top-title">Control financiero operativo</span>
+            {companiesPending ? <span className="pill" style={{ marginLeft: 12 }}>Cargando empresas…</span> : null}
+            {companiesError ? (
+              <span
+                className="pill"
+                style={{ marginLeft: 12, borderColor: 'rgba(255,90,90,.35)', color: 'rgba(255,190,190,.95)' }}
+              >
+                Error cargando empresas
+              </span>
+            ) : null}
           </div>
           <div className="nav-actions">
             <span className="pill">ASECON Platform</span>
             <CompanySelector companies={companies || []} />
+            {companiesError ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => queryClient.invalidateQueries({ queryKey: ['companies'] })}
+                title="Reintentar cargar empresas"
+              >
+                Reintentar
+              </Button>
+            ) : null}
             <Button variant="ghost" size="sm" onClick={handleLogout} title="Cerrar sesión">
               <Icon name="logout" /> Salir
             </Button>
