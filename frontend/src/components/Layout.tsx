@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { clearTokens, getCompanies, getUserRole, logout } from '../api'
@@ -20,6 +20,13 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const role = getUserRole()
   const isClient = role === 'CLIENTE'
   const hasGold = plan === 'GOLD' || plan === 'PLATINUM'
+  const [consultingOpen, setConsultingOpen] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('nav_consultoria_open') === '1'
+    } catch {
+      return false
+    }
+  })
 
   useEffect(() => {
     const list = (companies || []) as any[]
@@ -38,6 +45,14 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     document.body.classList.toggle('body-client', isClient)
     return () => document.body.classList.remove('body-client')
   }, [isClient])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('nav_consultoria_open', consultingOpen ? '1' : '0')
+    } catch {
+      // ignore
+    }
+  }, [consultingOpen])
 
   async function handleLogout() {
     try {
@@ -108,31 +123,43 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 Entregables
               </NavLink>
 
-              <div className="nav-section" style={{ marginTop: 12 }}>
-                Consultoría
-              </div>
-              {hasGold ? (
-                <NavLink to="/tribunal" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-                  <Icon name="tribunal" />
-                  Cumplimiento (Tribunal)
-                </NavLink>
+              <button
+                type="button"
+                className="nav-section nav-section-toggle"
+                style={{ marginTop: 12 }}
+                onClick={() => setConsultingOpen((v) => !v)}
+                aria-expanded={consultingOpen}
+              >
+                <span>Consultoría</span>
+                <span className="nav-section-caret">{consultingOpen ? '▾' : '▸'}</span>
+              </button>
+
+              {consultingOpen ? (
+                <>
+                  {hasGold ? (
+                    <NavLink to="/tribunal" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+                      <Icon name="tribunal" />
+                      Cumplimiento (Tribunal)
+                    </NavLink>
+                  ) : null}
+                  <NavLink to="/universal" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+                    <Icon name="universal" />
+                    Análisis avanzado
+                  </NavLink>
+                  <NavLink to="/advisor" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+                    <Icon name="advisor" />
+                    Asesor
+                  </NavLink>
+                  <NavLink to="/automation" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+                    <Icon name="automation" />
+                    Tareas automáticas
+                  </NavLink>
+                  <NavLink to="/pricing" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+                    <Icon name="pricing" />
+                    Planes
+                  </NavLink>
+                </>
               ) : null}
-              <NavLink to="/universal" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-                <Icon name="universal" />
-                Análisis avanzado
-              </NavLink>
-              <NavLink to="/advisor" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-                <Icon name="advisor" />
-                Asesor
-              </NavLink>
-              <NavLink to="/automation" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-                <Icon name="automation" />
-                Tareas automáticas
-              </NavLink>
-              <NavLink to="/pricing" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-                <Icon name="pricing" />
-                Planes
-              </NavLink>
             </>
           )}
         </nav>
