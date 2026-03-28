@@ -11,17 +11,26 @@ import com.asecon.enterpriseiq.repo.StagingTransactionRepository;
 import com.asecon.enterpriseiq.repo.TransactionRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.BufferedReader;
+import java.io.InputStream;
 import java.io.IOException;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVRecord;
+import org.apache.poi.ss.usermodel.DataFormatter;
+import org.apache.poi.ss.usermodel.DateUtil;
+import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -63,11 +72,47 @@ public class ImportService {
         job.setPeriod(period);
         job.setStatus(ImportStatus.PENDING);
         job.setCreatedAt(Instant.now());
+        job.setUpdatedAt(job.getCreatedAt());
+        job.setRunAfter(job.getCreatedAt());
+        job.setAttempts(0);
+        job.setMaxAttempts(3);
+        job.setOriginalFilename(safeFilename(file.getOriginalFilename()));
+        job.setContentType(file.getContentType());
         job = importJobRepository.save(job);
 
         Files.createDirectories(importsRoot);
-        Path target = importsRoot.resolve("import-" + job.getId() + ".csv");
-        file.transferTo(target);
+        String ext = detectExtension(job.getOriginalFilename(), file.getContentType());
+        String storageRef = "import-" + job.getId() + "-" + UUID.randomUUID() + ext;
+        Path target = importsRoot.resolve(storageRef);
+        file.transferTo(target.toFile());
+        job.setStorageRef(storageRef);
+        job.setUpdatedAt(Instant.now());
+        importJobRepository.save(job);
+        return job;
+    }
+
+    public ImportJob createImportFromPath(Long companyId, String period, Path csvFile) throws IOException {
+        Company company = companyRepository.findById(companyId).orElseThrow();
+        ImportJob job = new ImportJob();
+        job.setCompany(company);
+        job.setPeriod(period);
+        job.setStatus(ImportStatus.PENDING);
+        job.setCreatedAt(Instant.now());
+        job.setUpdatedAt(job.getCreatedAt());
+        job.setRunAfter(job.getCreatedAt());
+        job.setAttempts(0);
+        job.setMaxAttempts(3);
+        job.setOriginalFilename(safeFilename(csvFile.getFileName().toString()));
+        job = importJobRepository.save(job);
+
+        Files.createDirectories(importsRoot);
+        String ext = extensionOf(job.getOriginalFilename());
+        String storageRef = "import-" + job.getId() + "-" + UUID.randomUUID() + ext;
+        Path target = importsRoot.resolve(storageRef);
+        Files.copy(csvFile, target);
+        job.setStorageRef(storageRef);
+        job.setUpdatedAt(Instant.now());
+        importJobRepository.save(job);
         return job;
     }
 
@@ -76,51 +121,37 @@ public class ImportService {
     }
 
     @Transactional
-    public void processPendingImports() {
-        List<ImportJob> pending = importJobRepository.findByStatusOrderByCreatedAtAsc(ImportStatus.PENDING);
-        for (ImportJob job : pending) {
-            processImport(job);
-        }
-    }
+    public void processImport(Long importJobId) {
+        ImportJob job = importJobRepository.findById(importJobId).orElse(null);
+        if (job == null) return;
 
-    @Transactional
-    public void processImport(ImportJob job) {
+        if (job.getStatus() != ImportStatus.RUNNING) {
+            job.setStatus(ImportStatus.RUNNING);
+            job.setUpdatedAt(Instant.now());
+            importJobRepository.save(job);
+        }
+
         int warnings = 0;
         int errors = 0;
         BigDecimal lastBalanceEnd = null;
         StringBuilder errorSummary = new StringBuilder();
 
-        Path filePath = importsRoot.resolve("import-" + job.getId() + ".csv");
+        Path filePath = resolveImportPath(job);
         if (!Files.exists(filePath)) {
-            job.setStatus(ImportStatus.ERROR);
-            job.setErrorSummary("CSV file missing for import " + job.getId());
-            job.setProcessedAt(Instant.now());
-            job.setErrorCount(1);
-            importJobRepository.save(job);
+            handleFailure(job, new IOException("Import file missing: " + filePath.getFileName()));
             return;
         }
 
         stagingRepository.deleteByImportJobId(job.getId());
         transactionRepository.deleteByCompanyIdAndPeriod(job.getCompany().getId(), job.getPeriod());
 
-        try (BufferedReader reader = Files.newBufferedReader(filePath)) {
-            var parser = CSVFormat.DEFAULT.withFirstRecordAsHeader().parse(reader);
-            Map<String, Integer> headers = parser.getHeaderMap();
-            if (!headers.containsKey("txn_date") || !headers.containsKey("amount")) {
-                job.setStatus(ImportStatus.ERROR);
-                job.setErrorSummary("Missing required columns: txn_date and/or amount");
-                job.setProcessedAt(Instant.now());
-                job.setErrorCount(1);
-                importJobRepository.save(job);
-                return;
-            }
-
+        try {
             List<Transaction> normalized = new ArrayList<>();
             List<StagingTransaction> staging = new ArrayList<>();
 
-            for (CSVRecord record : parser) {
-                String txnDateRaw = record.get("txn_date");
-                String amountRaw = record.get("amount");
+            for (var row : readRows(filePath)) {
+                String txnDateRaw = row.getOrDefault("txn_date", "");
+                String amountRaw = row.getOrDefault("amount", "");
                 LocalDate txnDate;
                 BigDecimal amount;
 
@@ -132,14 +163,14 @@ public class ImportService {
                 }
 
                 try {
-                    amount = new BigDecimal(amountRaw);
+                    amount = parseAmount(amountRaw);
                 } catch (Exception ex) {
                     warnings++;
                     continue;
                 }
 
-                String description = record.isMapped("description") ? record.get("description") : "";
-                String counterparty = record.isMapped("counterparty") ? record.get("counterparty") : null;
+                String description = row.getOrDefault("description", "");
+                String counterparty = row.get("counterparty");
 
                 StagingTransaction st = new StagingTransaction();
                 st.setImportJob(job);
@@ -148,7 +179,7 @@ public class ImportService {
                 st.setDescription(description);
                 st.setAmount(amount);
                 st.setCounterparty(counterparty);
-                st.setRawJson(objectMapper.writeValueAsString(record.toMap()));
+                st.setRawJson(objectMapper.writeValueAsString(row));
                 staging.add(st);
 
                 Transaction tx = new Transaction();
@@ -160,9 +191,9 @@ public class ImportService {
                 tx.setCounterparty(counterparty);
                 normalized.add(tx);
 
-                if (record.isMapped("balance_end")) {
+                if (row.containsKey("balance_end")) {
                     try {
-                        lastBalanceEnd = new BigDecimal(record.get("balance_end"));
+                        lastBalanceEnd = parseAmount(row.get("balance_end"));
                     } catch (Exception ignored) {
                         warnings++;
                     }
@@ -181,16 +212,188 @@ public class ImportService {
             }
             job.setErrorSummary(errorSummary.toString());
             job.setProcessedAt(Instant.now());
+            job.setUpdatedAt(job.getProcessedAt());
+            job.setLastError(null);
             importJobRepository.save(job);
 
             var kpi = kpiService.recompute(job.getCompany(), job.getPeriod(), lastBalanceEnd);
             alertService.evaluateThreshold(job.getCompany(), kpi);
         } catch (Exception ex) {
-            job.setStatus(ImportStatus.ERROR);
-            job.setErrorSummary("Error processing CSV: " + ex.getMessage());
+            handleFailure(job, ex);
+        }
+    }
+
+    @Transactional
+    public ImportJob retry(Long companyId, Long importJobId) {
+        ImportJob job = importJobRepository.findById(importJobId).orElseThrow();
+        if (!job.getCompany().getId().equals(companyId)) throw new IllegalArgumentException("Import job not in company");
+        job.setStatus(ImportStatus.RETRY);
+        job.setRunAfter(Instant.now());
+        job.setUpdatedAt(Instant.now());
+        job.setLastError(null);
+        job.setErrorSummary("Manual retry requested.");
+        return importJobRepository.save(job);
+    }
+
+    private void handleFailure(ImportJob job, Exception ex) {
+        int nextAttempts = (job.getAttempts() == null ? 0 : job.getAttempts()) + 1;
+        job.setAttempts(nextAttempts);
+        job.setUpdatedAt(Instant.now());
+        job.setLastError(ex.getClass().getSimpleName() + ": " + ex.getMessage());
+
+        if (job.getMaxAttempts() != null && nextAttempts >= job.getMaxAttempts()) {
+            job.setStatus(ImportStatus.DEAD);
             job.setProcessedAt(Instant.now());
             job.setErrorCount(1);
+            job.setErrorSummary("Import failed permanently: " + job.getLastError());
             importJobRepository.save(job);
+            return;
         }
+
+        long backoffSeconds = Math.min(3600, (long) Math.pow(2, Math.min(10, nextAttempts)) * 5L);
+        job.setStatus(ImportStatus.RETRY);
+        job.setRunAfter(Instant.now().plusSeconds(backoffSeconds));
+        job.setErrorSummary("Retry scheduled in " + backoffSeconds + "s. " + job.getLastError());
+        importJobRepository.save(job);
+    }
+
+    private Path resolveImportPath(ImportJob job) {
+        String ref = job.getStorageRef();
+        if (ref == null || ref.isBlank()) return importsRoot.resolve("import-" + job.getId() + ".csv");
+        return importsRoot.resolve(ref);
+    }
+
+    private List<Map<String, String>> readRows(Path filePath) throws IOException {
+        String name = filePath.getFileName().toString().toLowerCase();
+        if (name.endsWith(".xlsx")) return readXlsx(filePath);
+        return readCsv(filePath);
+    }
+
+    private List<Map<String, String>> readCsv(Path filePath) throws IOException {
+        char delimiter = detectDelimiter(filePath);
+        try (BufferedReader reader = Files.newBufferedReader(filePath, StandardCharsets.UTF_8)) {
+            var parser = CSVFormat.DEFAULT.builder()
+                .setDelimiter(delimiter)
+                .setHeader()
+                .setSkipHeaderRecord(true)
+                .build()
+                .parse(reader);
+
+            Map<String, Integer> headers = parser.getHeaderMap();
+            if (!headers.containsKey("txn_date") || !headers.containsKey("amount")) {
+                throw new IOException("Missing required columns: txn_date and/or amount");
+            }
+
+            List<Map<String, String>> out = new ArrayList<>();
+            for (CSVRecord record : parser) out.add(record.toMap());
+            return out;
+        }
+    }
+
+    private List<Map<String, String>> readXlsx(Path filePath) throws IOException {
+        try (InputStream is = Files.newInputStream(filePath); var wb = new XSSFWorkbook(is)) {
+            Sheet sheet = wb.getNumberOfSheets() > 0 ? wb.getSheetAt(0) : null;
+            if (sheet == null) throw new IOException("XLSX without sheets");
+
+            DataFormatter formatter = new DataFormatter();
+            int firstRow = sheet.getFirstRowNum();
+            Row headerRow = sheet.getRow(firstRow);
+            if (headerRow == null) throw new IOException("XLSX missing header row");
+
+            List<String> headers = new ArrayList<>();
+            int lastCell = headerRow.getLastCellNum();
+            for (int i = 0; i < lastCell; i++) {
+                String h = formatter.formatCellValue(headerRow.getCell(i)).trim();
+                headers.add(h);
+            }
+
+            if (!headers.contains("txn_date") || !headers.contains("amount")) {
+                throw new IOException("Missing required columns: txn_date and/or amount");
+            }
+
+            List<Map<String, String>> out = new ArrayList<>();
+            for (int r = headerRow.getRowNum() + 1; r <= sheet.getLastRowNum(); r++) {
+                Row row = sheet.getRow(r);
+                if (row == null) continue;
+                boolean any = false;
+                Map<String, String> map = new LinkedHashMap<>();
+                for (int c = 0; c < headers.size(); c++) {
+                    String key = headers.get(c);
+                    var cell = row.getCell(c);
+                    String val = cellToString(cell, formatter);
+                    if (val != null && !val.isBlank()) any = true;
+                    map.put(key, val == null ? "" : val.trim());
+                }
+                if (any) out.add(map);
+            }
+            return out;
+        }
+    }
+
+    private static String cellToString(org.apache.poi.ss.usermodel.Cell cell, DataFormatter formatter) {
+        if (cell == null) return "";
+        try {
+            if (cell.getCellType() == org.apache.poi.ss.usermodel.CellType.NUMERIC && DateUtil.isCellDateFormatted(cell)) {
+                var dt = cell.getLocalDateTimeCellValue();
+                return dt == null ? "" : dt.toLocalDate().toString();
+            }
+        } catch (Exception ignored) {}
+        return formatter.formatCellValue(cell);
+    }
+
+    private static BigDecimal parseAmount(String raw) {
+        if (raw == null) return null;
+        String s = raw.trim();
+        if (s.isBlank()) return null;
+        s = s.replace("€", "").replace(" ", "");
+
+        boolean hasDot = s.contains(".");
+        boolean hasComma = s.contains(",");
+        if (hasDot && hasComma) {
+            if (s.lastIndexOf(',') > s.lastIndexOf('.')) {
+                s = s.replace(".", "").replace(",", ".");
+            } else {
+                s = s.replace(",", "");
+            }
+        } else if (hasComma) {
+            s = s.replace(".", "").replace(",", ".");
+        }
+        return new BigDecimal(s);
+    }
+
+    private static char detectDelimiter(Path filePath) {
+        try {
+            String first = Files.readAllLines(filePath, StandardCharsets.UTF_8).stream().findFirst().orElse("");
+            long commas = first.chars().filter(ch -> ch == ',').count();
+            long semis = first.chars().filter(ch -> ch == ';').count();
+            return semis > commas ? ';' : ',';
+        } catch (Exception ignored) {
+            return ',';
+        }
+    }
+
+    private static String safeFilename(String name) {
+        if (name == null) return null;
+        String s = name.trim().replace("\\", "/");
+        int idx = s.lastIndexOf('/');
+        s = idx >= 0 ? s.substring(idx + 1) : s;
+        return s.length() > 255 ? s.substring(0, 255) : s;
+    }
+
+    private static String detectExtension(String filename, String contentType) {
+        String ext = extensionOf(filename);
+        if (ext.equals(".xlsx") || ext.equals(".csv")) return ext;
+        if (contentType != null && contentType.toLowerCase().contains("sheet")) return ".xlsx";
+        return ".csv";
+    }
+
+    private static String extensionOf(String filename) {
+        if (filename == null) return ".csv";
+        String s = filename.toLowerCase().trim();
+        int dot = s.lastIndexOf('.');
+        if (dot < 0) return ".csv";
+        String ext = s.substring(dot);
+        if (ext.equals(".xlsx") || ext.equals(".csv")) return ext;
+        return ".csv";
     }
 }

@@ -81,7 +81,10 @@ public class SecurityConfig {
             .map(String::trim)
             .filter(s -> !s.isEmpty())
             .toList();
-        config.setAllowedOrigins(origins);
+        if (origins.isEmpty()) {
+            origins = List.of("http://localhost:5173", "http://127.0.0.1:5173");
+        }
+        config.setAllowedOriginPatterns(origins);
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(List.of("*"));
         config.setAllowCredentials(true);

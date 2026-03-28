@@ -35,7 +35,7 @@ public class TokenService {
 
     public AuthResult refreshTokens(String refreshTokenRaw) {
         String hash = hash(refreshTokenRaw);
-        RefreshToken token = refreshTokenRepository.findByTokenHash(hash)
+        RefreshToken token = refreshTokenRepository.findByTokenHashWithUser(hash)
             .orElseThrow(() -> new IllegalArgumentException("Refresh token inválido"));
         if (token.getRevokedAt() != null || token.getExpiresAt().isBefore(Instant.now())) {
             throw new IllegalArgumentException("Refresh token expirado o revocado");

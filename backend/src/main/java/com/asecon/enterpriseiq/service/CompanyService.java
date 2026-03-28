@@ -15,6 +15,10 @@ public class CompanyService {
 
     public List<Company> findAll() { return companyRepository.findAll(); }
 
+    public List<Company> findForUser(Long userId) {
+        return companyRepository.findByUsers_Id(userId);
+    }
+
     public Company save(Company company) { return companyRepository.save(company); }
 
     public Company getById(Long id) { return companyRepository.findById(id).orElseThrow(); }

@@ -2,7 +2,6 @@ package com.asecon.enterpriseiq.controller;
 
 import com.asecon.enterpriseiq.dto.ImportDto;
 import com.asecon.enterpriseiq.model.ImportJob;
-import com.asecon.enterpriseiq.model.Role;
 import com.asecon.enterpriseiq.service.AccessService;
 import com.asecon.enterpriseiq.service.ImportService;
 import jakarta.validation.constraints.NotBlank;
@@ -42,8 +41,18 @@ public class ImportController {
         return toDto(job);
     }
 
+    @PostMapping("/{importId}/retry")
+    @PreAuthorize("hasAnyRole('ADMIN','CONSULTOR')")
+    public ImportDto retry(@PathVariable Long companyId, @PathVariable Long importId) {
+        var user = accessService.currentUser();
+        accessService.requireCompanyAccess(user, companyId);
+        ImportJob job = importService.retry(companyId, importId);
+        return toDto(job);
+    }
+
     private ImportDto toDto(ImportJob job) {
         return new ImportDto(job.getId(), job.getCompany().getId(), job.getPeriod(), job.getStatus(),
-            job.getCreatedAt(), job.getProcessedAt(), job.getErrorSummary(), job.getWarningCount(), job.getErrorCount());
+            job.getCreatedAt(), job.getProcessedAt(), job.getErrorSummary(), job.getWarningCount(), job.getErrorCount(),
+            job.getUpdatedAt(), job.getRunAfter(), job.getAttempts(), job.getMaxAttempts(), job.getLastError(), job.getStorageRef(), job.getOriginalFilename());
     }
 }

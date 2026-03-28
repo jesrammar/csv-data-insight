@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface KpiMonthlyRepository extends JpaRepository<KpiMonthly, Long> {
     List<KpiMonthly> findByCompanyIdAndPeriodBetweenOrderByPeriodAsc(Long companyId, String from, String to);
+    Optional<KpiMonthly> findFirstByCompanyIdOrderByPeriodDesc(Long companyId);
     Optional<KpiMonthly> findByCompanyIdAndPeriod(Long companyId, String period);
     void deleteByCompanyIdAndPeriod(Long companyId, String period);
 }

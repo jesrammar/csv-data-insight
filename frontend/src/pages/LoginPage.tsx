@@ -1,10 +1,13 @@
 import { useState } from 'react'
-import { login, setTokens } from '../api'
+import { login, setTokens, setUserMeta } from '../api'
+import Button from '../components/ui/Button'
+import Alert from '../components/ui/Alert'
 
 export default function LoginPage() {
   const [email, setEmail] = useState('admin@asecon.local')
   const [password, setPassword] = useState('password')
   const [error, setError] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -12,6 +15,7 @@ export default function LoginPage() {
     try {
       const res = await login(email, password)
       setTokens(res.accessToken, res.refreshToken)
+      setUserMeta(res.role, res.userId)
       window.location.reload()
     } catch (err: any) {
       setError(err.message)
@@ -43,13 +47,38 @@ export default function LoginPage() {
           <p className="hero-sub">Usuarios demo: admin, consultor y cliente.</p>
           <form onSubmit={handleSubmit}>
             <div>
-              <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email" />
+              <input
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="email"
+                autoComplete="username"
+                aria-label="Email"
+              />
             </div>
             <div style={{ marginTop: 10 }}>
-              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="password" />
+              <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="password"
+                  autoComplete="current-password"
+                  aria-label="Password"
+                  style={{ flex: 1 }}
+                />
+                <Button type="button" variant="ghost" size="sm" onClick={() => setShowPassword((s) => !s)}>
+                  {showPassword ? 'Ocultar' : 'Ver'}
+                </Button>
+              </div>
             </div>
-            {error && <p className="error">{error}</p>}
-            <button type="submit" style={{ marginTop: 12 }}>Entrar</button>
+            {error && (
+              <div style={{ marginTop: 12 }}>
+                <Alert tone="danger">{error}</Alert>
+              </div>
+            )}
+            <div style={{ marginTop: 12 }}>
+              <Button type="submit">Entrar</Button>
+            </div>
           </form>
         </div>
       </div>

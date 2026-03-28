@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { notifyCompanyChange } from '../hooks/useCompany'
 
 type Company = { id: number; name: string; plan: string }
 
@@ -9,24 +10,37 @@ export default function CompanySelector({ companies }: { companies: Company[] })
   })
 
   useEffect(() => {
-    if (!selected && companies.length > 0) {
-      setSelected(companies[0].id)
-    }
+    if (companies.length === 0) return
+    const hasSelected = selected ? companies.some((c) => c.id === selected) : false
+    if (!selected || !hasSelected) setSelected(companies[0].id)
   }, [companies, selected])
 
   useEffect(() => {
     if (selected) {
+      const company = companies.find((c) => c.id === selected)
+      if (!company) return
       localStorage.setItem('companyId', String(selected))
+      if (company) {
+        localStorage.setItem('companyPlan', company.plan)
+        notifyCompanyChange()
+      }
     }
-  }, [selected])
+  }, [selected, companies])
+
+  const selectedCompany = companies.find((c) => c.id === selected)
+  const plan = (selectedCompany?.plan || localStorage.getItem('companyPlan') || 'BRONZE').toUpperCase()
+  const planTone = plan === 'PLATINUM' ? 'ok' : plan === 'GOLD' ? 'warn' : ''
 
   return (
-    <select value={selected} onChange={(e) => setSelected(Number(e.target.value))}>
-      {companies.map((c) => (
-        <option key={c.id} value={c.id}>
-          {c.name} ({c.plan})
-        </option>
-      ))}
-    </select>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+      <span className={`badge ${planTone}`}>{plan}</span>
+      <select aria-label="Seleccionar empresa" value={selected} onChange={(e) => setSelected(Number(e.target.value))}>
+        {companies.map((c) => (
+          <option key={c.id} value={c.id}>
+            {c.name}
+          </option>
+        ))}
+      </select>
+    </div>
   )
 }

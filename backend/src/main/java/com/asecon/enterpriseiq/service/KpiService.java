@@ -23,7 +23,7 @@ public class KpiService {
 
     @Transactional
     public KpiMonthly recompute(Company company, String period, BigDecimal lastBalanceEnd) {
-        List<Transaction> transactions = transactionRepository.findByCompanyIdAndPeriod(company.getId(), period);
+        List<Transaction> transactions = transactionRepository.findByCompanyIdAndPeriodOrderByTxnDateAsc(company.getId(), period);
         BigDecimal inflows = BigDecimal.ZERO;
         BigDecimal outflows = BigDecimal.ZERO;
         BigDecimal cumulative = BigDecimal.ZERO;
