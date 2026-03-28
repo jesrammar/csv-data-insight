@@ -27,11 +27,13 @@ replay_pid*
 /target/
 /backend/target/
 /backend/storage/
+/backend/.maven/
 
 # Frontend
 /frontend/node_modules/
 /frontend/.vite/
 /frontend/dist/
+/frontend/tsconfig.tsbuildinfo
 
 # Tools / scratch
 /backend/backend/cp.txt

@@ -7,6 +7,7 @@ import java.time.temporal.ChronoUnit;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 @Component
 public class TokenCleanupScheduler {
@@ -23,6 +24,7 @@ public class TokenCleanupScheduler {
     }
 
     @Scheduled(fixedDelayString = "${app.scheduler.token-cleanup-fixed-delay-ms}")
+    @Transactional
     public void cleanup() {
         Instant now = Instant.now();
         revokedTokenRepository.deleteByExpiresAtBefore(now);
