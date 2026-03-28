@@ -1,6 +1,8 @@
 type IconName =
   | 'overview'
+  | 'home'
   | 'dashboard'
+  | 'alerts'
   | 'imports'
   | 'tribunal'
   | 'universal'
@@ -8,6 +10,7 @@ type IconName =
   | 'reports'
   | 'pricing'
   | 'automation'
+  | 'help'
   | 'logout'
 
 export default function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
@@ -21,10 +24,25 @@ export default function Icon({ name, size = 18 }: { name: IconName; size?: numbe
           <path {...stroke} d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z" />
         </svg>
       )
+    case 'home':
+      return (
+        <svg {...common}>
+          <path {...stroke} d="M3 10.5l9-7 9 7" />
+          <path {...stroke} d="M5 9.5V21h14V9.5" />
+          <path {...stroke} d="M9 21v-7h6v7" />
+        </svg>
+      )
     case 'dashboard':
       return (
         <svg {...common}>
           <path {...stroke} d="M4 19V5M4 19h16M8 15v-4M12 19v-8M16 11v-3M20 8v-3" />
+        </svg>
+      )
+    case 'alerts':
+      return (
+        <svg {...common}>
+          <path {...stroke} d="M12 22a2 2 0 0 0 2-2H10a2 2 0 0 0 2 2z" />
+          <path {...stroke} d="M18 16v-5a6 6 0 1 0-12 0v5l-2 2h16l-2-2z" />
         </svg>
       )
     case 'imports':
@@ -80,6 +98,14 @@ export default function Icon({ name, size = 18 }: { name: IconName; size?: numbe
             {...stroke}
             d="M19.4 15a8 8 0 0 0 .1-1l2-1.2-2-3.4-2.3.7a7.9 7.9 0 0 0-1.7-1L15 6h-6l-.5 2.1a7.9 7.9 0 0 0-1.7 1L4 8.4 2 11.8l2 1.2a8 8 0 0 0 0 2L2 16.2l2 3.4 2.3-.7a7.9 7.9 0 0 0 1.7 1L9 22h6l.5-2.1a7.9 7.9 0 0 0 1.7-1l2.3.7 2-3.4-2.1-1.2z"
           />
+        </svg>
+      )
+    case 'help':
+      return (
+        <svg {...common}>
+          <path {...stroke} d="M12 18h.01" />
+          <path {...stroke} d="M9.1 9a3 3 0 1 1 4.9 2.3c-.8.6-1.5 1.1-1.5 2.2v.5" />
+          <path {...stroke} d="M12 22A10 10 0 1 0 12 2a10 10 0 0 0 0 20z" />
         </svg>
       )
     case 'logout':
