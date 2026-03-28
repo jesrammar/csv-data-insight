@@ -1,6 +1,6 @@
 spring:
   datasource:
-    url: jdbc:h2:mem:enterpriseiq_test;MODE=PostgreSQL;DB_CLOSE_DELAY=-1
+    url: jdbc:h2:mem:enterpriseiq_test;MODE=PostgreSQL;NON_KEYWORDS=YEAR;DB_CLOSE_DELAY=-1
     username: sa
     password:
   jpa:
@@ -20,7 +20,15 @@ app:
     access-expiration-minutes: 60
     refresh-expiration-days: 30
     issuer: "enterpriseiq"
+  storage:
+    imports: ./target/test-storage/imports
+    reports: ./target/test-storage/reports
+    universal: ./target/test-storage/universal
+    inbox: ./target/test-storage/inbox
   scheduler:
     import-fixed-delay-ms: 120000
     token-cleanup-fixed-delay-ms: 86400000
     refresh-revoked-retention-days: 7
+
+cors:
+  allowed-origins: "http://localhost:5173"

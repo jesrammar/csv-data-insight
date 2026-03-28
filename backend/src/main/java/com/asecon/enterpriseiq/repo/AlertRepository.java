@@ -6,4 +6,5 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface AlertRepository extends JpaRepository<Alert, Long> {
     List<Alert> findByCompanyIdAndPeriod(Long companyId, String period);
+    List<Alert> findTop20ByCompanyIdOrderByCreatedAtDesc(Long companyId);
 }
