@@ -3,8 +3,10 @@ import { Link } from 'react-router-dom'
 import { getDashboard, getLatestRecommendations, getReports, getTribunalSummary, getUniversalSummary, getUserRole } from '../api'
 import KpiChart from '../components/KpiChart'
 import PageHeader from '../components/ui/PageHeader'
+import Alert from '../components/ui/Alert'
 import Skeleton from '../components/ui/Skeleton'
 import { useCompanySelection } from '../hooks/useCompany'
+import { formatMoney } from '../utils/format'
 
 function formatPeriod(date: Date) {
   const y = date.getFullYear()
@@ -63,6 +65,7 @@ export default function OverviewPage() {
 
   const latest = dashboard?.kpis?.[dashboard?.kpis.length - 1]
   const chartPoints = (dashboard?.kpis || []).map((k: any) => ({ label: k.period, value: Number(k.netFlow) }))
+  const hasCashData = (dashboard?.kpis || []).length > 0
 
   const tribunalKpis = (tribunal as any)?.kpis
   const tribunalRiskCount = ((tribunal as any)?.risk || []).length
@@ -80,13 +83,13 @@ export default function OverviewPage() {
     <div>
       <PageHeader
         title="Vista ejecutiva"
-        subtitle="4 divisiones para operar: caja, cumplimiento, análisis universal y entregables."
+        subtitle="Caja · Tribunal · Universal · Informes"
         actions={
           <div className="card soft" style={{ padding: 14, minWidth: 220 }}>
             <div className="upload-hint">Periodo actual</div>
             <div style={{ fontWeight: 800, marginTop: 6 }}>{to}</div>
             <div className="upload-hint" style={{ marginTop: 6 }}>
-              {latest ? `Net Flow: ${latest.netFlow}` : 'Sin datos'}
+              {latest ? `Neto del mes: ${formatMoney(latest.netFlow)}` : 'Sin datos'}
             </div>
           </div>
         }
@@ -98,6 +101,19 @@ export default function OverviewPage() {
       ) : dashboardError ? (
         <div className="empty" style={{ marginBottom: 14 }}>
           No se pudo cargar el resumen. Revisa la conexión o los permisos.
+        </div>
+      ) : null}
+
+      {companyId && !dashboardError && !overviewLoading && !hasCashData ? (
+        <div className="section">
+          <Alert tone="warning" title="Siguiente paso: cargar datos">
+            No hay datos del periodo. Carga el CSV/XLSX y vuelve a esta vista.
+            <div style={{ marginTop: 10 }}>
+              <Link className="badge" to="/imports">
+                Cargar datos
+              </Link>
+            </div>
+          </Alert>
         </div>
       ) : null}
 
@@ -122,7 +138,7 @@ export default function OverviewPage() {
           <div className="mini-row" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
             <h3 style={{ margin: 0 }}>Caja y liquidez</h3>
             <Link className="badge" to="/dashboard">
-              Abrir dashboard
+              Ir a Caja
             </Link>
           </div>
           {!dashboard?.kpis?.length ? (
@@ -134,16 +150,16 @@ export default function OverviewPage() {
               <KpiChart title={`Neto (últimos ${monthsCount} meses)`} points={chartPoints} variant="area" />
               <div className="grid" style={{ marginTop: 14 }}>
                 <div className="kpi">
-                  <h4>Inflows</h4>
-                  <strong>{latest?.inflows ?? '-'}</strong>
+                  <h4>Entradas</h4>
+                  <strong>{formatMoney(latest?.inflows)}</strong>
                 </div>
                 <div className="kpi">
-                  <h4>Outflows</h4>
-                  <strong>{latest?.outflows ?? '-'}</strong>
+                  <h4>Salidas</h4>
+                  <strong>{formatMoney(latest?.outflows)}</strong>
                 </div>
                 <div className="kpi">
-                  <h4>Ending Balance</h4>
-                  <strong>{latest?.endingBalance ?? '-'}</strong>
+                  <h4>Saldo fin</h4>
+                  <strong>{formatMoney(latest?.endingBalance)}</strong>
                 </div>
               </div>
             </div>
@@ -155,7 +171,7 @@ export default function OverviewPage() {
             <h3 style={{ margin: 0 }}>Cumplimiento (Tribunal)</h3>
             {!isClient && hasGold ? (
               <Link className="badge" to="/tribunal">
-                Abrir tribunal
+                Ir a Tribunal
               </Link>
             ) : (
               <span className="badge warn">{isClient ? 'Solo consultor' : 'GOLD+'}</span>
@@ -210,14 +226,18 @@ export default function OverviewPage() {
                   <h4>Riesgos</h4>
                   <strong>{tribunalRiskCount}</strong>
                 </div>
-                <div className="kpi">
-                  <h4>% Contabilidad</h4>
-                  <strong>{Number(tribunalKpis.contabilidadPct).toFixed(0)}%</strong>
+              </div>
+              <details style={{ marginTop: 12 }}>
+                <summary className="upload-hint" style={{ cursor: 'pointer' }}>
+                  Ver detalle
+                </summary>
+                <div className="grid" style={{ marginTop: 12 }}>
+                  <div className="kpi">
+                    <h4>% Contabilidad</h4>
+                    <strong>{Number(tribunalKpis.contabilidadPct).toFixed(0)}%</strong>
+                  </div>
                 </div>
-              </div>
-              <div className="upload-hint" style={{ marginTop: 10 }}>
-                Quick win: prioriza los clientes con incidencias y asigna responsable + fecha.
-              </div>
+              </details>
             </div>
           )}
         </div>
@@ -227,7 +247,7 @@ export default function OverviewPage() {
             <h3 style={{ margin: 0 }}>Análisis universal</h3>
             {isClient ? <span className="badge warn">Solo consultor</span> : (
               <Link className="badge" to="/universal">
-                Abrir universal
+                Ir a Universal
               </Link>
             )}
           </div>
@@ -259,7 +279,7 @@ export default function OverviewPage() {
           <div className="mini-row" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
             <h3 style={{ margin: 0 }}>Entregables</h3>
             <Link className="badge" to="/reports">
-              Abrir informes
+              Ver informes
             </Link>
           </div>
           <div style={{ marginTop: 12 }}>
@@ -273,9 +293,7 @@ export default function OverviewPage() {
                 <strong>{(plan || 'BRONZE').toUpperCase()}</strong>
               </div>
             </div>
-            <div className="upload-hint" style={{ marginTop: 10 }}>
-              Objetivo: transformar datos en acciones con evidencia (y exportable al cliente).
-            </div>
+            <div className="upload-hint" style={{ marginTop: 10 }}>Informes mensuales listos para compartir.</div>
           </div>
         </div>
       </div>
