@@ -23,7 +23,7 @@ public class UserService {
         this.passwordEncoder = passwordEncoder;
     }
 
-    public List<User> findAll() { return userRepository.findAll(); }
+    public List<User> findAll() { return userRepository.findAllWithCompanies(); }
 
     public User create(CreateUserRequest request) {
         User user = new User();
@@ -41,7 +41,7 @@ public class UserService {
     }
 
     public User updateCompanies(Long userId, Set<Long> companyIds) {
-        User user = userRepository.findById(userId).orElseThrow();
+        User user = userRepository.findByIdWithCompanies(userId).orElseThrow();
         Set<Company> companies = new HashSet<>(companyRepository.findAllById(companyIds));
         user.setCompanies(companies);
         return userRepository.save(user);

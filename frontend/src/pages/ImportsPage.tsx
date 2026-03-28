@@ -1,15 +1,16 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { getImports, uploadImport } from '../api'
+import { getImports, retryImport, type ImportJob, uploadImport } from '../api'
 import { useState } from 'react'
-
-function getSelectedCompanyId(): number | null {
-  const value = localStorage.getItem('companyId')
-  return value ? Number(value) : null
-}
+import { useCompanySelection } from '../hooks/useCompany'
+import PageHeader from '../components/ui/PageHeader'
+import Alert from '../components/ui/Alert'
+import Button from '../components/ui/Button'
+import { useToast } from '../components/ui/ToastProvider'
 
 export default function ImportsPage() {
-  const companyId = getSelectedCompanyId()
+  const { id: companyId } = useCompanySelection()
   const queryClient = useQueryClient()
+  const toast = useToast()
   const { data } = useQuery({
     queryKey: ['imports', companyId],
     queryFn: () => getImports(companyId as number),
@@ -18,6 +19,7 @@ export default function ImportsPage() {
   const [period, setPeriod] = useState('2025-06')
   const [file, setFile] = useState<File | null>(null)
   const [message, setMessage] = useState('')
+  const [tone, setTone] = useState<'info' | 'success' | 'danger'>('info')
 
   async function handleUpload() {
     if (!companyId || !file) return
@@ -25,35 +27,72 @@ export default function ImportsPage() {
     try {
       await uploadImport(companyId, period, file)
       await queryClient.invalidateQueries({ queryKey: ['imports', companyId] })
-      setMessage('Import encolado, será procesado por el scheduler.')
+      setTone('success')
+      setMessage('Import encolado. Se procesará automáticamente y recalculará KPIs/alertas.')
+      toast.push({ tone: 'success', title: 'Import', message: 'CSV subido y encolado para procesado.' })
     } catch (err: any) {
+      setTone('danger')
       setMessage(err.message)
+      toast.push({ tone: 'danger', title: 'Error', message: err?.message || 'No se pudo subir el CSV.' })
+    }
+  }
+
+  async function handleRetry(importId: number) {
+    if (!companyId) return
+    try {
+      await retryImport(companyId, importId)
+      await queryClient.invalidateQueries({ queryKey: ['imports', companyId] })
+      toast.push({ tone: 'success', title: 'Reintento', message: `Import ${importId} reencolado.` })
+    } catch (err: any) {
+      toast.push({ tone: 'danger', title: 'Error', message: err?.message || 'No se pudo reencolar el import.' })
     }
   }
 
   return (
     <div>
-      <div className="hero">
-        <div>
-          <h1 className="hero-title">Importación de CSV</h1>
-          <p className="hero-sub">Sube movimientos por periodo y deja que EnterpriseIQ valide y normalice.</p>
-        </div>
+      <PageHeader
+        title="Importación de transacciones"
+        subtitle="Sube movimientos por periodo. EnterpriseIQ valida, normaliza y recalcula KPIs."
+        actions={
+          <span className="badge">CSV/XLSX • txn_date + amount</span>
+        }
+      />
+
+      <div className="grid section">
         <div className="card soft">
           <h3 style={{ marginTop: 0 }}>Formato esperado</h3>
           <p className="hero-sub">
-            Columnas: <strong>txn_date</strong>, <strong>amount</strong>, opcional <strong>description</strong>,{' '}
+            Columnas: <strong>txn_date</strong>, <strong>amount</strong>. Opcionales: <strong>description</strong>,{' '}
             <strong>counterparty</strong>, <strong>balance_end</strong>.
+          </p>
+        </div>
+        <div className="card soft">
+          <h3 style={{ marginTop: 0 }}>Buenas prácticas</h3>
+          <p className="hero-sub">
+            Un periodo por fichero (YYYY-MM). Mantén fechas ISO (YYYY-MM-DD) para evitar filas descartadas.
           </p>
         </div>
       </div>
 
       <div className="card section">
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
-          <input value={period} onChange={(e) => setPeriod(e.target.value)} placeholder="YYYY-MM" />
-          <input type="file" accept=".csv" onChange={(e) => setFile(e.target.files?.[0] || null)} />
-          <button onClick={handleUpload}>Subir CSV</button>
+        <h3 style={{ marginTop: 0 }}>Subida</h3>
+        {!companyId ? (
+          <Alert tone="warning" title="Falta seleccionar empresa">
+            Selecciona una empresa arriba para subir el fichero.
+          </Alert>
+        ) : null}
+        <div className="upload-row">
+          <input value={period} onChange={(e) => setPeriod(e.target.value)} placeholder="YYYY-MM" inputMode="numeric" />
+          <input type="file" accept=".csv,.xlsx" onChange={(e) => setFile(e.target.files?.[0] || null)} />
+          <Button onClick={handleUpload} disabled={!companyId || !file}>
+            Subir fichero
+          </Button>
         </div>
-        {message && <p>{message}</p>}
+        {message ? (
+          <div style={{ marginTop: 12 }}>
+            <Alert tone={tone}>{message}</Alert>
+          </div>
+        ) : null}
       </div>
 
       <div className="card section">
@@ -67,13 +106,15 @@ export default function ImportsPage() {
                 <th>ID</th>
                 <th>Periodo</th>
                 <th>Status</th>
+                <th>Intentos</th>
                 <th>Warnings</th>
                 <th>Errors</th>
                 <th>Resumen</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
-              {(data || []).map((imp: any) => (
+              {(data || []).map((imp: ImportJob) => (
                 <tr key={imp.id}>
                   <td>{imp.id}</td>
                   <td>{imp.period}</td>
@@ -84,7 +125,7 @@ export default function ImportsPage() {
                           ? 'ok'
                           : imp.status === 'WARNING'
                           ? 'warn'
-                          : imp.status === 'ERROR'
+                          : imp.status === 'ERROR' || imp.status === 'DEAD'
                           ? 'err'
                           : ''
                       }`}
@@ -92,9 +133,21 @@ export default function ImportsPage() {
                       {imp.status}
                     </span>
                   </td>
+                  <td>
+                    {typeof imp.attempts === 'number' || typeof imp.maxAttempts === 'number'
+                      ? `${imp.attempts ?? 0}/${imp.maxAttempts ?? 3}`
+                      : '-'}
+                  </td>
                   <td>{imp.warningCount ?? 0}</td>
                   <td>{imp.errorCount ?? 0}</td>
-                  <td>{imp.errorSummary}</td>
+                  <td>{imp.errorSummary || imp.lastError}</td>
+                  <td style={{ textAlign: 'right' }}>
+                    {imp.status === 'ERROR' || imp.status === 'DEAD' ? (
+                      <Button size="sm" onClick={() => handleRetry(imp.id)}>
+                        Reintentar
+                      </Button>
+                    ) : null}
+                  </td>
                 </tr>
               ))}
             </tbody>

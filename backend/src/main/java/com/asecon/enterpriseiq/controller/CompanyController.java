@@ -37,7 +37,7 @@ public class CompanyController {
         if (user.getRole() == Role.ADMIN) {
             return list();
         }
-        return user.getCompanies().stream()
+        return companyService.findForUser(user.getId()).stream()
             .map(c -> new CompanyDto(c.getId(), c.getName(), c.getPlan()))
             .collect(Collectors.toList());
     }

@@ -13,11 +13,19 @@ public class ImportDto {
     private String errorSummary;
     private Integer warningCount;
     private Integer errorCount;
+    private Instant updatedAt;
+    private Instant runAfter;
+    private Integer attempts;
+    private Integer maxAttempts;
+    private String lastError;
+    private String storageRef;
+    private String originalFilename;
 
     public ImportDto() {}
 
     public ImportDto(Long id, Long companyId, String period, ImportStatus status, Instant createdAt, Instant processedAt,
-                     String errorSummary, Integer warningCount, Integer errorCount) {
+                     String errorSummary, Integer warningCount, Integer errorCount,
+                     Instant updatedAt, Instant runAfter, Integer attempts, Integer maxAttempts, String lastError, String storageRef, String originalFilename) {
         this.id = id;
         this.companyId = companyId;
         this.period = period;
@@ -27,6 +35,13 @@ public class ImportDto {
         this.errorSummary = errorSummary;
         this.warningCount = warningCount;
         this.errorCount = errorCount;
+        this.updatedAt = updatedAt;
+        this.runAfter = runAfter;
+        this.attempts = attempts;
+        this.maxAttempts = maxAttempts;
+        this.lastError = lastError;
+        this.storageRef = storageRef;
+        this.originalFilename = originalFilename;
     }
 
     public Long getId() { return id; }
@@ -47,4 +62,18 @@ public class ImportDto {
     public void setWarningCount(Integer warningCount) { this.warningCount = warningCount; }
     public Integer getErrorCount() { return errorCount; }
     public void setErrorCount(Integer errorCount) { this.errorCount = errorCount; }
+    public Instant getUpdatedAt() { return updatedAt; }
+    public void setUpdatedAt(Instant updatedAt) { this.updatedAt = updatedAt; }
+    public Instant getRunAfter() { return runAfter; }
+    public void setRunAfter(Instant runAfter) { this.runAfter = runAfter; }
+    public Integer getAttempts() { return attempts; }
+    public void setAttempts(Integer attempts) { this.attempts = attempts; }
+    public Integer getMaxAttempts() { return maxAttempts; }
+    public void setMaxAttempts(Integer maxAttempts) { this.maxAttempts = maxAttempts; }
+    public String getLastError() { return lastError; }
+    public void setLastError(String lastError) { this.lastError = lastError; }
+    public String getStorageRef() { return storageRef; }
+    public void setStorageRef(String storageRef) { this.storageRef = storageRef; }
+    public String getOriginalFilename() { return originalFilename; }
+    public void setOriginalFilename(String originalFilename) { this.originalFilename = originalFilename; }
 }

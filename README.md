@@ -1,28 +1,27 @@
 # EnterpriseIQ (TFG Demo)
 
-Plataforma demo para ASECON con multiempresa, importaci�n CSV, KPIs mensuales y reportes HTML.
+Plataforma demo para ASECON con multiempresa, importación CSV/XLSX, KPIs mensuales, alertas, automatización y reportes HTML.
 
 ## Stack
 - Backend: Java 21 + Spring Boot 3 (Maven), Spring Web/Security/Data JPA/Validation
 - DB: PostgreSQL
 - Migraciones: Flyway
 - Frontend: React + TypeScript (Vite) + React Router + TanStack Query
-- Auth: JWT (access token + refresh token con rotacion)
+- Auth: JWT (access token + refresh token con rotación)
 - Infra: Docker + docker-compose
 
 ## Arquitectura (resumen)
-- Backend Spring Boot expone API REST con JWT y autorizaci�n por rol.
-- PostgreSQL almacena usuarios, empresas, imports, staging, transacciones, KPIs, alertas y reportes.
+- Backend Spring Boot expone API REST con JWT y autorización por rol.
+- PostgreSQL almacena usuarios, empresas, imports, staging, transacciones, KPIs, alertas, reportes y automatización.
 - Flyway crea esquema y carga datos seed (ADMIN, CONSULTOR, CLIENTE y 2 empresas).
 - Importaciones CSV se suben por API (multipart) y se guardan en filesystem.
 - Scheduler procesa imports PENDING, valida, carga staging y normaliza transacciones.
-- Servicio de KPIs recalcula m�tricas mensuales y dispara alertas si net_flow < umbral.
+- Servicio de KPIs recalcula métricas mensuales y dispara alertas si `net_flow` < umbral.
 - Reportes se generan como HTML y se guardan en filesystem con metadata en DB.
-- Frontend React consume API, permite login, selecci�n de empresa, dashboard, imports y reportes.
-- Multi-tenant l�gico: cada tabla clave tiene `company_id` y acceso se valida por rol.
-- CORS configurado para frontend local.
+- Automatización: jobs programados + cola con reintentos (KPIs / informes / recomendaciones).
+- Recomendaciones: snapshot guardado para que el cliente final vea acciones en su vista ejecutiva.
 
-## CSV esperado
+## CSV esperado (transacciones)
 Columnas obligatorias:
 - `txn_date` (YYYY-MM-DD)
 - `amount` (decimal; positivo=entrada, negativo=salida)
@@ -32,12 +31,10 @@ Columnas opcionales:
 - `counterparty` (string)
 - `balance_end` (decimal)
 
-Se permiten columnas extra y se ignoran.
-
-Reglas de validaci�n:
+Reglas de validación:
 - Falta `txn_date` o `amount` -> ERROR
-- Fecha inv�lida -> WARNING (fila se salta)
-- amount no num�rico -> WARNING (fila se salta)
+- Fecha inválida -> WARNING (fila se salta)
+- Amount no numérico -> WARNING (fila se salta)
 
 ## Credenciales seed
 - ADMIN: `admin@asecon.local` / `password`
@@ -46,22 +43,37 @@ Reglas de validaci�n:
 
 ## Levantar con Docker
 1. `docker-compose up --build`
-2. Backend en `http://localhost:8080`
-3. Frontend en `http://localhost:5173`
+2. Backend en `http://localhost:8081`
+3. Frontend en `http://localhost:5174`
+4. Postgres en `localhost:5433` (solo dev)
 
-## Ejemplos CSV
-- `samples/sample-ok.csv`
-- `samples/sample-warnings.csv`
+## Ingesta automática (sin API)
+Si tu ERP no tiene API o no tienes credenciales, puedes automatizar por “carpeta vigilada”.
+
+- Ruta dentro del contenedor: `./storage/inbox/<companyId>/`
+- Deja ahí ficheros `*.csv` cuyo nombre incluya un periodo `YYYY-MM` (por ejemplo `transactions-2026-03.csv`).
+- El scheduler detecta nuevos ficheros, crea un import y los mueve a `processed/` (o `errors/` si no detecta periodo).
+
+## Automatización (run now)
+Endpoints para consultor/admin:
+- `POST /api/companies/{companyId}/automation/kpis/recompute?monthsBack=2`
+- `POST /api/companies/{companyId}/automation/reports/monthly?period=2026-03`
+- `POST /api/companies/{companyId}/automation/recommendations/snapshot?period=2026-03`
+- `GET  /api/companies/{companyId}/automation/jobs`
+
+El cliente final puede leer las recomendaciones:
+- `GET /api/companies/{companyId}/recommendations/latest`
 
 ## API futuro
-La integraci�n con Cegid API no est� implementada; se considera conector futuro.
+La integración con Cegid API no está implementada; se considera conector futuro.
 
 ## TODO PDF
 El reporte se genera en HTML. Para PDF, se propone usar OpenHTMLtoPDF y exponer descarga.
 
-## Autenticacion (JWT)
-- Login: POST /api/auth/login devuelve ccessToken, efreshToken, ole, userId
-- Refresh: POST /api/auth/refresh rota el refresh token y entrega nuevos tokens
-- Logout: POST /api/auth/logout revoca access y refresh tokens
+## Autenticación (JWT)
+- Login: `POST /api/auth/login` devuelve `accessToken`, `refreshToken`, `role`, `userId`
+- Refresh: `POST /api/auth/refresh` rota el refresh token y entrega nuevos tokens
+- Logout: `POST /api/auth/logout` revoca access y refresh tokens
 
-El frontend guarda ambos tokens en localStorage y renueva el ccessToken automaticamente si el backend responde 401.
+El frontend guarda ambos tokens en localStorage y renueva el access token automáticamente si el backend responde 401.
+

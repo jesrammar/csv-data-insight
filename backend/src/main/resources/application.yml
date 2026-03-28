@@ -23,10 +23,17 @@ app:
   storage:
     imports: ./storage/imports
     reports: ./storage/reports
+    universal: ./storage/universal
+    inbox: ./storage/inbox
   scheduler:
     import-fixed-delay-ms: 120000
     token-cleanup-fixed-delay-ms: 86400000
     refresh-revoked-retention-days: 7
+    automation-worker-fixed-delay-ms: 5000
+    inbox-fixed-delay-ms: 30000
+    kpi-daily-cron: "0 15 2 * * *"
+    kpi-weekly-cron: "0 30 3 * * 0"
+    report-monthly-cron: "0 0 6 1 * *"
 
 logging:
   level:
