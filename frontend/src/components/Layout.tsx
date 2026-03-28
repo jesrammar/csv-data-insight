@@ -1,11 +1,11 @@
-import { NavLink, useNavigate } from 'react-router-dom'
 import { useEffect } from 'react'
+import { NavLink, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { clearTokens, getCompanies, getUserRole, logout } from '../api'
-import CompanySelector from './CompanySelector'
 import { useCompanySelection } from '../hooks/useCompany'
-import Icon from './ui/Icon'
+import CompanySelector from './CompanySelector'
 import Button from './ui/Button'
+import Icon from './ui/Icon'
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate()
@@ -15,10 +15,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     queryFn: getCompanies,
     retry: 1
   })
+
   const { plan } = useCompanySelection()
-  const hasGold = plan === 'GOLD' || plan === 'PLATINUM'
   const role = getUserRole()
   const isClient = role === 'CLIENTE'
+  const hasGold = plan === 'GOLD' || plan === 'PLATINUM'
 
   useEffect(() => {
     const list = (companies || []) as any[]
@@ -33,6 +34,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     }
   }, [companies])
 
+  useEffect(() => {
+    document.body.classList.toggle('body-client', isClient)
+    return () => document.body.classList.remove('body-client')
+  }, [isClient])
+
   async function handleLogout() {
     try {
       await logout()
@@ -46,73 +52,101 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${isClient ? 'mode-client' : 'mode-consultant'}`}>
       <div className="ambient-orb orb-1" aria-hidden="true" />
       <div className="ambient-orb orb-2" aria-hidden="true" />
       <div className="ambient-orb orb-3" aria-hidden="true" />
+
       <aside className="side-nav">
         <div className="brand-stack">
           <div className="brand">EnterpriseIQ</div>
           <span className="brand-sub">ASECON Advisory Suite</span>
         </div>
+
         <nav className="side-links">
-          <NavLink to="/overview" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-            <Icon name="overview" />
-            Vista ejecutiva
-          </NavLink>
-          <NavLink to="/dashboard" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-            <Icon name="dashboard" />
-            Dashboard
-          </NavLink>
-          {!isClient ? (
-            <NavLink to="/imports" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-              <Icon name="imports" />
-              Imports
-            </NavLink>
-          ) : null}
-          {!isClient && hasGold ? (
-            <NavLink to="/tribunal" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-              <Icon name="tribunal" />
-              Tribunal
-            </NavLink>
-          ) : null}
-          {!isClient ? (
-            <NavLink to="/universal" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-              <Icon name="universal" />
-              Universal
-            </NavLink>
-          ) : null}
-          {!isClient ? (
-            <NavLink to="/advisor" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-              <Icon name="advisor" />
-              Asesor
-            </NavLink>
-          ) : null}
-          <NavLink to="/reports" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-            <Icon name="reports" />
-            Reports
-          </NavLink>
-          {!isClient ? (
-            <NavLink to="/automation" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-              <Icon name="automation" />
-              Automatización
-            </NavLink>
-          ) : null}
-          {!isClient ? (
-            <NavLink to="/pricing" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-              <Icon name="pricing" />
-              Pricing
-            </NavLink>
-          ) : null}
+          {isClient ? (
+            <>
+              <div className="nav-section">Operativa</div>
+              <NavLink to="/home" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+                <Icon name="home" />
+                Resumen
+              </NavLink>
+              <NavLink to="/cash" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+                <Icon name="dashboard" />
+                Caja
+              </NavLink>
+              <NavLink to="/alerts" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+                <Icon name="alerts" />
+                Alertas
+              </NavLink>
+              <NavLink to="/reports" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+                <Icon name="reports" />
+                Informes
+              </NavLink>
+              <NavLink to="/help" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+                <Icon name="help" />
+                Ayuda
+              </NavLink>
+            </>
+          ) : (
+            <>
+              <div className="nav-section">Operativa</div>
+              <NavLink to="/overview" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+                <Icon name="overview" />
+                Vista ejecutiva
+              </NavLink>
+              <NavLink to="/dashboard" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+                <Icon name="dashboard" />
+                Caja
+              </NavLink>
+              <NavLink to="/imports" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+                <Icon name="imports" />
+                Cargar datos
+              </NavLink>
+              <NavLink to="/reports" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+                <Icon name="reports" />
+                Entregables
+              </NavLink>
+
+              <div className="nav-section" style={{ marginTop: 12 }}>
+                Consultoría
+              </div>
+              {hasGold ? (
+                <NavLink to="/tribunal" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+                  <Icon name="tribunal" />
+                  Cumplimiento (Tribunal)
+                </NavLink>
+              ) : null}
+              <NavLink to="/universal" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+                <Icon name="universal" />
+                Análisis avanzado
+              </NavLink>
+              <NavLink to="/advisor" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+                <Icon name="advisor" />
+                Asesor
+              </NavLink>
+              <NavLink to="/automation" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+                <Icon name="automation" />
+                Tareas automáticas
+              </NavLink>
+              <NavLink to="/pricing" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+                <Icon name="pricing" />
+                Planes
+              </NavLink>
+            </>
+          )}
         </nav>
+
         <div className="side-glow" />
       </aside>
+
       <div className="main-area">
         <header className="top-bar">
           <div className="top-left">
             <div className="status-dot" />
-            <span className="top-title">Control financiero operativo</span>
-            {companiesPending ? <span className="pill" style={{ marginLeft: 12 }}>Cargando empresas…</span> : null}
+            <span className="top-title">{isClient ? 'Panel operativo' : 'Control financiero operativo'}</span>
+            <span className={`pill ${isClient ? 'pill-client' : 'pill-consultant'}`}>{isClient ? 'Cliente' : 'Consultoría'}</span>
+            {companiesPending ? <span className="pill" style={{ marginLeft: 12 }}>Cargando empresas...</span> : null}
             {companiesError ? (
               <span
                 className="pill"
@@ -123,7 +157,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             ) : null}
           </div>
           <div className="nav-actions">
-            <span className="pill">ASECON Platform</span>
+            {!isClient ? <span className="pill">ASECON Platform</span> : null}
             <CompanySelector companies={companies || []} />
             {companiesError ? (
               <Button

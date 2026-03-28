@@ -1,10 +1,11 @@
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
-import { downloadTransactionsCsv, getDashboard, getTransactionAnalytics, getTransactions } from '../api'
+import { downloadTransactionsCsv, getDashboard, getTransactionAnalytics, getTransactions, getUserRole } from '../api'
 import KpiChart from '../components/KpiChart'
 import PageHeader from '../components/ui/PageHeader'
 import Button from '../components/ui/Button'
 import { useCompanySelection } from '../hooks/useCompany'
+import { formatMoney } from '../utils/format'
 
 function formatPeriod(date: Date) {
   const y = date.getFullYear()
@@ -24,7 +25,8 @@ function lastMonths(count: number) {
 
 export default function DashboardPage() {
   const { id: companyId, plan: localPlan } = useCompanySelection()
-  const monthsCount = localPlan === 'PLATINUM' ? 24 : localPlan === 'GOLD' ? 12 : 6
+  const isClient = getUserRole() === 'CLIENTE'
+  const monthsCount = isClient ? 6 : localPlan === 'PLATINUM' ? 24 : localPlan === 'GOLD' ? 12 : 6
   const months = lastMonths(monthsCount)
   const from = months[0]
   const to = months[months.length - 1]
@@ -101,7 +103,7 @@ export default function DashboardPage() {
   const { data: txData, error: txError, isFetching: txLoading } = useQuery({
     queryKey: ['transactions', companyId, plan, txParams],
     queryFn: () => getTransactions(companyId as number, txParams),
-    enabled: !!companyId && hasGold
+    enabled: !!companyId && hasGold && !isClient
   })
 
   const analyticsParams = useMemo(() => {
@@ -112,7 +114,7 @@ export default function DashboardPage() {
   const { data: txAnalytics, error: txAnalyticsError, isFetching: txAnalyticsLoading } = useQuery({
     queryKey: ['transactions-analytics', companyId, plan, analyticsParams],
     queryFn: () => getTransactionAnalytics(companyId as number, analyticsParams),
-    enabled: !!companyId && hasGold
+    enabled: !!companyId && hasGold && !isClient
   })
 
   async function handleExportTransactions() {
@@ -142,14 +144,18 @@ export default function DashboardPage() {
   return (
     <div>
       <PageHeader
-        title="Dashboard financiero"
-        subtitle={`KPIs del periodo actual y últimos ${monthsCount} meses.`}
+        title={isClient ? 'Caja' : 'Dashboard financiero'}
+        subtitle={
+          isClient
+            ? `Entradas, salidas y saldo de los últimos ${monthsCount} meses (sin tecnicismos).`
+            : `KPIs del periodo actual y últimos ${monthsCount} meses.`
+        }
         actions={
           <div className="card soft" style={{ padding: 14, minWidth: 220 }}>
             <div className="upload-hint">Periodo actual</div>
             <div style={{ fontWeight: 800, marginTop: 6 }}>{to}</div>
             <div className="upload-hint" style={{ marginTop: 6 }}>
-              {latest ? `Net Flow: ${latest.netFlow}` : 'Sin datos'}
+              {latest ? `Neto del mes: ${formatMoney(latest.netFlow)}` : 'Sin datos'}
             </div>
           </div>
         }
@@ -163,33 +169,41 @@ export default function DashboardPage() {
           <h3 style={{ marginTop: 0 }}>KPIs clave</h3>
           <div className="grid">
             <div className="kpi">
-              <h4>Inflows</h4>
-              <strong>{latest?.inflows ?? '-'}</strong>
+              <h4>Entradas</h4>
+              <strong>{formatMoney(latest?.inflows)}</strong>
             </div>
             <div className="kpi">
-              <h4>Outflows</h4>
-              <strong>{latest?.outflows ?? '-'}</strong>
+              <h4>Salidas</h4>
+              <strong>{formatMoney(latest?.outflows)}</strong>
             </div>
             <div className="kpi">
-              <h4>Net Flow</h4>
-              <strong>{latest?.netFlow ?? '-'}</strong>
+              <h4>Neto</h4>
+              <strong>{formatMoney(latest?.netFlow)}</strong>
             </div>
             <div className="kpi">
-              <h4>Ending Balance</h4>
-              <strong>{latest?.endingBalance ?? '-'}</strong>
+              <h4>Saldo fin</h4>
+              <strong>{formatMoney(latest?.endingBalance)}</strong>
             </div>
           </div>
+          {isClient ? (
+            <div className="upload-hint" style={{ marginTop: 10 }}>
+              Consejo: si el neto es negativo, prioriza cobros y revisa gastos fijos antes de recortar ventas.
+            </div>
+          ) : null}
         </div>
         <div className="card">
           <h3 style={{ marginTop: 0 }}>Evolución mensual</h3>
           {!data?.kpis?.length ? (
-            <div className="empty">Sin datos todavía. Importa un CSV.</div>
+            <div className="empty">{isClient ? 'Sin datos todavía. Tu consultora debe importar el CSV/XLSX.' : 'Sin datos todavía. Importa un CSV.'}</div>
           ) : (
             <div style={{ marginBottom: 16 }}>
-              <KpiChart title={`Net Flow (últimos ${monthsCount} meses)`} points={chartPoints} />
+              <KpiChart
+                title={isClient ? `Neto mensual (últimos ${monthsCount} meses)` : `Net Flow (últimos ${monthsCount} meses)`}
+                points={chartPoints}
+              />
             </div>
           )}
-          {!data?.kpis?.length ? null : (
+          {!data?.kpis?.length || isClient ? null : (
             <table className="table">
               <thead>
                 <tr>
@@ -204,10 +218,10 @@ export default function DashboardPage() {
                 {(data?.kpis || []).map((k: any) => (
                   <tr key={k.period}>
                     <td>{k.period}</td>
-                    <td>{k.inflows}</td>
-                    <td>{k.outflows}</td>
-                    <td>{k.netFlow}</td>
-                    <td>{k.endingBalance}</td>
+                    <td>{formatMoney(k.inflows)}</td>
+                    <td>{formatMoney(k.outflows)}</td>
+                    <td>{formatMoney(k.netFlow)}</td>
+                    <td>{formatMoney(k.endingBalance)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -216,47 +230,70 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      <div className="grid section">
-        <div className="card">
-          <h3 style={{ marginTop: 0 }}>Seguimiento y asesoramiento</h3>
-          <p className="hero-sub">Plan actual: {plan}</p>
-          {!metrics.length ? (
-            <div className="empty">Sin métricas avanzadas para este plan.</div>
-          ) : (
-            <div className="grid">
-              {metrics.map((m: any) => (
-                <div className="kpi" key={m.key}>
-                  <h4>{m.label}</h4>
-                  <strong>{m.value}</strong>
-                </div>
-              ))}
-            </div>
-          )}
+      {isClient ? (
+        <div className="card section">
+          <h3 style={{ marginTop: 0 }}>Qué significa esto</h3>
+          <div className="hero-sub">
+            <ul style={{ margin: 0, paddingLeft: 18, display: 'grid', gap: 8 }}>
+              <li>
+                <strong>Entradas</strong>: cobros (ventas, ingresos).
+              </li>
+              <li>
+                <strong>Salidas</strong>: pagos (gastos, proveedores, nóminas).
+              </li>
+              <li>
+                <strong>Neto</strong>: entradas - salidas. Si baja 2-3 meses seguidos, pide revisión.
+              </li>
+              <li>
+                <strong>Saldo fin</strong>: estimación de caja al cierre del mes.
+              </li>
+            </ul>
+          </div>
         </div>
-        <div className="card">
-          <h3 style={{ marginTop: 0 }}>Insights</h3>
-          {!insights.length ? (
-            <div className="empty">No hay insights disponibles para este plan.</div>
-          ) : (
-            <div className="grid">
-              {insights.map((i: any, idx: number) => (
-                <div className="kpi" key={`${i.title}-${idx}`}>
-                  <h4>{i.title}</h4>
-                  <strong>{i.detail}</strong>
-                </div>
-              ))}
-            </div>
-          )}
+      ) : (
+        <div className="grid section">
+          <div className="card">
+            <h3 style={{ marginTop: 0 }}>Seguimiento y asesoramiento</h3>
+            <p className="hero-sub">Plan actual: {plan}</p>
+            {!metrics.length ? (
+              <div className="empty">Sin métricas avanzadas para este plan.</div>
+            ) : (
+              <div className="grid">
+                {metrics.map((m: any) => (
+                  <div className="kpi" key={m.key}>
+                    <h4>{m.label}</h4>
+                    <strong>{m.value}</strong>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="card">
+            <h3 style={{ marginTop: 0 }}>Insights</h3>
+            {!insights.length ? (
+              <div className="empty">No hay insights disponibles para este plan.</div>
+            ) : (
+              <div className="grid">
+                {insights.map((i: any, idx: number) => (
+                  <div className="kpi" key={`${i.title}-${idx}`}>
+                    <h4>{i.title}</h4>
+                    <strong>{i.detail}</strong>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
-      <div className="grid section">
-        <div className="card">
-          <h3 style={{ marginTop: 0 }}>Detalle de transacciones</h3>
-          {!hasGold ? (
-            <div className="empty">Disponible en GOLD/PLATINUM (drill-down y export).</div>
-          ) : (
-            <div>
+      {isClient ? null : (
+        <div className="grid section">
+          <div className="card">
+            <h3 style={{ marginTop: 0 }}>Detalle de transacciones</h3>
+            {!hasGold ? (
+              <div className="empty">Disponible en GOLD/PLATINUM (drill-down y export).</div>
+            ) : (
+              <div>
               <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
                 <label style={{ display: 'grid', gap: 6 }}>
                   <span className="upload-hint">Modo</span>
@@ -490,7 +527,7 @@ export default function DashboardPage() {
                         return (
                           <tr key={t.id}>
                             <td>{t.txnDate}</td>
-                            <td style={{ color, fontWeight: 700 }}>{amt.toFixed(2)}</td>
+                            <td style={{ color, fontWeight: 700 }}>{formatMoney(amt)}</td>
                             <td>{t.description}</td>
                             <td>{t.counterparty || '-'}</td>
                             <td>{t.period}</td>
@@ -513,10 +550,11 @@ export default function DashboardPage() {
                   </Button>
                 </div>
               )}
-            </div>
-          )}
+              </div>
+            )}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   )
 }
