@@ -177,6 +177,20 @@ export async function getReports(companyId: number) {
   return request(`/api/companies/${companyId}/reports`)
 }
 
+export type AlertDto = {
+  id: number
+  companyId: number
+  period: string
+  type: string
+  message: string
+  createdAt: string
+}
+
+export async function getAlerts(companyId: number, period?: string) {
+  const q = period ? `?period=${encodeURIComponent(period)}` : ''
+  return request<AlertDto[]>(`/api/companies/${companyId}/alerts${q}`)
+}
+
 export async function getTribunalSummary(companyId: number) {
   return request(`/api/companies/${companyId}/tribunal/summary`)
 }

@@ -14,6 +14,9 @@ const UniversalDashboardPage = lazy(() => import('./pages/UniversalDashboardPage
 const PricingPage = lazy(() => import('./pages/PricingPage'))
 const AutomationPage = lazy(() => import('./pages/AutomationPage'))
 const AdvisorPage = lazy(() => import('./pages/AdvisorPage'))
+const ClientHomePage = lazy(() => import('./pages/ClientHomePage'))
+const AlertsPage = lazy(() => import('./pages/AlertsPage'))
+const HelpPage = lazy(() => import('./pages/HelpPage'))
 
 function RouteFallback() {
   return (
@@ -47,9 +50,34 @@ export default function App() {
     <Layout>
       <Suspense fallback={<RouteFallback />}>
         <Routes>
-          <Route path="/" element={<Navigate to="/overview" />} />
-          <Route path="/overview" element={<OverviewPage />} />
-          <Route path="/dashboard" element={<DashboardPage />} />
+          <Route path="/" element={<Navigate to={isClient ? '/home' : '/overview'} />} />
+          <Route
+            path="/home"
+            element={
+              <Guard allow={isClient}>
+                <ClientHomePage />
+              </Guard>
+            }
+          />
+          <Route path="/overview" element={isClient ? <Navigate to="/home" replace /> : <OverviewPage />} />
+          <Route path="/dashboard" element={isClient ? <Navigate to="/cash" replace /> : <DashboardPage />} />
+          <Route path="/cash" element={<DashboardPage />} />
+          <Route
+            path="/alerts"
+            element={
+              <Guard allow={isClient}>
+                <AlertsPage />
+              </Guard>
+            }
+          />
+          <Route
+            path="/help"
+            element={
+              <Guard allow={isClient}>
+                <HelpPage />
+              </Guard>
+            }
+          />
           <Route
             path="/imports"
             element={
