@@ -82,7 +82,7 @@ public class UniversalController {
         accessService.requirePlanAtLeast(companyId, Plan.BRONZE);
 
         TabularFileService.XlsxOptions xlsxOptions = null;
-        if (TabularFileService.isXlsx(file) && plan != null && plan.isAtLeast(Plan.PLATINUM)) {
+        if (TabularFileService.isXlsx(file)) {
             Integer sheet = parseOptionalInt(sheetIndex);
             Integer header = parseOptionalInt(headerRow);
             if (sheet != null || header != null) {
@@ -101,7 +101,7 @@ public class UniversalController {
                                                @RequestPart(name = "headerRow", required = false) String headerRow) throws IOException {
         var user = accessService.currentUser();
         accessService.requireCompanyAccess(user, companyId);
-        accessService.requirePlanAtLeast(companyId, Plan.PLATINUM);
+        accessService.requirePlanAtLeast(companyId, Plan.BRONZE);
         if (!TabularFileService.isXlsx(file)) {
             throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.BAD_REQUEST, "Se esperaba un XLSX");
         }
