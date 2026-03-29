@@ -76,7 +76,8 @@ public class AutomationWorker {
                 if (companyId != null) reportAutomationService.generateMonthly(companyId, period);
             } else if (job.getType() == AutomationJobType.SNAPSHOT_RECOMMENDATIONS) {
                 String period = stringPayload(payload, "period", YearMonth.now().toString());
-                if (companyId != null) recommendationSnapshotService.snapshot(companyId, period);
+                String objective = stringPayload(payload, "objective", null);
+                if (companyId != null) recommendationSnapshotService.snapshot(companyId, period, objective);
             }
 
             job.setStatus(AutomationJobStatus.SUCCESS);

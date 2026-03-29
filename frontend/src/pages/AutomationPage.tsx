@@ -21,6 +21,7 @@ export default function AutomationPage() {
   const [monthsBack, setMonthsBack] = useState(2)
   const [reportPeriod, setReportPeriod] = useState(() => nowYmMinus(1))
   const [recPeriod, setRecPeriod] = useState(() => nowYmMinus(0))
+  const [recObjective, setRecObjective] = useState<'GENERAL' | 'CASH' | 'COST' | 'MARGIN' | 'GROWTH' | 'RISK'>('GENERAL')
 
   const { data: jobs, error, refetch, isFetching } = useQuery({
     queryKey: ['automation-jobs', companyId],
@@ -49,7 +50,7 @@ export default function AutomationPage() {
   })
 
   const snapshot = useMutation({
-    mutationFn: () => runSnapshotRecommendations(companyId as number, recPeriod),
+    mutationFn: () => runSnapshotRecommendations(companyId as number, recPeriod, recObjective),
     onSuccess: async () => {
       toast.push({ tone: 'success', title: 'Automatización', message: 'Job de recomendaciones encolado.' })
       await refetch()
@@ -104,6 +105,14 @@ export default function AutomationPage() {
           <div className="upload-row">
             <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <span style={{ width: 140 }}>Recomendaciones</span>
+              <select value={recObjective} onChange={(e) => setRecObjective(e.target.value as any)}>
+                <option value="GENERAL">General</option>
+                <option value="CASH">Caja</option>
+                <option value="COST">Costes</option>
+                <option value="MARGIN">Margen</option>
+                <option value="GROWTH">Crecimiento</option>
+                <option value="RISK">Riesgo</option>
+              </select>
               <input value={recPeriod} onChange={(e) => setRecPeriod(e.target.value)} placeholder="YYYY-MM" />
             </label>
             <Button onClick={() => snapshot.mutate()} disabled={!companyId} loading={snapshot.isPending}>

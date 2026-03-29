@@ -1,10 +1,14 @@
 package com.asecon.enterpriseiq.controller;
 
 import com.asecon.enterpriseiq.dto.ImportDto;
+import com.asecon.enterpriseiq.dto.ImportPreviewDto;
 import com.asecon.enterpriseiq.model.ImportJob;
 import com.asecon.enterpriseiq.service.AccessService;
+import com.asecon.enterpriseiq.service.ImportMappingService;
 import com.asecon.enterpriseiq.service.ImportService;
+import com.asecon.enterpriseiq.service.TabularFileService;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import java.io.IOException;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -17,10 +21,12 @@ import org.springframework.web.multipart.MultipartFile;
 public class ImportController {
     private final ImportService importService;
     private final AccessService accessService;
+    private final ImportMappingService importMappingService;
 
-    public ImportController(ImportService importService, AccessService accessService) {
+    public ImportController(ImportService importService, AccessService accessService, ImportMappingService importMappingService) {
         this.importService = importService;
         this.accessService = accessService;
+        this.importMappingService = importMappingService;
     }
 
     @GetMapping
@@ -41,6 +47,43 @@ public class ImportController {
         return toDto(job);
     }
 
+    @PostMapping("/preview")
+    @PreAuthorize("hasAnyRole('ADMIN','CONSULTOR')")
+    public ImportPreviewDto preview(@PathVariable Long companyId,
+                                    @RequestPart("file") @NotNull MultipartFile file,
+                                    @RequestPart(name = "sheetIndex", required = false) String sheetIndex,
+                                    @RequestPart(name = "headerRow", required = false) String headerRow) throws IOException {
+        var user = accessService.currentUser();
+        accessService.requireCompanyAccess(user, companyId);
+        TabularFileService.XlsxOptions xlsxOptions = null;
+        Integer sheet = parseOptionalInt(sheetIndex);
+        Integer header = parseOptionalInt(headerRow);
+        if (TabularFileService.isXlsx(file) && (sheet != null || header != null)) {
+            xlsxOptions = new TabularFileService.XlsxOptions(sheet, header);
+        }
+        return importMappingService.preview(file, xlsxOptions);
+    }
+
+    @PostMapping("/smart")
+    @PreAuthorize("hasAnyRole('ADMIN','CONSULTOR')")
+    public ImportDto uploadSmart(@PathVariable Long companyId,
+                                 @RequestParam("period") @NotBlank String period,
+                                 @RequestPart("file") @NotNull MultipartFile file,
+                                 @RequestPart("txnDateCol") @NotBlank String txnDateCol,
+                                 @RequestPart("amountCol") @NotBlank String amountCol,
+                                 @RequestPart(name = "descriptionCol", required = false) String descriptionCol,
+                                 @RequestPart(name = "counterpartyCol", required = false) String counterpartyCol,
+                                 @RequestPart(name = "balanceEndCol", required = false) String balanceEndCol,
+                                 @RequestPart(name = "sheetIndex", required = false) String sheetIndex,
+                                 @RequestPart(name = "headerRow", required = false) String headerRow) throws IOException {
+        var user = accessService.currentUser();
+        accessService.requireCompanyAccess(user, companyId);
+        Integer sheet = parseOptionalInt(sheetIndex);
+        Integer header = parseOptionalInt(headerRow);
+        ImportJob job = importService.createImportMapped(companyId, period, file, txnDateCol, amountCol, descriptionCol, counterpartyCol, balanceEndCol, sheet, header);
+        return toDto(job);
+    }
+
     @PostMapping("/{importId}/retry")
     @PreAuthorize("hasAnyRole('ADMIN','CONSULTOR')")
     public ImportDto retry(@PathVariable Long companyId, @PathVariable Long importId) {
@@ -54,5 +97,16 @@ public class ImportController {
         return new ImportDto(job.getId(), job.getCompany().getId(), job.getPeriod(), job.getStatus(),
             job.getCreatedAt(), job.getProcessedAt(), job.getErrorSummary(), job.getWarningCount(), job.getErrorCount(),
             job.getUpdatedAt(), job.getRunAfter(), job.getAttempts(), job.getMaxAttempts(), job.getLastError(), job.getStorageRef(), job.getOriginalFilename());
+    }
+
+    private static Integer parseOptionalInt(String raw) {
+        if (raw == null) return null;
+        String v = raw.trim();
+        if (v.isEmpty()) return null;
+        try {
+            return Integer.parseInt(v);
+        } catch (NumberFormatException ex) {
+            return null;
+        }
     }
 }

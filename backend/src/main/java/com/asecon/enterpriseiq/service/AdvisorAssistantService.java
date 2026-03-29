@@ -79,13 +79,17 @@ public class AdvisorAssistantService {
     }
 
     public AdvisorRecommendationsDto recommendations(Long companyId, String period) {
+        return recommendations(companyId, period, null);
+    }
+
+    public AdvisorRecommendationsDto recommendations(Long companyId, String period, String objective) {
         Optional<UniversalSummaryDto> universal = universalCsvService.latest(companyId);
         DashboardContext dashboard = loadDashboard(companyId);
         TribunalSummaryDto tribunal = safeTribunal(companyId);
         TransactionAnalyticsDto txAnalytics = loadTxAnalytics(companyId, dashboard);
 
         List<UniversalInsightDto> insights = universal.map(u -> u.insights() == null ? List.<UniversalInsightDto>of() : u.insights()).orElse(List.of());
-        Intent intent = Intent.GENERAL;
+        Intent intent = intentFromObjective(objective);
         Horizon horizon = new Horizon("30d", "60d");
         List<AdvisorActionDto> actions = buildActions(universal.orElse(null), insights, dashboard, tribunal, txAnalytics, intent, horizon);
         String reply = buildReply(universal.orElse(null), insights, dashboard, tribunal, intent, actions);
@@ -96,6 +100,18 @@ public class AdvisorAssistantService {
 
         String summary = reply == null ? "" : reply;
         return new AdvisorRecommendationsDto(resolvedPeriod, summary, actions == null ? List.of() : actions);
+    }
+
+    private static Intent intentFromObjective(String objective) {
+        String obj = RecommendationObjective.normalize(objective);
+        return switch (obj) {
+            case RecommendationObjective.CASH -> Intent.CASH;
+            case RecommendationObjective.COST -> Intent.COST;
+            case RecommendationObjective.MARGIN -> Intent.MARGIN;
+            case RecommendationObjective.GROWTH -> Intent.GROWTH;
+            case RecommendationObjective.RISK -> Intent.RISK;
+            default -> Intent.GENERAL;
+        };
     }
 
     public String buildConsultingReportHtml(Long companyId, String companyName) {

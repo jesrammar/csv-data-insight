@@ -173,6 +173,91 @@ export async function uploadImport(companyId: number, period: string, file: File
   return res.json()
 }
 
+export type ImportPreviewDto = {
+  headers: string[]
+  sampleRows: string[][]
+  suggestedMapping: Record<string, string>
+  confidence: number
+}
+
+export async function previewImport(companyId: number, file: File, opts: { sheetIndex?: number; headerRow?: number } = {}) {
+  const token = getToken()
+  const form = new FormData()
+  form.append('file', file)
+  if (opts.sheetIndex != null) form.append('sheetIndex', String(opts.sheetIndex))
+  if (opts.headerRow != null) form.append('headerRow', String(opts.headerRow))
+
+  let res = await fetch(`${API_URL}/api/companies/${companyId}/imports/preview`, {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    body: form
+  })
+  if (res.status === 401) {
+    const newToken = await refreshAccessToken()
+    if (newToken) {
+      res = await fetch(`${API_URL}/api/companies/${companyId}/imports/preview`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${newToken}` },
+        body: form
+      })
+    }
+  }
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(text || `HTTP ${res.status}`)
+  }
+  return res.json() as Promise<ImportPreviewDto>
+}
+
+export async function uploadImportSmart(
+  companyId: number,
+  period: string,
+  file: File,
+  mapping: {
+    txnDateCol: string
+    amountCol: string
+    descriptionCol?: string
+    counterpartyCol?: string
+    balanceEndCol?: string
+    sheetIndex?: number
+    headerRow?: number
+  }
+) {
+  const token = getToken()
+  const form = new FormData()
+  form.append('period', period)
+  form.append('file', file)
+  form.append('txnDateCol', mapping.txnDateCol)
+  form.append('amountCol', mapping.amountCol)
+  if (mapping.descriptionCol) form.append('descriptionCol', mapping.descriptionCol)
+  if (mapping.counterpartyCol) form.append('counterpartyCol', mapping.counterpartyCol)
+  if (mapping.balanceEndCol) form.append('balanceEndCol', mapping.balanceEndCol)
+  if (mapping.sheetIndex != null) form.append('sheetIndex', String(mapping.sheetIndex))
+  if (mapping.headerRow != null) form.append('headerRow', String(mapping.headerRow))
+
+  let res = await fetch(`${API_URL}/api/companies/${companyId}/imports/smart`, {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    body: form
+  })
+  if (res.status === 401) {
+    const newToken = await refreshAccessToken()
+    if (newToken) {
+      res = await fetch(`${API_URL}/api/companies/${companyId}/imports/smart`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${newToken}` },
+        body: form
+      })
+    }
+  }
+
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(text || `HTTP ${res.status}`)
+  }
+  return res.json()
+}
+
 export async function getReports(companyId: number) {
   return request(`/api/companies/${companyId}/reports`)
 }
@@ -526,8 +611,49 @@ export type AdvisorRecommendationSnapshot = {
   actions: AdvisorAction[]
 }
 
+export type MacroMetric = {
+  label: string
+  value: number | null
+  unit: string | null
+  source: string | null
+}
+
+export type MacroContext = {
+  period: string
+  updatedAt: string | null
+  inflationYoyPct: MacroMetric
+  euribor1yPct: MacroMetric
+  usdPerEur: MacroMetric
+}
+
+export async function getMacroContext(companyId: number, period?: string) {
+  const q = period ? `?period=${encodeURIComponent(period)}` : ''
+  return request<MacroContext>(`/api/companies/${companyId}/macro/context${q}`)
+}
+
 export async function getLatestRecommendations(companyId: number) {
   return request<AdvisorRecommendationSnapshot>(`/api/companies/${companyId}/recommendations/latest`)
+}
+
+export async function getLatestRecommendationsByObjective(companyId: number, objective?: string) {
+  const q = objective ? `?objective=${encodeURIComponent(objective)}` : ''
+  return request<AdvisorRecommendationSnapshot>(`/api/companies/${companyId}/recommendations/latest${q}`)
+}
+
+export async function previewRecommendations(companyId: number, opts: { period?: string; objective?: string } = {}) {
+  const params = new URLSearchParams()
+  if (opts.period) params.set('period', opts.period)
+  if (opts.objective) params.set('objective', opts.objective)
+  const q = params.toString() ? `?${params.toString()}` : ''
+  return request<AdvisorRecommendationSnapshot>(`/api/companies/${companyId}/recommendations/preview${q}`)
+}
+
+export async function snapshotRecommendations(companyId: number, period: string, objective?: string) {
+  const q = objective ? `?objective=${encodeURIComponent(objective)}` : ''
+  return request<AdvisorRecommendationSnapshot>(
+    `/api/companies/${companyId}/recommendations/snapshot/${encodeURIComponent(period)}${q}`,
+    { method: 'POST' }
+  )
 }
 
 export type AutomationJob = {
@@ -557,8 +683,11 @@ export async function runMonthlyReport(companyId: number, period?: string) {
   return request(`/api/companies/${companyId}/automation/reports/monthly${q}`, { method: 'POST' })
 }
 
-export async function runSnapshotRecommendations(companyId: number, period?: string) {
-  const q = period ? `?period=${encodeURIComponent(period)}` : ''
+export async function runSnapshotRecommendations(companyId: number, period?: string, objective?: string) {
+  const params = new URLSearchParams()
+  if (period) params.set('period', period)
+  if (objective) params.set('objective', objective)
+  const q = params.toString() ? `?${params.toString()}` : ''
   return request(`/api/companies/${companyId}/automation/recommendations/snapshot${q}`, { method: 'POST' })
 }
 

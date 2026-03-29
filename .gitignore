@@ -28,6 +28,7 @@ replay_pid*
 /backend/target/
 /backend/storage/
 /backend/.maven/
+/.m2repo/
 
 # Frontend
 /frontend/node_modules/

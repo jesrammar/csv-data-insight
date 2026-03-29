@@ -3,8 +3,9 @@ import { useMemo, useState } from 'react'
 import {
   assistantChat,
   generateAdvisorReport,
-  getLatestRecommendations,
+  getLatestRecommendationsByObjective,
   getReportContent,
+  snapshotRecommendations,
   type AdvisorAction,
   type AssistantMessage
 } from '../api'
@@ -26,6 +27,7 @@ export default function AdvisorPage() {
   const queryClient = useQueryClient()
   const toast = useToast()
   const hasPlatinum = plan === 'PLATINUM'
+  const nowPeriod = new Date().toISOString().slice(0, 7)
 
   const [assistantMessages, setAssistantMessages] = useState<AssistantMessage[]>([
     {
@@ -38,10 +40,12 @@ export default function AdvisorPage() {
   const [assistantLoading, setAssistantLoading] = useState(false)
   const [assistantActions, setAssistantActions] = useState<AdvisorAction[]>([])
   const [assistantQuestions, setAssistantQuestions] = useState<string[]>([])
+  const [objective, setObjective] = useState<'GENERAL' | 'CASH' | 'COST' | 'MARGIN' | 'GROWTH' | 'RISK'>('GENERAL')
+  const [snapshotPeriod, setSnapshotPeriod] = useState(nowPeriod)
 
   const { data: snapshot } = useQuery({
-    queryKey: ['advisor-snapshot', companyId],
-    queryFn: () => getLatestRecommendations(companyId as number),
+    queryKey: ['advisor-snapshot', companyId, objective],
+    queryFn: () => getLatestRecommendationsByObjective(companyId as number, objective),
     enabled: !!companyId && hasPlatinum
   })
 
@@ -90,7 +94,19 @@ export default function AdvisorPage() {
 
   async function handleRefreshSnapshot() {
     if (!companyId) return
-    await queryClient.invalidateQueries({ queryKey: ['advisor-snapshot', companyId] })
+    await queryClient.invalidateQueries({ queryKey: ['advisor-snapshot', companyId, objective] })
+  }
+
+  async function handleGenerateSnapshot() {
+    if (!companyId || !hasPlatinum) return
+    const p = (snapshotPeriod || '').trim() || nowPeriod
+    try {
+      await snapshotRecommendations(companyId as number, p, objective)
+      await queryClient.invalidateQueries({ queryKey: ['advisor-snapshot', companyId, objective] })
+      toast.push({ tone: 'success', title: 'Recomendaciones', message: 'Snapshot generado.' })
+    } catch (err: any) {
+      toast.push({ tone: 'danger', title: 'Error', message: err?.message || 'No se pudo generar el snapshot.' })
+    }
   }
 
   return (
@@ -159,14 +175,31 @@ export default function AdvisorPage() {
             <div className="card">
               <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
                 <h3 style={{ margin: 0 }}>Recomendaciones</h3>
-                <Button size="sm" variant="ghost" onClick={handleRefreshSnapshot}>
-                  Refrescar
+                <div className="row" style={{ gap: 8 }}>
+                  <Button size="sm" variant="ghost" onClick={handleRefreshSnapshot}>
+                    Refrescar
+                  </Button>
+                </div>
+              </div>
+
+              <div className="upload-row" style={{ marginTop: 12, gap: 10 }}>
+                <select value={objective} onChange={(e) => setObjective(e.target.value as any)}>
+                  <option value="GENERAL">Objetivo: General</option>
+                  <option value="CASH">Objetivo: Caja</option>
+                  <option value="COST">Objetivo: Costes</option>
+                  <option value="MARGIN">Objetivo: Margen</option>
+                  <option value="GROWTH">Objetivo: Crecimiento</option>
+                  <option value="RISK">Objetivo: Riesgo</option>
+                </select>
+                <input value={snapshotPeriod} onChange={(e) => setSnapshotPeriod(e.target.value)} placeholder="YYYY-MM" />
+                <Button size="sm" onClick={handleGenerateSnapshot} disabled={!snapshotPeriod.trim()}>
+                  Generar
                 </Button>
               </div>
 
               {!latestActions?.length ? (
                 <div className="empty" style={{ marginTop: 12 }}>
-                  Aún no hay snapshots. Puedes generar uno desde Automatización.
+                  Aún no hay snapshots para este objetivo. Pulsa “Generar” o usa Automatización.
                 </div>
               ) : (
                 <div style={{ marginTop: 12, display: 'grid', gap: 10 }}>
