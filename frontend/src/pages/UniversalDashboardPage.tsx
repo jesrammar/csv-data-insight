@@ -44,6 +44,8 @@ export default function UniversalDashboardPage() {
   const [rowsPreview, setRowsPreview] = useState<UniversalRows | null>(null)
   const [rowsLoading, setRowsLoading] = useState(false)
   const [rowsError, setRowsError] = useState<string | null>(null)
+  const [showAllInsights, setShowAllInsights] = useState(false)
+  const [showAllColumns, setShowAllColumns] = useState(false)
 
   const { data, error, refetch } = useQuery({
     queryKey: ['universal-summary', companyId],
@@ -57,10 +59,9 @@ export default function UniversalDashboardPage() {
     setUploadError(null)
     setUploadOk(null)
     try {
-      const opts =
-        file.name.toLowerCase().endsWith('.xlsx') && hasPlatinum
-          ? { sheetIndex: sheetIndex ?? xlsxPreview?.sheetIndex ?? undefined, headerRow: headerRow ?? xlsxPreview?.headerRow ?? undefined }
-          : {}
+      const opts = file.name.toLowerCase().endsWith('.xlsx')
+        ? { sheetIndex: sheetIndex ?? xlsxPreview?.sheetIndex ?? undefined, headerRow: headerRow ?? xlsxPreview?.headerRow ?? undefined }
+        : {}
       await uploadUniversalImport(companyId, file, opts)
       await refetch()
       setFile(null)
@@ -79,15 +80,23 @@ export default function UniversalDashboardPage() {
   const columns = summary?.columns || []
   const correlations = summary?.correlations || []
   const insights = summary?.insights || []
-  const numericColumns = columns.filter((c: any) => c.detectedType === 'number').slice(0, 3)
+  const numericColumns = columns.filter((c: any) => c.detectedType === 'number').slice(0, 2)
   const dateColumns = columns.filter((c: any) => c.detectedType === 'date').slice(0, 2)
+  const categoricalColumns = columns.filter((c: any) => c.detectedType === 'text' && (c.topValues?.length || 0) > 0).slice(0, 6)
   const topCorrelations = correlations.slice(0, 5)
+
+  const likelyBadHeaders = useMemo(() => {
+    if (!columns?.length) return false
+    const numericish = (name: any) => /^[0-9,.\-]+$/.test(String(name || '').trim())
+    const n = columns.filter((c: any) => numericish(c.name)).length
+    return columns.length >= 6 && n / columns.length >= 0.5
+  }, [columns])
 
   const isCsv = !file ? true : file.name.toLowerCase().endsWith('.csv')
   const isXlsx = !file ? false : file.name.toLowerCase().endsWith('.xlsx')
   const isAllowed = !file ? true : isCsv || isXlsx
 
-  const canPreviewXlsx = !!companyId && hasPlatinum && isXlsx && !!file
+  const canPreviewXlsx = !!companyId && isXlsx && !!file
 
   const previewOpts = useMemo(() => {
     return {
@@ -197,7 +206,7 @@ export default function UniversalDashboardPage() {
     <div>
       <PageHeader
         title="Análisis universal"
-        subtitle="Sube un CSV o XLSX. El plan mejora la profundidad, las gráficas y el asesoramiento."
+        subtitle="Sube un CSV o XLSX y te enseño primero lo importante. El detalle técnico queda plegado."
         actions={<span className="badge">{plan}</span>}
       />
 
@@ -218,72 +227,74 @@ export default function UniversalDashboardPage() {
               <Alert tone="warning">Selecciona una empresa para subir el archivo.</Alert>
             </div>
           )}
-          {file && isXlsx && !hasPlatinum && (
-            <p className="upload-hint">Tip: en PLATINUM puedes elegir hoja y fila de encabezado antes de analizar.</p>
-          )}
-          {file && isXlsx && hasPlatinum && (
-            <div className="card soft" style={{ marginTop: 12 }}>
-              <h3 style={{ marginTop: 0 }}>Opciones XLSX (PLATINUM)</h3>
-              {xlsxLoading && <div className="upload-hint">Detectando estructura del Excel…</div>}
-              {!!xlsxPreview?.sheets?.length && (
-                <div className="upload-row" style={{ marginTop: 10 }}>
-                  <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                    <span style={{ width: 110 }}>Hoja</span>
-                    <select
-                      value={sheetIndex ?? xlsxPreview.sheetIndex ?? 0}
-                      onChange={(e) => setSheetIndex(Number(e.target.value))}
-                      disabled={xlsxLoading}
-                    >
-                      {xlsxPreview.sheets.map((s, idx) => (
-                        <option key={`${s}-${idx}`} value={idx}>
-                          {idx + 1}. {s}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                    <span style={{ width: 110 }}>Encabezado</span>
-                    <input
-                      type="number"
-                      min={1}
-                      value={headerRow ?? xlsxPreview.headerRow ?? 1}
-                      onChange={(e) => setHeaderRow(Number(e.target.value))}
-                      disabled={xlsxLoading}
-                      style={{ width: 90 }}
-                    />
-                    <small className="upload-hint">Fila (1-based)</small>
-                  </label>
-                </div>
-              )}
-              {!!xlsxPreview?.headers?.length && (
-                <div style={{ marginTop: 10 }}>
-                  <div className="upload-hint">Headers detectados: {xlsxPreview.headers.slice(0, 8).join(' · ')}{xlsxPreview.headers.length > 8 ? '…' : ''}</div>
-                </div>
-              )}
-              {!!xlsxPreview?.sampleRows?.length && (
-                <div style={{ marginTop: 10, overflow: 'auto' }}>
-                  <table className="table">
-                    <thead>
-                      <tr>
-                        {(xlsxPreview.headers || []).slice(0, 8).map((h) => (
-                          <th key={h}>{h}</th>
+          {file && isXlsx ? (
+            <details className="card soft" style={{ marginTop: 12 }}>
+              <summary className="upload-hint" style={{ cursor: 'pointer' }}>
+                Ajustes XLSX (si las columnas salen raras)
+              </summary>
+              <div style={{ marginTop: 10 }}>
+                {xlsxLoading ? <div className="upload-hint">Detectando estructura del Excel…</div> : null}
+                {!!xlsxPreview?.sheets?.length ? (
+                  <div className="upload-row" style={{ marginTop: 10 }}>
+                    <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <span style={{ width: 110 }}>Hoja</span>
+                      <select
+                        value={sheetIndex ?? xlsxPreview.sheetIndex ?? 0}
+                        onChange={(e) => setSheetIndex(Number(e.target.value))}
+                        disabled={xlsxLoading}
+                      >
+                        {xlsxPreview.sheets.map((s, idx) => (
+                          <option key={`${s}-${idx}`} value={idx}>
+                            {idx + 1}. {s}
+                          </option>
                         ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {xlsxPreview.sampleRows.slice(0, 5).map((row, idx) => (
-                        <tr key={idx}>
-                          {row.slice(0, 8).map((cell, cidx) => (
-                            <td key={`${idx}-${cidx}`}>{cell}</td>
+                      </select>
+                    </label>
+                    <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <span style={{ width: 110 }}>Encabezado</span>
+                      <input
+                        type="number"
+                        min={1}
+                        value={headerRow ?? xlsxPreview.headerRow ?? 1}
+                        onChange={(e) => setHeaderRow(Number(e.target.value))}
+                        disabled={xlsxLoading}
+                        style={{ width: 90 }}
+                      />
+                      <small className="upload-hint">Fila (1-based)</small>
+                    </label>
+                  </div>
+                ) : null}
+                {!!xlsxPreview?.headers?.length ? (
+                  <div style={{ marginTop: 10 }} className="upload-hint">
+                    Headers detectados: {xlsxPreview.headers.slice(0, 8).join(' · ')}
+                    {xlsxPreview.headers.length > 8 ? '…' : ''}
+                  </div>
+                ) : null}
+                {!!xlsxPreview?.sampleRows?.length ? (
+                  <div style={{ marginTop: 10, overflow: 'auto' }}>
+                    <table className="table">
+                      <thead>
+                        <tr>
+                          {(xlsxPreview.headers || []).slice(0, 8).map((h) => (
+                            <th key={h}>{h}</th>
                           ))}
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          )}
+                      </thead>
+                      <tbody>
+                        {xlsxPreview.sampleRows.slice(0, 5).map((row, idx) => (
+                          <tr key={idx}>
+                            {row.slice(0, 8).map((cell, cidx) => (
+                              <td key={`${idx}-${cidx}`}>{cell}</td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : null}
+              </div>
+            </details>
+          ) : null}
           {uploadError && (
             <div style={{ marginTop: 12 }}>
               <Alert tone="danger">{uploadError}</Alert>
@@ -316,6 +327,15 @@ export default function UniversalDashboardPage() {
 
       {error && <p className="error">{String((error as any).message)}</p>}
 
+      {likelyBadHeaders ? (
+        <div className="section">
+          <Alert tone="warning" title="El Excel parece mal interpretado">
+            Los nombres de columna parecen números (posible fila de datos en vez de encabezado). Abre “Ajustes XLSX” y prueba a cambiar la fila de
+            encabezado (o exporta a CSV con títulos).
+          </Alert>
+        </div>
+      ) : null}
+
       <div className="grid section">
         <div className="card">
           <h3 style={{ marginTop: 0 }}>Insights & asesoramiento</h3>
@@ -323,13 +343,20 @@ export default function UniversalDashboardPage() {
             <div className="empty">Sin insights aun. Sube un archivo.</div>
           ) : (
             <ul style={{ margin: 0, paddingLeft: 18 }}>
-              {insights.map((it: any, idx: number) => (
+              {insights.slice(0, showAllInsights ? insights.length : 3).map((it: any, idx: number) => (
                 <li key={`${it.title}-${idx}`} style={{ marginBottom: 8 }}>
                   <strong>{it.title}:</strong> {it.message}
                 </li>
               ))}
             </ul>
           )}
+          {insights.length > 3 ? (
+            <div style={{ marginTop: 10 }}>
+              <Button size="sm" variant="ghost" onClick={() => setShowAllInsights((v) => !v)}>
+                {showAllInsights ? 'Ver menos' : `Ver todos (${insights.length})`}
+              </Button>
+            </div>
+          ) : null}
           {plan === 'BRONZE' && (
             <div className="upload-hint" style={{ marginTop: 10 }}>
               En GOLD/PLATINUM se habilitan correlaciones, distribuciones completas y asesoramiento más accionable.
@@ -481,174 +508,203 @@ export default function UniversalDashboardPage() {
         </div>
       </div>
 
-      <div className="grid section">
-        <div className="card">
-          <h3 style={{ marginTop: 0 }}>Columnas</h3>
+      <div className="section">
+        <details className="card">
+          <summary className="mini-row" style={{ cursor: 'pointer', marginTop: 0 }}>
+            <strong>Columnas</strong>
+            <span className="badge">{columns.length || 0}</span>
+          </summary>
           {!columns.length ? (
-            <div className="empty">Aún no hay análisis. Sube un CSV.</div>
-          ) : (
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Columna</th>
-                  <th>Tipo</th>
-                  <th>Nulos</th>
-                  <th>Unicos</th>
-                  <th>Min</th>
-                  <th>Max</th>
-                  <th>Media</th>
-                  <th>Mediana</th>
-                  <th>P90</th>
-                  <th>Fecha min</th>
-                  <th>Fecha max</th>
-                </tr>
-              </thead>
-              <tbody>
-                {columns.map((c: any) => (
-                  <tr key={c.name}>
-                    <td>{c.name}</td>
-                    <td>{c.detectedType}</td>
-                    <td>{c.nullCount}</td>
-                    <td>{c.uniqueCount}</td>
-                    <td>{c.min ?? '-'}</td>
-                    <td>{c.max ?? '-'}</td>
-                    <td>{c.mean ?? '-'}</td>
-                    <td>{c.median ?? '-'}</td>
-                    <td>{c.p90 ?? '-'}</td>
-                    <td>{c.dateMin ?? '-'}</td>
-                    <td>{c.dateMax ?? '-'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      </div>
-
-      <div className="grid section">
-        <div className="card">
-          <h3 style={{ marginTop: 0 }}>Distribuciones numericas</h3>
-          {!numericColumns.length ? (
-            <div className="empty">No se detectaron columnas numericas.</div>
-          ) : (
-            <div className="grid">
-              {numericColumns.map((c: any) => (
-                <div key={`${c.name}-hist`} className="kpi">
-                  <h4>{c.name}</h4>
-                  {!c.histogram?.length ? (
-                    <span className="badge">sin histograma</span>
-                  ) : (
-                    <div className="bar-stack">
-                      {c.histogram.map((b: any, idx: number) => (
-                        <div key={`${c.name}-bin-${idx}`} className="bar-row">
-                          <span className="bar-label">{b.label}</span>
-                          <div className="bar-track">
-                            <div
-                              className="bar-fill"
-                              style={{ width: `${Math.min(100, (b.count / Math.max(...c.histogram.map((x: any) => x.count))) * 100)}%` }}
-                            />
-                          </div>
-                          <span className="bar-count">{b.count}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-        <div className="card">
-          <h3 style={{ marginTop: 0 }}>Series de fechas</h3>
-          {!dateColumns.length ? (
-            <div className="empty">No se detectaron columnas de fecha.</div>
-          ) : (
-            <div className="grid">
-              {dateColumns.map((c: any) => (
-                <div key={`${c.name}-dates`} className="kpi">
-                  <h4>{c.name}</h4>
-                  {!c.dateSeries?.length ? (
-                    <span className="badge">sin serie</span>
-                  ) : (
-                    <KpiChart
-                      title="Conteo por mes"
-                      points={c.dateSeries.map((d: any) => ({ label: d.label, value: Number(d.count) }))}
-                    />
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div className="grid section">
-        <div className="card">
-          <h3 style={{ marginTop: 0 }}>Top valores (categorias)</h3>
-          {!columns.length ? (
-            <div className="empty">Sin datos todavia.</div>
-          ) : (
-            <div className="grid">
-              {columns.map((c: any) => (
-                <div key={`${c.name}-top`} className="kpi">
-                  <h4>{c.name}</h4>
-                  {!c.topValues?.length ? (
-                    <span className="badge">sin valores</span>
-                  ) : (
-                    <div>
-                      {c.topValues.map((v: any) => (
-                        <div key={`${c.name}-${v.value}`} className="mini-row">
-                          <span>{v.value}</span>
-                          <span className="badge">{v.count}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-        <div className="card">
-          <h3 style={{ marginTop: 0 }}>Correlaciones (numericas)</h3>
-          {!correlations.length ? (
-            <div className="empty">
-              {plan === 'BRONZE'
-                ? 'Correlaciones disponibles en plan GOLD o superior.'
-                : 'No hay correlaciones disponibles.'}
+            <div className="empty" style={{ marginTop: 12 }}>
+              Aún no hay análisis. Sube un CSV/XLSX.
             </div>
           ) : (
-            <div>
-              <div className="insight-grid">
-                {topCorrelations.map((c: any, idx: number) => (
-                  <div key={`${c.columnA}-${c.columnB}-${idx}`} className="kpi">
-                    <h4>{c.columnA} vs {c.columnB}</h4>
-                    <strong>{c.correlation?.toFixed ? c.correlation.toFixed(3) : c.correlation}</strong>
-                  </div>
-                ))}
+            <>
+              <div style={{ marginTop: 12 }}>
+                <Button size="sm" variant="ghost" onClick={() => setShowAllColumns((v) => !v)}>
+                  {showAllColumns ? 'Ver menos' : `Ver todas (${columns.length})`}
+                </Button>
               </div>
-              <div style={{ marginTop: 12 }} />
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Columna A</th>
-                  <th>Columna B</th>
-                  <th>Correlacion</th>
-                </tr>
-              </thead>
-              <tbody>
-                {correlations.map((c: any, idx: number) => (
-                  <tr key={`${c.columnA}-${c.columnB}-${idx}`}>
-                    <td>{c.columnA}</td>
-                    <td>{c.columnB}</td>
-                    <td>{c.correlation?.toFixed ? c.correlation.toFixed(3) : c.correlation}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            </div>
+              <div style={{ marginTop: 12, overflow: 'auto' }}>
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Columna</th>
+                      <th>Tipo</th>
+                      <th>Nulos</th>
+                      <th>Únicos</th>
+                      <th>Min</th>
+                      <th>Max</th>
+                      <th>Media</th>
+                      <th>Mediana</th>
+                      <th>P90</th>
+                      <th>Fecha min</th>
+                      <th>Fecha max</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(showAllColumns ? columns : columns.slice(0, 12)).map((c: any) => (
+                      <tr key={c.name}>
+                        <td>{c.name}</td>
+                        <td>{c.detectedType}</td>
+                        <td>{c.nullCount}</td>
+                        <td>{c.uniqueCount}</td>
+                        <td>{c.min ?? '-'}</td>
+                        <td>{c.max ?? '-'}</td>
+                        <td>{c.mean ?? '-'}</td>
+                        <td>{c.median ?? '-'}</td>
+                        <td>{c.p90 ?? '-'}</td>
+                        <td>{c.dateMin ?? '-'}</td>
+                        <td>{c.dateMax ?? '-'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
-        </div>
+        </details>
+      </div>
+
+      <div className="section">
+        <details className="card">
+          <summary className="mini-row" style={{ cursor: 'pointer', marginTop: 0 }}>
+            <strong>Gráficos</strong>
+            <span className="upload-hint">distribuciones y fechas</span>
+          </summary>
+          <div className="grid" style={{ marginTop: 12 }}>
+            <div className="card soft">
+              <h3 style={{ marginTop: 0 }}>Distribuciones numéricas</h3>
+              {!numericColumns.length ? (
+                <div className="empty">No se detectaron columnas numéricas.</div>
+              ) : (
+                <div className="grid">
+                  {numericColumns.map((c: any) => (
+                    <div key={`${c.name}-hist`} className="kpi">
+                      <h4>{c.name}</h4>
+                      {!c.histogram?.length ? (
+                        <span className="badge">sin histograma</span>
+                      ) : (
+                        <div className="bar-stack">
+                          {c.histogram.map((b: any, idx: number) => (
+                            <div key={`${c.name}-bin-${idx}`} className="bar-row">
+                              <span className="bar-label">{b.label}</span>
+                              <div className="bar-track">
+                                <div
+                                  className="bar-fill"
+                                  style={{ width: `${Math.min(100, (b.count / Math.max(...c.histogram.map((x: any) => x.count))) * 100)}%` }}
+                                />
+                              </div>
+                              <span className="bar-count">{b.count}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="card soft">
+              <h3 style={{ marginTop: 0 }}>Series de fechas</h3>
+              {!dateColumns.length ? (
+                <div className="empty">No se detectaron columnas de fecha.</div>
+              ) : (
+                <div className="grid">
+                  {dateColumns.map((c: any) => (
+                    <div key={`${c.name}-dates`} className="kpi">
+                      <h4>{c.name}</h4>
+                      {!c.dateSeries?.length ? (
+                        <span className="badge">sin serie</span>
+                      ) : (
+                        <KpiChart title="Conteo por mes" points={c.dateSeries.map((d: any) => ({ label: d.label, value: Number(d.count) }))} />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </details>
+      </div>
+
+      <div className="section">
+        <details className="card">
+          <summary className="mini-row" style={{ cursor: 'pointer', marginTop: 0 }}>
+            <strong>Relaciones y categorías</strong>
+            <span className="upload-hint">valores frecuentes y correlaciones</span>
+          </summary>
+          <div className="grid" style={{ marginTop: 12 }}>
+            <div className="card soft">
+              <h3 style={{ marginTop: 0 }}>Top valores (categorías)</h3>
+              {!categoricalColumns.length ? (
+                <div className="empty">No se detectaron columnas categóricas.</div>
+              ) : (
+                <div className="grid">
+                  {categoricalColumns.map((c: any) => (
+                    <div key={`${c.name}-top`} className="kpi">
+                      <h4>{c.name}</h4>
+                      <div>
+                        {(c.topValues || []).slice(0, 5).map((v: any) => (
+                          <div key={`${c.name}-${v.value}`} className="mini-row">
+                            <span>{String(v.value).slice(0, 40)}</span>
+                            <span className="badge">{v.count}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="card soft">
+              <h3 style={{ marginTop: 0 }}>Correlaciones (numéricas)</h3>
+              {!correlations.length ? (
+                <div className="empty">
+                  {plan === 'BRONZE' ? 'Correlaciones disponibles en plan GOLD o superior.' : 'No hay correlaciones disponibles.'}
+                </div>
+              ) : (
+                <div>
+                  <div className="insight-grid">
+                    {topCorrelations.map((c: any, idx: number) => (
+                      <div key={`${c.columnA}-${c.columnB}-${idx}`} className="kpi">
+                        <h4>
+                          {c.columnA} vs {c.columnB}
+                        </h4>
+                        <strong>{c.correlation?.toFixed ? c.correlation.toFixed(3) : c.correlation}</strong>
+                      </div>
+                    ))}
+                  </div>
+                  <details style={{ marginTop: 12 }}>
+                    <summary className="upload-hint" style={{ cursor: 'pointer' }}>
+                      Ver tabla completa
+                    </summary>
+                    <div style={{ marginTop: 10, overflow: 'auto' }}>
+                      <table className="table">
+                        <thead>
+                          <tr>
+                            <th>Columna A</th>
+                            <th>Columna B</th>
+                            <th>Correlación</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {correlations.map((c: any, idx: number) => (
+                            <tr key={`${c.columnA}-${c.columnB}-${idx}`}>
+                              <td>{c.columnA}</td>
+                              <td>{c.columnB}</td>
+                              <td>{c.correlation?.toFixed ? c.correlation.toFixed(3) : c.correlation}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </details>
+                </div>
+              )}
+            </div>
+          </div>
+        </details>
       </div>
     </div>
   )

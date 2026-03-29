@@ -6,9 +6,11 @@ import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVPrinter;
 import org.apache.poi.ss.usermodel.Cell;
@@ -217,7 +219,7 @@ public class TabularFileService {
     private static HeaderInfo findHeader(Sheet sheet, DataFormatter formatter, FormulaEvaluator evaluator) {
         int maxRow = Math.min(sheet.getLastRowNum(), 40);
         int bestRow = -1;
-        int bestNonEmpty = 0;
+        double bestScore = Double.NEGATIVE_INFINITY;
         int bestLastCol = -1;
 
         for (int r = 0; r <= maxRow; r++) {
@@ -230,18 +232,40 @@ public class TabularFileService {
 
             int nonEmpty = 0;
             int lastNonEmptyCol = -1;
+            int numericLike = 0;
+            int textLike = 0;
+            Set<String> distinct = new HashSet<>();
             for (int c = 0; c < lastCell; c++) {
                 Cell cell = row.getCell(c);
                 String v = cell == null ? "" : formatter.formatCellValue(cell, evaluator);
                 if (v != null && !v.trim().isEmpty()) {
                     nonEmpty++;
                     lastNonEmptyCol = c;
+                    String t = v.trim();
+                    distinct.add(t.toLowerCase(Locale.ROOT));
+                    if (looksNumericHeader(t) && !looksYearHeader(t)) numericLike++;
+                    if (looksTextHeader(t) || looksYearHeader(t)) textLike++;
                 }
             }
 
-            if (nonEmpty >= 2 && (nonEmpty > bestNonEmpty || (nonEmpty == bestNonEmpty && lastNonEmptyCol > bestLastCol))) {
+            if (nonEmpty < 2 || lastNonEmptyCol < 1) continue;
+
+            double distinctRatio = distinct.isEmpty() ? 0.0 : (double) distinct.size() / (double) nonEmpty;
+            double textRatio = (double) textLike / (double) nonEmpty;
+            double numericRatio = (double) numericLike / (double) nonEmpty;
+
+            // Header rows tend to have more text labels (or years) and higher uniqueness.
+            double score = 0.0;
+            score += nonEmpty * 1.0;
+            score += distinctRatio * 6.0;
+            score += textRatio * 8.0;
+            score -= numericRatio * 7.0;
+            score += Math.min(4.0, (double) lastNonEmptyCol / 50.0);
+            score -= r * 0.15; // prefer earlier rows for headers
+
+            if (score > bestScore) {
                 bestRow = r;
-                bestNonEmpty = nonEmpty;
+                bestScore = score;
                 bestLastCol = lastNonEmptyCol;
             }
         }
@@ -255,6 +279,43 @@ public class TabularFileService {
         if (headerRow == null || headerCount <= 0) return null;
         String[] headers = buildHeaders(headerRow, headerCount, formatter, evaluator);
         return new HeaderInfo(bestRow, headerCount, headers);
+    }
+
+    private static boolean looksYearHeader(String raw) {
+        String s = raw == null ? "" : raw.trim();
+        if (!s.matches("\\d{4}")) return false;
+        try {
+            int y = Integer.parseInt(s);
+            return y >= 1900 && y <= 2100;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private static boolean looksNumericHeader(String raw) {
+        String s = raw == null ? "" : raw.trim();
+        if (s.isEmpty()) return false;
+        s = s.replace("€", "").replace(" ", "");
+        // Amount-like values (0.00, 15,006.39, -1234,56...)
+        s = s.replaceAll("[^0-9,\\.-]", "");
+        if (s.isEmpty()) return false;
+        // Must contain at least one digit and be mostly numeric separators
+        int digits = 0;
+        for (int i = 0; i < s.length(); i++) {
+            char ch = s.charAt(i);
+            if (ch >= '0' && ch <= '9') digits++;
+        }
+        return digits >= 1;
+    }
+
+    private static boolean looksTextHeader(String raw) {
+        String s = raw == null ? "" : raw.trim();
+        if (s.isEmpty()) return false;
+        for (int i = 0; i < s.length(); i++) {
+            if (Character.isLetter(s.charAt(i))) return true;
+        }
+        // Common header separators
+        return s.contains("_") || s.contains(" ") || s.contains("-");
     }
 
     private static String[] buildHeaders(Row headerRow, int headerCount, DataFormatter formatter, FormulaEvaluator evaluator) {

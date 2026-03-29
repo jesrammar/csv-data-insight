@@ -181,6 +181,16 @@ public class UniversalCsvService {
             col.finalizeType();
         }
 
+        int removedEmptyColumns = 0;
+        var it = stats.entrySet().iterator();
+        while (it.hasNext()) {
+            var e = it.next();
+            if ("empty".equals(e.getValue().detectedType)) {
+                it.remove();
+                removedEmptyColumns++;
+            }
+        }
+
         numericHeaders = stats.values().stream()
             .filter(c -> "number".equals(c.detectedType))
             .map(c -> c.name)
@@ -227,6 +237,13 @@ public class UniversalCsvService {
         }
 
         List<UniversalInsightDto> insights = buildInsights(plan, headers, columns, correlations, bytes, charset, delimiter);
+        if (removedEmptyColumns > 0) {
+            insights.add(0, new UniversalInsightDto(
+                "info",
+                "Limpieza automática",
+                "He ignorado " + removedEmptyColumns + " columna(s) vacía(s) para reducir ruido en el análisis."
+            ));
+        }
         if (plan == null || plan == Plan.BRONZE) {
             insights = insights.stream().limit(3).collect(Collectors.toList());
         } else if (plan == Plan.GOLD) {
@@ -238,7 +255,7 @@ public class UniversalCsvService {
             filename,
             createdAt == null ? Instant.now() : createdAt,
             rowCount,
-            headers.size(),
+            stats.size(),
             columns,
             correlations
             ,
