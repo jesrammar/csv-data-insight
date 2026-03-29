@@ -1,5 +1,15 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { getImports, previewUniversalXlsx, retryImport, type ImportJob, uploadImport, uploadUniversalImport, type UniversalXlsxPreview } from '../api'
+import {
+  getImports,
+  previewImport,
+  previewUniversalXlsx,
+  retryImport,
+  type ImportJob,
+  type ImportPreviewDto,
+  uploadImportSmart,
+  uploadUniversalImport,
+  type UniversalXlsxPreview
+} from '../api'
 import { useEffect, useMemo, useState } from 'react'
 import { useCompanySelection } from '../hooks/useCompany'
 import PageHeader from '../components/ui/PageHeader'
@@ -18,8 +28,9 @@ export default function ImportsPage() {
     queryFn: () => getImports(companyId as number),
     enabled: !!companyId
   })
-  const [mode, setMode] = useState<'transactions' | 'universal'>('transactions')
+  const [mode, setMode] = useState<'auto' | 'transactions' | 'universal'>('auto')
   const hasPlatinum = plan === 'PLATINUM'
+  const hasGold = plan === 'GOLD' || plan === 'PLATINUM'
 
   const [period, setPeriod] = useState('2025-06')
   const [file, setFile] = useState<File | null>(null)
@@ -32,10 +43,42 @@ export default function ImportsPage() {
   const [sheetIndex, setSheetIndex] = useState<number | null>(null)
   const [headerRow, setHeaderRow] = useState<number | null>(null)
 
+  const [txPreview, setTxPreview] = useState<ImportPreviewDto | null>(null)
+  const [txPreviewLoading, setTxPreviewLoading] = useState(false)
+  const [txnDateCol, setTxnDateCol] = useState('')
+  const [amountCol, setAmountCol] = useState('')
+  const [descriptionCol, setDescriptionCol] = useState('')
+  const [counterpartyCol, setCounterpartyCol] = useState('')
+  const [balanceEndCol, setBalanceEndCol] = useState('')
+
   const isCsv = !file ? true : file.name.toLowerCase().endsWith('.csv')
   const isXlsx = !file ? false : file.name.toLowerCase().endsWith('.xlsx')
   const isAllowed = !file ? true : isCsv || isXlsx
-  const canPreviewXlsx = !!companyId && hasPlatinum && mode === 'universal' && isXlsx && !!file
+  const canPreviewXlsx = !!companyId && hasPlatinum && (mode === 'universal' || mode === 'auto') && isXlsx && !!file
+
+  const tribunalHint = useMemo(() => {
+    const headers = txPreview?.headers || []
+    if (!headers.length) return { score: 0, isLikely: false }
+    const norm = headers.map((h) => String(h || '').toLowerCase())
+    const hits = (k: string) => norm.some((h) => h.includes(k))
+    let score = 0
+    if (hits('cif')) score += 2
+    if (hits('gestor') || hits('manager')) score += 2
+    if (hits('minuta') || hits('minutas')) score += 2
+    if (hits('carga') || hits('carga_de_trabajo')) score += 2
+    if (hits('irpf') || hits('ddcc') || hits('libros')) score += 2
+    if (hits('cont_modelos') || hits('contabilidad')) score += 2
+    return { score, isLikely: score >= 4 }
+  }, [txPreview?.headers])
+
+  const autoTarget = useMemo(() => {
+    if (mode !== 'auto') return null as null | 'transactions' | 'universal' | 'tribunal'
+    if (!file || !txPreview) return null
+    if (tribunalHint.isLikely) return 'tribunal'
+    const conf = Number(txPreview.confidence || 0)
+    if (conf >= 0.6 && txnDateCol && amountCol) return 'transactions'
+    return 'universal'
+  }, [mode, file, txPreview, tribunalHint.isLikely, txnDateCol, amountCol])
 
   const previewOpts = useMemo(() => {
     return {
@@ -49,6 +92,12 @@ export default function ImportsPage() {
     setSheetIndex(null)
     setHeaderRow(null)
     setXlsxLoading(false)
+    setTxPreview(null)
+    setTxnDateCol('')
+    setAmountCol('')
+    setDescriptionCol('')
+    setCounterpartyCol('')
+    setBalanceEndCol('')
   }, [file?.name])
 
   useEffect(() => {
@@ -77,6 +126,36 @@ export default function ImportsPage() {
     }
   }, [canPreviewXlsx, file, companyId, previewOpts, sheetIndex, headerRow])
 
+  useEffect(() => {
+    if (!companyId || !file || (mode !== 'transactions' && mode !== 'auto')) return
+    let cancelled = false
+    const t = window.setTimeout(async () => {
+      setTxPreviewLoading(true)
+      try {
+        const prev = await previewImport(companyId as number, file, { sheetIndex: sheetIndex ?? undefined, headerRow: headerRow ?? undefined })
+        if (cancelled) return
+        setTxPreview(prev)
+        const s = prev.suggestedMapping || {}
+        setTxnDateCol(String(s.txn_date || ''))
+        setAmountCol(String(s.amount || ''))
+        setDescriptionCol(String(s.description || ''))
+        setCounterpartyCol(String(s.counterparty || ''))
+        setBalanceEndCol(String(s.balance_end || ''))
+      } catch (e: any) {
+        if (!cancelled) {
+          setTone('danger')
+          setMessage(e?.message || 'No se pudo analizar el fichero.')
+        }
+      } finally {
+        if (!cancelled) setTxPreviewLoading(false)
+      }
+    }, 250)
+    return () => {
+      cancelled = true
+      window.clearTimeout(t)
+    }
+  }, [companyId, file, mode, sheetIndex, headerRow])
+
   async function handleUpload() {
     if (!companyId || !file) return
     setMessage('')
@@ -85,6 +164,50 @@ export default function ImportsPage() {
       if (!isAllowed) {
         setTone('danger')
         setMessage('Formato no soportado. Sube un CSV o XLSX.')
+        return
+      }
+
+      if (mode === 'auto') {
+        if (autoTarget === 'tribunal') {
+          if (!hasGold) {
+            setTone('danger')
+            setMessage('Este fichero parece de Tribunal (cumplimiento), pero requiere plan GOLD/PLATINUM.')
+            return
+          }
+          toast.push({ tone: 'info', title: 'Auto', message: 'Parece un fichero de Tribunal. Te llevo a Cumplimiento (Tribunal).' })
+          navigate('/tribunal')
+          return
+        }
+        if (autoTarget === 'transactions') {
+          if (!txnDateCol || !amountCol) {
+            setTone('danger')
+            setMessage('No se detectaron columnas de fecha/importe. Cambia a Universal o selecciona manualmente el modo Caja.')
+            return
+          }
+          await uploadImportSmart(companyId, period, file, {
+            txnDateCol,
+            amountCol,
+            descriptionCol: descriptionCol || undefined,
+            counterpartyCol: counterpartyCol || undefined,
+            balanceEndCol: balanceEndCol || undefined,
+            sheetIndex: sheetIndex ?? undefined,
+            headerRow: headerRow ?? undefined
+          })
+          await queryClient.invalidateQueries({ queryKey: ['imports', companyId] })
+          setTone('success')
+          setMessage('Import encolado (auto). Se procesará automáticamente y recalculará KPIs/alertas.')
+          toast.push({ tone: 'success', title: 'Import (auto)', message: 'Import encolado para procesado.' })
+          return
+        }
+        const opts =
+          file.name.toLowerCase().endsWith('.xlsx') && hasPlatinum
+            ? { sheetIndex: sheetIndex ?? xlsxPreview?.sheetIndex ?? undefined, headerRow: headerRow ?? xlsxPreview?.headerRow ?? undefined }
+            : {}
+        await uploadUniversalImport(companyId, file, opts)
+        setTone('success')
+        setMessage('Archivo analizado en Universal (auto). Ya puedes ver columnas, insights y el asesor.')
+        toast.push({ tone: 'success', title: 'Universal (auto)', message: 'Archivo analizado correctamente.' })
+        navigate('/universal')
         return
       }
 
@@ -101,7 +224,21 @@ export default function ImportsPage() {
         return
       }
 
-      await uploadImport(companyId, period, file)
+      if (!txnDateCol || !amountCol) {
+        setTone('danger')
+        setMessage('Selecciona al menos la columna de fecha y la de importe para calcular caja.')
+        return
+      }
+
+      await uploadImportSmart(companyId, period, file, {
+        txnDateCol,
+        amountCol,
+        descriptionCol: descriptionCol || undefined,
+        counterpartyCol: counterpartyCol || undefined,
+        balanceEndCol: balanceEndCol || undefined,
+        sheetIndex: sheetIndex ?? undefined,
+        headerRow: headerRow ?? undefined
+      })
       await queryClient.invalidateQueries({ queryKey: ['imports', companyId] })
       setTone('success')
       setMessage('Import encolado. Se procesará automáticamente y recalculará KPIs/alertas.')
@@ -111,7 +248,7 @@ export default function ImportsPage() {
       const msg = err?.message || 'No se pudo subir el fichero.'
       setMessage(msg)
       toast.push({ tone: 'danger', title: 'Error', message: err?.message || 'No se pudo subir el CSV.' })
-      if (mode === 'transactions' && String(msg).toLowerCase().includes('formato incorrecto')) {
+      if ((mode === 'transactions' || mode === 'auto') && String(msg).toLowerCase().includes('formato incorrecto')) {
         toast.push({ tone: 'info', title: 'Tip', message: 'Si no es un fichero de transacciones, usa el modo Universal.' })
       }
     } finally {
@@ -134,14 +271,29 @@ export default function ImportsPage() {
     <div>
       <PageHeader
         title="Cargar datos"
-        subtitle="Dos modos: Caja (transacciones por periodo) o Universal (cualquier CSV/XLSX para análisis)."
+        subtitle="Modo AUTO recomendado: sube cualquier fichero y EnterpriseIQ te guía (Caja/Universal/Tribunal)."
         actions={
-          <span className="badge">{mode === 'transactions' ? 'Caja • txn_date + amount' : 'Universal • cualquier estructura'}</span>
+          <span className="badge">
+            {mode === 'auto'
+              ? 'AUTO • detecta objetivo'
+              : mode === 'transactions'
+              ? 'Caja • txn_date + amount'
+              : 'Universal • cualquier estructura'}
+          </span>
         }
       />
 
       <div className="section">
         <div className="segmented" role="tablist" aria-label="Modo de carga">
+          <Button
+            type="button"
+            variant={mode === 'auto' ? 'secondary' : 'ghost'}
+            size="sm"
+            onClick={() => setMode('auto')}
+            aria-selected={mode === 'auto'}
+          >
+            Auto (recomendado)
+          </Button>
           <Button
             type="button"
             variant={mode === 'transactions' ? 'secondary' : 'ghost'}
@@ -162,7 +314,18 @@ export default function ImportsPage() {
           </Button>
         </div>
 
-        {mode === 'transactions' ? (
+        {mode === 'auto' ? (
+          <div className="grid" style={{ marginTop: 14 }}>
+            <div className="card soft">
+              <h3 style={{ marginTop: 0 }}>Auto</h3>
+              <p className="hero-sub">Sube un fichero y te sugerimos el destino: Caja (movimientos), Universal (cualquier dataset) o Tribunal.</p>
+            </div>
+            <div className="card soft">
+              <h3 style={{ marginTop: 0 }}>Consejo</h3>
+              <p className="hero-sub">Si tu fichero no son movimientos bancarios, casi siempre encaja mejor en Universal.</p>
+            </div>
+          </div>
+        ) : mode === 'transactions' ? (
           <div className="grid" style={{ marginTop: 14 }}>
             <div className="card soft">
               <h3 style={{ marginTop: 0 }}>Formato (Caja)</h3>
@@ -195,6 +358,50 @@ export default function ImportsPage() {
         )}
       </div>
 
+      {mode === 'transactions' && file && txPreview && Number(txPreview.confidence || 0) < 0.4 ? (
+        <div className="section">
+          <Alert tone="warning" title="Este fichero quizá no es de transacciones">
+            La detección de columnas tiene poca confianza. Si es un presupuesto / ventas / inventario, usa el modo Universal.
+            <div style={{ marginTop: 10 }}>
+              <Button size="sm" variant="secondary" onClick={() => setMode('universal')}>
+                Cambiar a Universal
+              </Button>
+            </div>
+          </Alert>
+        </div>
+      ) : null}
+
+      {mode === 'auto' && file && txPreview ? (
+        <div className="section">
+          <Alert tone="info" title="Sugerencia (auto)">
+            {autoTarget === 'transactions'
+              ? 'Parece un fichero de transacciones (Caja).'
+              : autoTarget === 'tribunal'
+              ? 'Parece un fichero de Tribunal (cumplimiento).'
+              : 'Parece un dataset genérico. Recomendado: Universal.'}
+            <div className="upload-hint" style={{ marginTop: 8 }}>
+              Confianza transacciones: {Math.round(Number(txPreview.confidence || 0) * 100)}% · Señales Tribunal: {tribunalHint.score}
+            </div>
+            <div style={{ marginTop: 10, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              <Button size="sm" variant={autoTarget === 'transactions' ? 'secondary' : 'ghost'} onClick={() => setMode('transactions')}>
+                Usar Caja
+              </Button>
+              <Button size="sm" variant={autoTarget === 'universal' ? 'secondary' : 'ghost'} onClick={() => setMode('universal')}>
+                Usar Universal
+              </Button>
+              <Button
+                size="sm"
+                variant={autoTarget === 'tribunal' ? 'secondary' : 'ghost'}
+                onClick={() => navigate('/tribunal')}
+                disabled={!hasGold}
+              >
+                Ir a Tribunal
+              </Button>
+            </div>
+          </Alert>
+        </div>
+      ) : null}
+
       <div className="card section">
         <h3 style={{ marginTop: 0 }}>Subida</h3>
         {!companyId ? (
@@ -207,7 +414,7 @@ export default function ImportsPage() {
             <input value={period} onChange={(e) => setPeriod(e.target.value)} placeholder="YYYY-MM" inputMode="numeric" />
           ) : null}
           <input type="file" accept=".csv,.xlsx" onChange={(e) => setFile(e.target.files?.[0] || null)} />
-          {mode === 'universal' && hasPlatinum && isXlsx ? (
+          {(mode === 'universal' || mode === 'auto') && hasPlatinum && isXlsx ? (
             <>
               <input
                 value={sheetIndex ?? ''}
@@ -226,6 +433,33 @@ export default function ImportsPage() {
               {xlsxLoading ? <span className="upload-hint">Previsualizando…</span> : null}
               {xlsxPreview?.headers?.length ? <span className="upload-hint">Headers: {xlsxPreview.headers.length}</span> : null}
             </>
+          ) : null}
+          {mode === 'transactions' && isXlsx ? (
+            <details style={{ width: '100%' }}>
+              <summary className="upload-hint" style={{ cursor: 'pointer' }}>
+                Ajustes XLSX (opcional)
+              </summary>
+              <div className="upload-row" style={{ marginTop: 10 }}>
+                <input
+                  value={sheetIndex ?? ''}
+                  onChange={(e) => setSheetIndex(e.target.value === '' ? null : Number(e.target.value))}
+                  placeholder="sheetIndex"
+                  inputMode="numeric"
+                  style={{ width: 140 }}
+                />
+                <input
+                  value={headerRow ?? ''}
+                  onChange={(e) => setHeaderRow(e.target.value === '' ? null : Number(e.target.value))}
+                  placeholder="headerRow"
+                  inputMode="numeric"
+                  style={{ width: 140 }}
+                />
+                {txPreviewLoading ? <span className="upload-hint">Analizando…</span> : null}
+                {txPreview?.confidence != null ? (
+                  <span className="upload-hint">Confianza: {(txPreview.confidence * 100).toFixed(0)}%</span>
+                ) : null}
+              </div>
+            </details>
           ) : null}
           <Button onClick={handleUpload} disabled={!companyId || !file || uploading} loading={uploading}>
             Subir fichero
@@ -246,6 +480,101 @@ export default function ImportsPage() {
           </div>
         )}
       </div>
+
+      {mode === 'transactions' && companyId && file && txPreview ? (
+        <div className="card section">
+          <h3 style={{ marginTop: 0 }}>Asistente de mapeo (Caja)</h3>
+          <div className="upload-hint">
+            Selecciona qué columnas significan <strong>fecha</strong> e <strong>importe</strong>. El resto es opcional.
+          </div>
+          <div className="upload-row" style={{ marginTop: 12 }}>
+            <label style={{ display: 'grid', gap: 6 }}>
+              <span className="upload-hint">Fecha (txn_date)</span>
+              <select value={txnDateCol} onChange={(e) => setTxnDateCol(e.target.value)}>
+                <option value="">—</option>
+                {txPreview.headers.map((h) => (
+                  <option key={`d-${h}`} value={h}>
+                    {h}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label style={{ display: 'grid', gap: 6 }}>
+              <span className="upload-hint">Importe (amount)</span>
+              <select value={amountCol} onChange={(e) => setAmountCol(e.target.value)}>
+                <option value="">—</option>
+                {txPreview.headers.map((h) => (
+                  <option key={`a-${h}`} value={h}>
+                    {h}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label style={{ display: 'grid', gap: 6 }}>
+              <span className="upload-hint">Descripción</span>
+              <select value={descriptionCol} onChange={(e) => setDescriptionCol(e.target.value)}>
+                <option value="">(ninguna)</option>
+                {txPreview.headers.map((h) => (
+                  <option key={`ds-${h}`} value={h}>
+                    {h}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label style={{ display: 'grid', gap: 6 }}>
+              <span className="upload-hint">Contrapartida</span>
+              <select value={counterpartyCol} onChange={(e) => setCounterpartyCol(e.target.value)}>
+                <option value="">(ninguna)</option>
+                {txPreview.headers.map((h) => (
+                  <option key={`cp-${h}`} value={h}>
+                    {h}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label style={{ display: 'grid', gap: 6 }}>
+              <span className="upload-hint">Saldo fin</span>
+              <select value={balanceEndCol} onChange={(e) => setBalanceEndCol(e.target.value)}>
+                <option value="">(ninguna)</option>
+                {txPreview.headers.map((h) => (
+                  <option key={`be-${h}`} value={h}>
+                    {h}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          {txPreview.sampleRows?.length ? (
+            <div style={{ marginTop: 14, overflow: 'auto' }}>
+              <table className="table">
+                <thead>
+                  <tr>
+                    {txPreview.headers.slice(0, 8).map((h) => (
+                      <th key={`h-${h}`}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {txPreview.sampleRows.slice(0, 6).map((r, idx) => (
+                    <tr key={`r-${idx}`}>
+                      {r.slice(0, 8).map((v, c) => (
+                        <td key={`c-${idx}-${c}`} className="upload-hint">
+                          {String(v || '').slice(0, 60)}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="empty" style={{ marginTop: 12 }}>
+              No se pudieron leer filas de muestra.
+            </div>
+          )}
+        </div>
+      ) : null}
 
       <div className="card section">
         <h3 style={{ marginTop: 0 }}>Historial de imports</h3>

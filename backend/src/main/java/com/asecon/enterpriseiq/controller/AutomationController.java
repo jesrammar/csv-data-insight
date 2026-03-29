@@ -79,11 +79,18 @@ public class AutomationController {
     }
 
     @PostMapping("/recommendations/snapshot")
-    public AutomationJobDto snapshotRecommendations(@PathVariable Long companyId, @RequestParam(required = false) String period) {
+    public AutomationJobDto snapshotRecommendations(@PathVariable Long companyId,
+                                                    @RequestParam(required = false) String period,
+                                                    @RequestParam(required = false) String objective) {
         var user = accessService.currentUser();
         accessService.requireCompanyAccess(user, companyId);
         String resolved = (period == null || period.isBlank()) ? YearMonth.now().toString() : period.trim();
-        var job = jobService.enqueue(companyId, AutomationJobType.SNAPSHOT_RECOMMENDATIONS, Instant.now(), json(Map.of("period", resolved)));
+        var job = jobService.enqueue(
+            companyId,
+            AutomationJobType.SNAPSHOT_RECOMMENDATIONS,
+            Instant.now(),
+            json(Map.of("period", resolved, "objective", objective))
+        );
         return new AutomationJobDto(job.getId(), companyId, job.getType().name(), job.getStatus().name(), job.getAttempts(), job.getMaxAttempts(), job.getRunAfter(), job.getCreatedAt(), job.getUpdatedAt(), job.getTraceId(), job.getLastError());
     }
 

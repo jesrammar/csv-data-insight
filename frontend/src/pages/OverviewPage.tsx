@@ -1,6 +1,14 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { getDashboard, getLatestRecommendations, getReports, getTribunalSummary, getUniversalSummary, getUserRole } from '../api'
+import {
+  getDashboard,
+  getLatestRecommendations,
+  getMacroContext,
+  getReports,
+  getTribunalSummary,
+  getUniversalSummary,
+  getUserRole
+} from '../api'
 import KpiChart from '../components/KpiChart'
 import PageHeader from '../components/ui/PageHeader'
 import Alert from '../components/ui/Alert'
@@ -63,6 +71,12 @@ export default function OverviewPage() {
     enabled: !!companyId && isClient
   })
 
+  const { data: macro } = useQuery({
+    queryKey: ['overview-macro', companyId, to],
+    queryFn: () => getMacroContext(companyId as number, to),
+    enabled: !!companyId
+  })
+
   const latest = dashboard?.kpis?.[dashboard?.kpis.length - 1]
   const chartPoints = (dashboard?.kpis || []).map((k: any) => ({ label: k.period, value: Number(k.netFlow) }))
   const hasCashData = (dashboard?.kpis || []).length > 0
@@ -79,6 +93,13 @@ export default function OverviewPage() {
   const overviewLoading = !!companyId && dashboardLoading
   const topActions = (recSnapshot?.actions || []).slice(0, 3)
 
+  function fmt(v: number | null | undefined, unit?: string | null) {
+    if (v == null || Number.isNaN(Number(v))) return '—'
+    const n = Number(v)
+    const text = unit === '%' ? `${n.toFixed(2)}%` : unit ? `${n.toFixed(3)} ${unit}` : String(n)
+    return text
+  }
+
   return (
     <div>
       <PageHeader
@@ -90,6 +111,12 @@ export default function OverviewPage() {
             <div style={{ fontWeight: 800, marginTop: 6 }}>{to}</div>
             <div className="upload-hint" style={{ marginTop: 6 }}>
               {latest ? `Neto del mes: ${formatMoney(latest.netFlow)}` : 'Sin datos'}
+            </div>
+            <div className="upload-hint" style={{ marginTop: 10 }}>
+              IPC (YoY): {fmt(macro?.inflationYoyPct?.value, '%')}
+            </div>
+            <div className="upload-hint" style={{ marginTop: 4 }}>
+              Euribor 1a: {fmt(macro?.euribor1yPct?.value, '%')}
             </div>
           </div>
         }

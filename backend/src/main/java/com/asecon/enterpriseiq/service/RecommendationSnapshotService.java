@@ -27,18 +27,24 @@ public class RecommendationSnapshotService {
 
     @Transactional
     public AdvisorRecommendation snapshot(Long companyId, String period) {
+        return snapshot(companyId, period, null);
+    }
+
+    @Transactional
+    public AdvisorRecommendation snapshot(Long companyId, String period, String objective) {
         String resolvedPeriod = (period == null || period.isBlank()) ? java.time.YearMonth.now().toString() : period;
-        var existing = recommendationRepository.findByCompany_IdAndPeriodAndSource(companyId, resolvedPeriod, "RULES");
+        String source = RecommendationObjective.toSource(objective);
+        var existing = recommendationRepository.findByCompany_IdAndPeriodAndSource(companyId, resolvedPeriod, source);
         if (existing.isPresent()) return existing.get();
 
         var company = companyRepository.findById(companyId).orElseThrow();
-        var rec = advisorAssistantService.recommendations(companyId, resolvedPeriod);
+        var rec = advisorAssistantService.recommendations(companyId, resolvedPeriod, objective);
 
         AdvisorRecommendation entity = new AdvisorRecommendation();
         entity.setCompany(company);
         entity.setPeriod(resolvedPeriod);
         entity.setCreatedAt(Instant.now());
-        entity.setSource("RULES");
+        entity.setSource(source);
         entity.setSummary(rec.summary());
         try {
             entity.setActionsJson(objectMapper.writeValueAsString(rec.actions()));

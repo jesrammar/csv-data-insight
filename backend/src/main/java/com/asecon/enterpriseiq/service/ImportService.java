@@ -11,6 +11,9 @@ import com.asecon.enterpriseiq.repo.StagingTransactionRepository;
 import com.asecon.enterpriseiq.repo.TransactionRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.BufferedReader;
+import java.io.ByteArrayInputStream;
+import java.io.InputStreamReader;
+import java.io.StringWriter;
 import java.io.InputStream;
 import java.io.IOException;
 import java.math.BigDecimal;
@@ -19,6 +22,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -27,6 +32,8 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import org.apache.commons.csv.CSVFormat;
+import org.apache.commons.csv.CSVParser;
+import org.apache.commons.csv.CSVPrinter;
 import org.apache.commons.csv.CSVRecord;
 import org.apache.poi.ss.usermodel.DataFormatter;
 import org.apache.poi.ss.usermodel.DateUtil;
@@ -50,6 +57,7 @@ public class ImportService {
     private final AlertService alertService;
     private final ObjectMapper objectMapper;
     private final Path importsRoot;
+    private final TabularFileService tabularFileService;
 
     public ImportService(ImportJobRepository importJobRepository,
                          CompanyRepository companyRepository,
@@ -58,7 +66,8 @@ public class ImportService {
                          KpiService kpiService,
                          AlertService alertService,
                          ObjectMapper objectMapper,
-                         @Value("${app.storage.imports}") String importsRoot) {
+                         @Value("${app.storage.imports}") String importsRoot,
+                         TabularFileService tabularFileService) {
         this.importJobRepository = importJobRepository;
         this.companyRepository = companyRepository;
         this.stagingRepository = stagingRepository;
@@ -67,6 +76,7 @@ public class ImportService {
         this.alertService = alertService;
         this.objectMapper = objectMapper;
         this.importsRoot = Path.of(importsRoot).toAbsolutePath().normalize();
+        this.tabularFileService = tabularFileService;
         try {
             Files.createDirectories(this.importsRoot);
         } catch (IOException ex) {
@@ -112,6 +122,147 @@ public class ImportService {
         }
 
         job.setStorageRef(storageRef);
+        job.setUpdatedAt(Instant.now());
+        importJobRepository.save(job);
+        return job;
+    }
+
+    public ImportJob createImportMapped(Long companyId,
+                                        String period,
+                                        MultipartFile file,
+                                        String txnDateCol,
+                                        String amountCol,
+                                        String descriptionCol,
+                                        String counterpartyCol,
+                                        String balanceEndCol,
+                                        Integer sheetIndex,
+                                        Integer headerRow1Based) throws IOException {
+        if (txnDateCol == null || txnDateCol.isBlank() || amountCol == null || amountCol.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Faltan columnas requeridas (fecha e importe).");
+        }
+
+        Company company = companyRepository.findById(companyId).orElseThrow();
+        ImportJob job = new ImportJob();
+        job.setCompany(company);
+        job.setPeriod(period);
+        job.setStatus(ImportStatus.PENDING);
+        job.setCreatedAt(Instant.now());
+        job.setUpdatedAt(job.getCreatedAt());
+        job.setRunAfter(job.getCreatedAt());
+        job.setAttempts(0);
+        job.setMaxAttempts(3);
+        job.setOriginalFilename(safeFilename(file.getOriginalFilename()));
+        job.setContentType("text/csv");
+        job = importJobRepository.save(job);
+
+        TabularFileService.XlsxOptions xlsxOptions = null;
+        if (TabularFileService.isXlsx(file) && (sheetIndex != null || headerRow1Based != null)) {
+            xlsxOptions = new TabularFileService.XlsxOptions(sheetIndex, headerRow1Based);
+        }
+
+        TabularFileService.TabularCsv csv = tabularFileService.toCsv(file, xlsxOptions);
+        byte[] bytes = csv.bytes();
+        char delimiter = detectDelimiter(bytes);
+
+        String storageRef = "import-" + job.getId() + "-" + UUID.randomUUID() + ".csv";
+        Path target = importsRoot.resolve(storageRef).toAbsolutePath().normalize();
+        Files.createDirectories(target.getParent());
+
+        int warnings = 0;
+        int errors = 0;
+        BigDecimal lastBalanceEnd = null;
+
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(new ByteArrayInputStream(bytes), StandardCharsets.UTF_8));
+             StringWriter sw = new StringWriter();
+             CSVPrinter printer = CSVFormat.DEFAULT.builder().setHeader("txn_date", "amount", "description", "counterparty", "balance_end").build().print(sw)) {
+
+            CSVParser parser = CSVFormat.DEFAULT.builder()
+                .setDelimiter(delimiter)
+                .setHeader()
+                .setSkipHeaderRecord(true)
+                .build()
+                .parse(reader);
+
+            Map<String, Integer> headerMap = parser.getHeaderMap();
+            if (!headerMap.containsKey(txnDateCol) || !headerMap.containsKey(amountCol)) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Las columnas seleccionadas no existen en el fichero.");
+            }
+
+            for (CSVRecord record : parser) {
+                String rawDate = safeGet(record, txnDateCol);
+                String rawAmount = safeGet(record, amountCol);
+                String rawDesc = descriptionCol == null ? "" : safeGet(record, descriptionCol);
+                String rawCp = counterpartyCol == null ? "" : safeGet(record, counterpartyCol);
+                String rawBal = balanceEndCol == null ? "" : safeGet(record, balanceEndCol);
+
+                if ((rawDate == null || rawDate.isBlank()) && (rawAmount == null || rawAmount.isBlank())) continue;
+
+                LocalDate d;
+                try {
+                    d = parseFlexibleDate(rawDate);
+                } catch (Exception ex) {
+                    warnings++;
+                    continue;
+                }
+
+                BigDecimal amt;
+                try {
+                    amt = parseAmount(rawAmount);
+                } catch (Exception ex) {
+                    warnings++;
+                    continue;
+                }
+
+                if (rawBal != null && !rawBal.isBlank()) {
+                    try {
+                        lastBalanceEnd = parseAmount(rawBal);
+                    } catch (Exception ignored) {
+                        warnings++;
+                    }
+                }
+
+                printer.printRecord(
+                    d.toString(),
+                    amt == null ? "" : amt.toPlainString(),
+                    rawDesc == null ? "" : rawDesc,
+                    rawCp == null ? "" : rawCp,
+                    rawBal == null ? "" : rawBal
+                );
+            }
+
+            printer.flush();
+            Files.writeString(target, sw.toString(), StandardCharsets.UTF_8);
+        } catch (ResponseStatusException ex) {
+            try { Files.deleteIfExists(target); } catch (IOException ignored) {}
+            job.setStatus(ImportStatus.DEAD);
+            job.setProcessedAt(Instant.now());
+            job.setUpdatedAt(job.getProcessedAt());
+            job.setErrorCount(1);
+            job.setWarningCount(0);
+            job.setLastError(ex.getReason() != null ? ex.getReason() : ex.getMessage());
+            job.setErrorSummary("Invalid import mapping: " + job.getLastError());
+            importJobRepository.save(job);
+            throw ex;
+        } catch (Exception ex) {
+            try { Files.deleteIfExists(target); } catch (IOException ignored) {}
+            errors++;
+            job.setStatus(ImportStatus.DEAD);
+            job.setProcessedAt(Instant.now());
+            job.setUpdatedAt(job.getProcessedAt());
+            job.setErrorCount(errors);
+            job.setWarningCount(warnings);
+            job.setLastError(ex.getClass().getSimpleName() + ": " + ex.getMessage());
+            job.setErrorSummary("Import mapping failed: " + job.getLastError());
+            importJobRepository.save(job);
+            throw ex;
+        }
+
+        job.setStorageRef(storageRef);
+        job.setWarningCount(warnings);
+        job.setErrorCount(errors);
+        if (warnings > 0) {
+            job.setErrorSummary("Warnings: " + warnings + " invalid rows skipped.");
+        }
         job.setUpdatedAt(Instant.now());
         importJobRepository.save(job);
         return job;
@@ -293,6 +444,59 @@ public class ImportService {
         String name = filePath.getFileName().toString().toLowerCase();
         if (name.endsWith(".xlsx")) return readXlsx(filePath);
         return readCsv(filePath);
+    }
+
+    private static char detectDelimiter(byte[] bytes) {
+        String head = new String(bytes, 0, Math.min(bytes.length, 4096), StandardCharsets.UTF_8);
+        int eol = head.indexOf('\n');
+        if (eol >= 0) head = head.substring(0, eol);
+        int commas = count(head, ',');
+        int semis = count(head, ';');
+        int tabs = count(head, '\t');
+        int pipes = count(head, '|');
+        int max = commas;
+        char best = ',';
+        if (semis > max) { max = semis; best = ';'; }
+        if (tabs > max) { max = tabs; best = '\t'; }
+        if (pipes > max) { max = pipes; best = '|'; }
+        return best;
+    }
+
+    private static int count(String s, char c) {
+        int n = 0;
+        for (int i = 0; i < s.length(); i++) if (s.charAt(i) == c) n++;
+        return n;
+    }
+
+    private static String safeGet(CSVRecord record, String header) {
+        if (header == null || header.isBlank()) return "";
+        try {
+            if (!record.isMapped(header)) return "";
+            String v = record.get(header);
+            return v == null ? "" : v.trim();
+        } catch (Exception ex) {
+            return "";
+        }
+    }
+
+    private static final List<DateTimeFormatter> FLEX_DATES = List.of(
+        DateTimeFormatter.ISO_LOCAL_DATE,
+        DateTimeFormatter.ofPattern("d/M/uuuu"),
+        DateTimeFormatter.ofPattern("dd/MM/uuuu"),
+        DateTimeFormatter.ofPattern("d-M-uuuu"),
+        DateTimeFormatter.ofPattern("dd-MM-uuuu")
+    );
+
+    private static LocalDate parseFlexibleDate(String raw) {
+        if (raw == null) throw new IllegalArgumentException("empty date");
+        String s = raw.trim();
+        if (s.isBlank()) throw new IllegalArgumentException("empty date");
+        for (DateTimeFormatter f : FLEX_DATES) {
+            try {
+                return LocalDate.parse(s, f);
+            } catch (DateTimeParseException ignored) {}
+        }
+        throw new IllegalArgumentException("invalid date: " + raw);
     }
 
     private void requireTxnHeaders(Path filePath) throws IOException {

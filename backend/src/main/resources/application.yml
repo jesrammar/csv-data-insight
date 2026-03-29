@@ -32,8 +32,16 @@ app:
     automation-worker-fixed-delay-ms: 5000
     inbox-fixed-delay-ms: 30000
     kpi-daily-cron: "0 15 2 * * *"
+    macro-daily-cron: "0 5 2 * * *"
     kpi-weekly-cron: "0 30 3 * * 0"
     report-monthly-cron: "0 0 6 1 * *"
+  macro:
+    ine:
+      ipc-table-id: 24077
+    bde:
+      euribor1y-series: "D_1NBAF472"
+    ecb:
+      usd-eur-series: "EXR/M.USD.EUR.SP00.A"
 
 logging:
   level:
