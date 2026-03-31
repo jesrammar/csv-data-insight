@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
-import KpiChart from '../components/KpiChart'
+import EChart from '../components/charts/EChart'
 import {
   assistantChat,
   downloadUniversalNormalizedCsv,
@@ -84,6 +84,26 @@ export default function UniversalDashboardPage() {
   const dateColumns = columns.filter((c: any) => c.detectedType === 'date').slice(0, 2)
   const categoricalColumns = columns.filter((c: any) => c.detectedType === 'text' && (c.topValues?.length || 0) > 0).slice(0, 6)
   const topCorrelations = correlations.slice(0, 5)
+
+  const corrHeatmap = useMemo(() => {
+    if (!correlations?.length) return null
+    const cols = Array.from(
+      new Set<string>(correlations.flatMap((c: any) => [String(c.columnA), String(c.columnB)]))
+    ).slice(0, 10)
+    if (cols.length < 2) return null
+    const index = new Map(cols.map((n, i) => [n, i]))
+    const data: Array<[number, number, number]> = []
+    for (const c of correlations as any[]) {
+      const a = index.get(String(c.columnA))
+      const b = index.get(String(c.columnB))
+      if (a === undefined || b === undefined) continue
+      const v = Number(c.correlation ?? 0)
+      data.push([a, b, v])
+      data.push([b, a, v])
+    }
+    for (let i = 0; i < cols.length; i++) data.push([i, i, 1])
+    return { cols, data }
+  }, [correlations])
 
   const likelyBadHeaders = useMemo(() => {
     if (!columns?.length) return false
@@ -585,20 +605,31 @@ export default function UniversalDashboardPage() {
                       {!c.histogram?.length ? (
                         <span className="badge">sin histograma</span>
                       ) : (
-                        <div className="bar-stack">
-                          {c.histogram.map((b: any, idx: number) => (
-                            <div key={`${c.name}-bin-${idx}`} className="bar-row">
-                              <span className="bar-label">{b.label}</span>
-                              <div className="bar-track">
-                                <div
-                                  className="bar-fill"
-                                  style={{ width: `${Math.min(100, (b.count / Math.max(...c.histogram.map((x: any) => x.count))) * 100)}%` }}
-                                />
-                              </div>
-                              <span className="bar-count">{b.count}</span>
-                            </div>
-                          ))}
-                        </div>
+                        <EChart
+                          style={{ height: 220 }}
+                          option={{
+                            xAxis: {
+                              type: 'category',
+                              data: (c.histogram || []).map((b: any) => String(b.label)),
+                              axisLine: { lineStyle: { color: 'rgba(148, 163, 184, 0.25)' } },
+                              axisLabel: { color: 'rgba(226, 232, 240, 0.65)', interval: 0, rotate: 22 }
+                            },
+                            yAxis: {
+                              type: 'value',
+                              axisLine: { show: false },
+                              splitLine: { lineStyle: { color: 'rgba(148, 163, 184, 0.12)' } },
+                              axisLabel: { color: 'rgba(226, 232, 240, 0.65)' }
+                            },
+                            series: [
+                              {
+                                type: 'bar',
+                                data: (c.histogram || []).map((b: any) => Number(b.count || 0)),
+                                barMaxWidth: 26,
+                                itemStyle: { color: 'rgba(96, 165, 250, 0.78)' }
+                              }
+                            ]
+                          }}
+                        />
                       )}
                     </div>
                   ))}
@@ -617,7 +648,36 @@ export default function UniversalDashboardPage() {
                       {!c.dateSeries?.length ? (
                         <span className="badge">sin serie</span>
                       ) : (
-                        <KpiChart title="Conteo por mes" points={c.dateSeries.map((d: any) => ({ label: d.label, value: Number(d.count) }))} />
+                        <EChart
+                          style={{ height: 240 }}
+                          option={{
+                            xAxis: {
+                              type: 'category',
+                              data: (c.dateSeries || []).map((d: any) => String(d.label)),
+                              axisLine: { lineStyle: { color: 'rgba(148, 163, 184, 0.25)' } },
+                              axisLabel: { color: 'rgba(226, 232, 240, 0.65)' }
+                            },
+                            yAxis: {
+                              type: 'value',
+                              axisLine: { show: false },
+                              splitLine: { lineStyle: { color: 'rgba(148, 163, 184, 0.12)' } },
+                              axisLabel: { color: 'rgba(226, 232, 240, 0.65)' }
+                            },
+                            series: [
+                              {
+                                name: 'Filas',
+                                type: 'line',
+                                smooth: true,
+                                symbol: 'circle',
+                                symbolSize: 6,
+                                data: (c.dateSeries || []).map((d: any) => Number(d.count || 0)),
+                                itemStyle: { color: 'rgba(20, 184, 166, 0.95)' },
+                                lineStyle: { width: 3 },
+                                areaStyle: { color: 'rgba(20, 184, 166, 0.12)' }
+                              }
+                            ]
+                          }}
+                        />
                       )}
                     </div>
                   ))}
@@ -644,14 +704,37 @@ export default function UniversalDashboardPage() {
                   {categoricalColumns.map((c: any) => (
                     <div key={`${c.name}-top`} className="kpi">
                       <h4>{c.name}</h4>
-                      <div>
-                        {(c.topValues || []).slice(0, 5).map((v: any) => (
-                          <div key={`${c.name}-${v.value}`} className="mini-row">
-                            <span>{String(v.value).slice(0, 40)}</span>
-                            <span className="badge">{v.count}</span>
-                          </div>
-                        ))}
-                      </div>
+                      <EChart
+                        style={{ height: 220 }}
+                        option={{
+                          xAxis: {
+                            type: 'value',
+                            axisLine: { show: false },
+                            splitLine: { lineStyle: { color: 'rgba(148, 163, 184, 0.12)' } },
+                            axisLabel: { color: 'rgba(226, 232, 240, 0.65)' }
+                          },
+                          yAxis: {
+                            type: 'category',
+                            data: (c.topValues || [])
+                              .slice(0, 8)
+                              .map((v: any) => String(v.value).slice(0, 26))
+                              .reverse(),
+                            axisLine: { lineStyle: { color: 'rgba(148, 163, 184, 0.25)' } },
+                            axisLabel: { color: 'rgba(226, 232, 240, 0.7)' }
+                          },
+                          series: [
+                            {
+                              type: 'bar',
+                              data: (c.topValues || [])
+                                .slice(0, 8)
+                                .map((v: any) => Number(v.count || 0))
+                                .reverse(),
+                              barMaxWidth: 22,
+                              itemStyle: { color: 'rgba(20, 184, 166, 0.78)' }
+                            }
+                          ]
+                        }}
+                      />
                     </div>
                   ))}
                 </div>
@@ -665,6 +748,55 @@ export default function UniversalDashboardPage() {
                 </div>
               ) : (
                 <div>
+                  {corrHeatmap ? (
+                    <div style={{ marginBottom: 12 }}>
+                      <EChart
+                        style={{ height: 320 }}
+                        option={{
+                          tooltip: {
+                            trigger: 'item',
+                            formatter: (p: any) => {
+                              const a = corrHeatmap.cols?.[p.value?.[0]] ?? ''
+                              const b = corrHeatmap.cols?.[p.value?.[1]] ?? ''
+                              const v = Number(p.value?.[2] ?? 0)
+                              return `${a} vs ${b}<br/>${v.toFixed(3)}`
+                            }
+                          },
+                          grid: { left: 60, right: 18, top: 18, bottom: 58 },
+                          xAxis: {
+                            type: 'category',
+                            data: corrHeatmap.cols,
+                            axisLabel: { color: 'rgba(226, 232, 240, 0.65)', rotate: 35 }
+                          },
+                          yAxis: {
+                            type: 'category',
+                            data: corrHeatmap.cols,
+                            axisLabel: { color: 'rgba(226, 232, 240, 0.65)' }
+                          },
+                          visualMap: {
+                            min: -1,
+                            max: 1,
+                            calculable: false,
+                            orient: 'horizontal',
+                            left: 'center',
+                            bottom: 6,
+                            textStyle: { color: 'rgba(226, 232, 240, 0.75)' },
+                            inRange: { color: ['rgba(239, 68, 68, 0.9)', 'rgba(15, 23, 42, 0.92)', 'rgba(34, 197, 94, 0.9)'] }
+                          },
+                          series: [
+                            {
+                              type: 'heatmap',
+                              data: corrHeatmap.data,
+                              emphasis: { itemStyle: { borderColor: 'rgba(148, 163, 184, 0.6)', borderWidth: 1 } }
+                            }
+                          ]
+                        }}
+                      />
+                      <div className="upload-hint" style={{ marginTop: 6 }}>
+                        Matriz de correlación (subconjunto). Valores cerca de 1/-1 implican relación fuerte.
+                      </div>
+                    </div>
+                  ) : null}
                   <div className="insight-grid">
                     {topCorrelations.map((c: any, idx: number) => (
                       <div key={`${c.columnA}-${c.columnB}-${idx}`} className="kpi">

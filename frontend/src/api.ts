@@ -140,6 +140,27 @@ export async function getDashboard(companyId: number, from: string, to: string) 
   return request(`/api/companies/${companyId}/dashboard?from=${from}&to=${to}`)
 }
 
+export async function downloadPowerBiExportZip(companyId: number, from: string, to: string) {
+  const token = getToken()
+  const url = `${API_URL}/api/companies/${companyId}/powerbi/export.zip?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`
+  let res = await fetch(url, {
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined
+  })
+  if (res.status === 401) {
+    const newToken = await refreshAccessToken()
+    if (newToken) {
+      res = await fetch(url, {
+        headers: { Authorization: `Bearer ${newToken}` }
+      })
+    }
+  }
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(text || `HTTP ${res.status}`)
+  }
+  return res.blob()
+}
+
 export async function getImports(companyId: number) {
   return request<ImportJob[]>(`/api/companies/${companyId}/imports`)
 }

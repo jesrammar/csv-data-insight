@@ -682,6 +682,12 @@ button:disabled {
   padding: 10px 16px;
 }
 
+.btn-primary {
+  background: linear-gradient(135deg, #1d4ed8, #60a5fa);
+  color: #f8fafc;
+  border: none;
+}
+
 .btn-ghost {
   background: rgba(230, 237, 248, 0.08);
   border: 1px solid rgba(96, 165, 250, 0.25);
