@@ -1,5 +1,7 @@
 import { Link } from 'react-router-dom'
 import PageHeader from '../components/ui/PageHeader'
+import PlanCapabilitiesTable from '../components/PlanCapabilitiesTable'
+import RoleCapabilitiesTable from '../components/RoleCapabilitiesTable'
 import { useCompanySelection } from '../hooks/useCompany'
 
 export default function HelpPage() {
@@ -16,13 +18,15 @@ export default function HelpPage() {
         <div className="card">
           <h3 style={{ marginTop: 0 }}>1) Datos</h3>
           <div className="hero-sub">
-            Si no ves KPIs, es que faltan datos del periodo. Tu consultora puede cargar el CSV/XLSX y recalcular automáticamente.
+            Si no ves KPIs, es que faltan datos del periodo. Tu consultora puede cargar el CSV/XLSX y recalcular
+            automáticamente.
           </div>
         </div>
         <div className="card">
           <h3 style={{ marginTop: 0 }}>2) Caja</h3>
           <div className="hero-sub">
-            En <strong>Caja</strong> verás entradas/salidas, neto y evolución. Empieza por el último mes y busca cambios bruscos.
+            En <strong>Caja</strong> verás entradas/salidas, neto y evolución. Empieza por el último mes y busca
+            cambios bruscos.
           </div>
           <div style={{ marginTop: 12 }}>
             <Link className="badge" to="/cash">
@@ -33,7 +37,8 @@ export default function HelpPage() {
         <div className="card">
           <h3 style={{ marginTop: 0 }}>3) Alertas</h3>
           <div className="hero-sub">
-            Las alertas resumen “qué mirar ya”. Si aparece una alerta de caja negativa o anomalías, revísalo antes de tomar decisiones.
+            Las alertas resumen “qué mirar ya”. Si aparece una alerta de caja negativa o anomalías, revísalo antes
+            de tomar decisiones.
           </div>
           <div style={{ marginTop: 12 }}>
             <Link className="badge" to="/alerts">
@@ -44,7 +49,8 @@ export default function HelpPage() {
         <div className="card">
           <h3 style={{ marginTop: 0 }}>4) Informe</h3>
           <div className="hero-sub">
-            En <strong>Informes</strong> tendrás entregables mensuales para compartir. Si no hay, tu consultora puede generarlos con un click.
+            En <strong>Informes</strong> tendrás entregables mensuales para compartir. Si no hay, tu consultora puede
+            generarlos con un clic.
           </div>
           <div style={{ marginTop: 12 }}>
             <Link className="badge" to="/reports">
@@ -73,6 +79,14 @@ export default function HelpPage() {
           </div>
         </div>
       </div>
+
+      <RoleCapabilitiesTable compact />
+
+      <PlanCapabilitiesTable
+        compact
+        title="Qué incluye cada plan"
+        subtitle="Tabla rápida para entender qué capacidades se habilitan por empresa (exportaciones, asistente, etc.)."
+      />
     </div>
   )
 }
