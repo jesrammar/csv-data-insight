@@ -70,6 +70,9 @@ La integración con Cegid API no está implementada; se considera conector futur
 ## TODO PDF
 El reporte se genera en HTML. Para PDF, se propone usar OpenHTMLtoPDF y exponer descarga.
 
+## Known issues (TFG)
+- Ver `docs/known-issues.md`.
+
 ## Autenticación (JWT)
 - Login: `POST /api/auth/login` devuelve `accessToken`, `refreshToken`, `role`, `userId`
 - Refresh: `POST /api/auth/refresh` rota el refresh token y entrega nuevos tokens
