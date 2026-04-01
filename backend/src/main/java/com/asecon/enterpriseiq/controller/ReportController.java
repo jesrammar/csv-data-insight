@@ -11,6 +11,9 @@ import jakarta.validation.Valid;
 import java.io.IOException;
 import java.util.List;
 import java.util.stream.Collectors;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -57,6 +60,28 @@ public class ReportController {
             throw new IllegalArgumentException("Report not found for company");
         }
         return reportService.loadReportContent(report);
+    }
+
+    @GetMapping("/{reportId}/content.pdf")
+    public ResponseEntity<byte[]> contentPdf(@PathVariable Long companyId, @PathVariable Long reportId) throws IOException {
+        var user = accessService.currentUser();
+        accessService.requireCompanyAccess(user, companyId);
+        Report report = reportRepository.findById(reportId).orElseThrow();
+        if (!report.getCompany().getId().equals(companyId)) {
+            throw new IllegalArgumentException("Report not found for company");
+        }
+        String html = reportService.loadReportContent(report);
+        byte[] pdf = reportService.renderPdfFromHtml(html);
+
+        String period = report.getPeriod() == null ? "period" : report.getPeriod();
+        String filename = ("enterpriseiq-report-" + companyId + "-" + period + ".pdf")
+            .replaceAll("[^a-zA-Z0-9._-]", "_");
+
+        return ResponseEntity.ok()
+            .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
+            .contentType(MediaType.APPLICATION_PDF)
+            .contentLength(pdf.length)
+            .body(pdf);
     }
 
     private ReportDto toDto(Report report) {

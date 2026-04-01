@@ -10,6 +10,8 @@ type IconName =
   | 'reports'
   | 'pricing'
   | 'automation'
+  | 'audit'
+  | 'admin'
   | 'help'
   | 'logout'
 
@@ -98,6 +100,21 @@ export default function Icon({ name, size = 18 }: { name: IconName; size?: numbe
             {...stroke}
             d="M19.4 15a8 8 0 0 0 .1-1l2-1.2-2-3.4-2.3.7a7.9 7.9 0 0 0-1.7-1L15 6h-6l-.5 2.1a7.9 7.9 0 0 0-1.7 1L4 8.4 2 11.8l2 1.2a8 8 0 0 0 0 2L2 16.2l2 3.4 2.3-.7a7.9 7.9 0 0 0 1.7 1L9 22h6l.5-2.1a7.9 7.9 0 0 0 1.7-1l2.3.7 2-3.4-2.1-1.2z"
           />
+        </svg>
+      )
+    case 'audit':
+      return (
+        <svg {...common}>
+          <path {...stroke} d="M12 3l8 4v6c0 5-3.5 9-8 9s-8-4-8-9V7l8-4z" />
+          <path {...stroke} d="M9 12h6" />
+          <path {...stroke} d="M9 16h6" />
+        </svg>
+      )
+    case 'admin':
+      return (
+        <svg {...common}>
+          <path {...stroke} d="M12 2l2.5 5 5.5.8-4 3.9.9 5.6-4.9-2.6-4.9 2.6.9-5.6-4-3.9L9.5 7 12 2z" />
+          <path {...stroke} d="M8 21h8" />
         </svg>
       )
     case 'help':

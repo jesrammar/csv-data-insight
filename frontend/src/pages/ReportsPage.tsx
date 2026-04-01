@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { generateReport, getReportContent, getReports, getUserRole } from '../api'
+import { downloadReportPdf, generateReport, getReportContent, getReports, getUserRole } from '../api'
 import { useState } from 'react'
 import { useCompanySelection } from '../hooks/useCompany'
 import PageHeader from '../components/ui/PageHeader'
@@ -42,6 +42,20 @@ export default function ReportsPage() {
     if (!companyId) return
     const content = await getReportContent(companyId, reportId)
     setHtml(content)
+  }
+
+  async function handleDownloadPdf(reportId: number, periodLabel?: string) {
+    if (!companyId) return
+    const blob = await downloadReportPdf(companyId, reportId)
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `enterpriseiq-report-${periodLabel || reportId}.pdf`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+    toast.push({ tone: 'success', title: 'PDF', message: 'Descarga iniciada.' })
   }
 
   return (
@@ -117,9 +131,14 @@ export default function ReportsPage() {
                   {!isClient ? <td>{rep.format}</td> : null}
                   <td>{rep.status}</td>
                   <td>
-                    <Button variant="secondary" size="sm" onClick={() => handleView(rep.id)}>
-                      Abrir
-                    </Button>
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                      <Button variant="secondary" size="sm" onClick={() => handleView(rep.id)}>
+                        Abrir
+                      </Button>
+                      <Button variant="ghost" size="sm" onClick={() => handleDownloadPdf(rep.id, rep.period)}>
+                        PDF
+                      </Button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -134,7 +153,13 @@ export default function ReportsPage() {
           <div className="upload-hint" style={{ marginBottom: 10 }}>
             Tip: si el HTML incluye tablas largas, exporta desde el navegador a PDF para el cliente.
           </div>
-          <div dangerouslySetInnerHTML={{ __html: html }} />
+          <iframe
+            className="report-frame"
+            title="Reporte"
+            sandbox=""
+            referrerPolicy="no-referrer"
+            srcDoc={html}
+          />
         </div>
       )}
     </div>
