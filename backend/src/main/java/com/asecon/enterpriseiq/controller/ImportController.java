@@ -7,6 +7,7 @@ import com.asecon.enterpriseiq.service.AccessService;
 import com.asecon.enterpriseiq.service.ImportMappingService;
 import com.asecon.enterpriseiq.service.ImportService;
 import com.asecon.enterpriseiq.service.TabularFileService;
+import com.asecon.enterpriseiq.service.UploadLimitService;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import java.io.IOException;
@@ -22,11 +23,16 @@ public class ImportController {
     private final ImportService importService;
     private final AccessService accessService;
     private final ImportMappingService importMappingService;
+    private final UploadLimitService uploadLimitService;
 
-    public ImportController(ImportService importService, AccessService accessService, ImportMappingService importMappingService) {
+    public ImportController(ImportService importService,
+                            AccessService accessService,
+                            ImportMappingService importMappingService,
+                            UploadLimitService uploadLimitService) {
         this.importService = importService;
         this.accessService = accessService;
         this.importMappingService = importMappingService;
+        this.uploadLimitService = uploadLimitService;
     }
 
     @GetMapping
@@ -43,6 +49,7 @@ public class ImportController {
                             @RequestPart("file") MultipartFile file) throws IOException {
         var user = accessService.currentUser();
         accessService.requireCompanyAccess(user, companyId);
+        uploadLimitService.requireAllowed(file);
         ImportJob job = importService.createImport(companyId, period, file);
         return toDto(job);
     }
@@ -55,6 +62,7 @@ public class ImportController {
                                     @RequestPart(name = "headerRow", required = false) String headerRow) throws IOException {
         var user = accessService.currentUser();
         accessService.requireCompanyAccess(user, companyId);
+        uploadLimitService.requireAllowed(file);
         TabularFileService.XlsxOptions xlsxOptions = null;
         Integer sheet = parseOptionalInt(sheetIndex);
         Integer header = parseOptionalInt(headerRow);
@@ -78,6 +86,7 @@ public class ImportController {
                                  @RequestPart(name = "headerRow", required = false) String headerRow) throws IOException {
         var user = accessService.currentUser();
         accessService.requireCompanyAccess(user, companyId);
+        uploadLimitService.requireAllowed(file);
         Integer sheet = parseOptionalInt(sheetIndex);
         Integer header = parseOptionalInt(headerRow);
         ImportJob job = importService.createImportMapped(companyId, period, file, txnDateCol, amountCol, descriptionCol, counterpartyCol, balanceEndCol, sheet, header);

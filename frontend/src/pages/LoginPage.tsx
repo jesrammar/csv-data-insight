@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { login, setTokens, setUserMeta } from '../api'
+import { login } from '../api'
 import Button from '../components/ui/Button'
 import Alert from '../components/ui/Alert'
 
@@ -13,10 +13,7 @@ export default function LoginPage() {
     e.preventDefault()
     setError('')
     try {
-      const res = await login(email, password)
-      setTokens(res.accessToken, res.refreshToken)
-      setUserMeta(res.role, res.userId)
-      window.location.reload()
+      await login(email, password)
     } catch (err: any) {
       setError(err.message)
     }

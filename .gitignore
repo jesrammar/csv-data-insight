@@ -53,3 +53,7 @@ replay_pid*
 # Local artifacts
 DEMITO.png
 qc
+
+# Legacy app (moved out of EnterpriseIQ entrypoints)
+/legacy/**/target/
+/legacy/**/node_modules/

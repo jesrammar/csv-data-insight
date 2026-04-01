@@ -1,7 +1,7 @@
 import { Route, Routes, Navigate } from 'react-router-dom'
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import Layout from './components/Layout'
-import { getToken, getUserRole } from './api'
+import { bootstrapAuth, getAccessToken, getUserRole, onAuthChange } from './api'
 import Skeleton from './components/ui/Skeleton'
 
 const LoginPage = lazy(() => import('./pages/LoginPage'))
@@ -17,6 +17,8 @@ const AdvisorPage = lazy(() => import('./pages/AdvisorPage'))
 const ClientHomePage = lazy(() => import('./pages/ClientHomePage'))
 const AlertsPage = lazy(() => import('./pages/AlertsPage'))
 const HelpPage = lazy(() => import('./pages/HelpPage'))
+const AuditPage = lazy(() => import('./pages/AuditPage'))
+const AdminStoragePage = lazy(() => import('./pages/AdminStoragePage'))
 
 function RouteFallback() {
   return (
@@ -34,9 +36,31 @@ function Guard({ allow, children }: { allow: boolean; children: React.ReactNode 
 }
 
 export default function App() {
-  const token = getToken()
+  const [ready, setReady] = useState(false)
+  const [token, setToken] = useState<string | null>(() => getAccessToken())
   const role = getUserRole()
-  const isClient = role === 'CLIENTE'
+  const isClient = useMemo(() => role === 'CLIENTE', [role])
+  const isAdmin = useMemo(() => role === 'ADMIN', [role])
+
+  useEffect(() => {
+    return onAuthChange(() => {
+      setToken(getAccessToken())
+    })
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    bootstrapAuth().finally(() => {
+      if (!cancelled) setReady(true)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  if (!ready) {
+    return <RouteFallback />
+  }
 
   if (!token) {
     return (
@@ -124,6 +148,22 @@ export default function App() {
             element={
               <Guard allow={!isClient}>
                 <AdvisorPage />
+              </Guard>
+            }
+          />
+          <Route
+            path="/audit"
+            element={
+              <Guard allow={!isClient}>
+                <AuditPage />
+              </Guard>
+            }
+          />
+          <Route
+            path="/admin/storage"
+            element={
+              <Guard allow={isAdmin}>
+                <AdminStoragePage />
               </Guard>
             }
           />
