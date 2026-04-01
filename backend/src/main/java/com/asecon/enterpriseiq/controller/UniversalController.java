@@ -8,6 +8,7 @@ import com.asecon.enterpriseiq.service.AccessService;
 import com.asecon.enterpriseiq.service.TabularFileService;
 import com.asecon.enterpriseiq.service.UniversalCsvService;
 import com.asecon.enterpriseiq.service.UniversalImportFileService;
+import com.asecon.enterpriseiq.service.UploadLimitService;
 import jakarta.validation.constraints.NotNull;
 import java.io.IOException;
 import java.util.Optional;
@@ -30,15 +31,18 @@ public class UniversalController {
     private final AccessService accessService;
     private final TabularFileService tabularFileService;
     private final UniversalImportFileService universalImportFileService;
+    private final UploadLimitService uploadLimitService;
 
     public UniversalController(UniversalCsvService universalCsvService,
                                AccessService accessService,
                                TabularFileService tabularFileService,
-                               UniversalImportFileService universalImportFileService) {
+                               UniversalImportFileService universalImportFileService,
+                               UploadLimitService uploadLimitService) {
         this.universalCsvService = universalCsvService;
         this.accessService = accessService;
         this.tabularFileService = tabularFileService;
         this.universalImportFileService = universalImportFileService;
+        this.uploadLimitService = uploadLimitService;
     }
 
     @GetMapping("/summary")
@@ -77,6 +81,7 @@ public class UniversalController {
                                       @RequestPart(name = "headerRow", required = false) String headerRow) throws IOException {
         var user = accessService.currentUser();
         accessService.requireCompanyAccess(user, companyId);
+        uploadLimitService.requireAllowed(file);
         var company = accessService.requireCompany(companyId);
         var plan = company.getPlan();
         accessService.requirePlanAtLeast(companyId, Plan.BRONZE);
@@ -101,6 +106,7 @@ public class UniversalController {
                                                @RequestPart(name = "headerRow", required = false) String headerRow) throws IOException {
         var user = accessService.currentUser();
         accessService.requireCompanyAccess(user, companyId);
+        uploadLimitService.requireAllowed(file);
         accessService.requirePlanAtLeast(companyId, Plan.BRONZE);
         if (!TabularFileService.isXlsx(file)) {
             throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.BAD_REQUEST, "Se esperaba un XLSX");

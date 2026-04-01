@@ -1,8 +1,11 @@
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
-import { downloadTransactionsCsv, getDashboard, getTransactionAnalytics, getTransactions, getUserRole } from '../api'
+import { Link } from 'react-router-dom'
+import { downloadPowerBiExportZip, downloadTransactionsCsv, getDashboard, getTransactionAnalytics, getTransactions, getUserRole } from '../api'
 import KpiChart from '../components/KpiChart'
+import CashFlowBiChart from '../components/charts/CashFlowBiChart'
 import PageHeader from '../components/ui/PageHeader'
+import Alert from '../components/ui/Alert'
 import Button from '../components/ui/Button'
 import { useCompanySelection } from '../hooks/useCompany'
 import { formatMoney } from '../utils/format'
@@ -38,12 +41,49 @@ export default function DashboardPage() {
   })
 
   const latest = data?.kpis?.[data?.kpis.length - 1]
-  const chartPoints = (data?.kpis || []).map((k: any) => ({ label: k.period, value: Number(k.netFlow) }))
   const plan = (data?.plan || localPlan || 'BRONZE').toUpperCase()
   const hasGold = plan === 'GOLD' || plan === 'PLATINUM'
   const hasPlatinum = plan === 'PLATINUM'
   const metrics = data?.metrics || []
   const insights = data?.insights || []
+
+  const cashCoach = useMemo(() => {
+    if (!isClient || !data?.kpis?.length) return null
+    const kpis = data.kpis as any[]
+    const last = kpis[kpis.length - 1]
+    const prev = kpis.length >= 2 ? kpis[kpis.length - 2] : null
+    const net = Number(last?.netFlow || 0)
+    const bal = Number(last?.endingBalance || 0)
+    const prevBal = prev ? Number(prev?.endingBalance || 0) : null
+    const balDown = prevBal !== null && bal < prevBal
+
+    if (bal < 0) {
+      return {
+        tone: 'danger' as const,
+        title: 'Semáforo de caja: Rojo',
+        message: 'Prioriza cobros inmediatos y frena gastos no críticos hasta recuperar saldo positivo.'
+      }
+    }
+    if (net < 0 && balDown) {
+      return {
+        tone: 'warning' as const,
+        title: 'Semáforo de caja: Amarillo',
+        message: 'El saldo baja. Revisa cobros pendientes, renegocia pagos y recorta gastos fijos si es posible.'
+      }
+    }
+    if (net < 0) {
+      return {
+        tone: 'warning' as const,
+        title: 'Semáforo de caja: Amarillo',
+        message: 'El mes va en negativo. Prioriza cobros y revisa gastos fijos antes de tocar ventas.'
+      }
+    }
+    return {
+      tone: 'success' as const,
+      title: 'Semáforo de caja: Verde',
+      message: 'Vas bien. Reserva parte del neto como colchón y vigila que no suban los gastos fijos.'
+    }
+  }, [data?.kpis, isClient])
 
   function monthRange(period: string) {
     const [yy, mm] = period.split('-').map((n) => Number(n))
@@ -65,6 +105,8 @@ export default function DashboardPage() {
   const [txSize, setTxSize] = useState<number>(50)
   const [txExporting, setTxExporting] = useState(false)
   const [txExportError, setTxExportError] = useState<string | null>(null)
+  const [pbiExporting, setPbiExporting] = useState(false)
+  const [pbiExportError, setPbiExportError] = useState<string | null>(null)
 
   const dashboardPeriods = useMemo<string[]>(() => {
     const periods = (data?.kpis || []).map((k: any) => String(k.period)).filter(Boolean) as string[]
@@ -141,6 +183,32 @@ export default function DashboardPage() {
     }
   }
 
+  async function handleExportPowerBi() {
+    if (!companyId) return
+    setPbiExporting(true)
+    setPbiExportError(null)
+    try {
+      const blob = await downloadPowerBiExportZip(companyId as number, from, to)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `enterpriseiq-powerbi-${companyId}-${from}-${to}.zip`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+    } catch (e: any) {
+      const msg = String(e?.message || '')
+      if (msg.includes('403') || msg.toLowerCase().includes('forbidden') || msg.toLowerCase().includes('plan')) {
+        setPbiExportError('Función disponible en PLATINUM.')
+      } else {
+        setPbiExportError(e?.message || 'No se pudo exportar el ZIP para Power BI.')
+      }
+    } finally {
+      setPbiExporting(false)
+    }
+  }
+
   return (
     <div>
       <PageHeader
@@ -151,12 +219,26 @@ export default function DashboardPage() {
             : `KPIs del periodo actual y últimos ${monthsCount} meses.`
         }
         actions={
-          <div className="card soft" style={{ padding: 14, minWidth: 220 }}>
-            <div className="upload-hint">Periodo actual</div>
-            <div style={{ fontWeight: 800, marginTop: 6 }}>{to}</div>
-            <div className="upload-hint" style={{ marginTop: 6 }}>
-              {latest ? `Neto del mes: ${formatMoney(latest.netFlow)}` : 'Sin datos'}
+          <div style={{ display: 'grid', gap: 10, justifyItems: 'end' }}>
+            <div className="card soft" style={{ padding: 14, minWidth: 220 }}>
+              <div className="upload-hint">Periodo actual</div>
+              <div style={{ fontWeight: 800, marginTop: 6 }}>{to}</div>
+              <div className="upload-hint" style={{ marginTop: 6 }}>
+                {latest ? `Neto del mes: ${formatMoney(latest.netFlow)}` : 'Sin datos'}
+              </div>
             </div>
+            {!isClient && hasPlatinum ? (
+              <div style={{ display: 'grid', gap: 6, width: '100%', maxWidth: 260 }}>
+                <Button onClick={handleExportPowerBi} disabled={pbiExporting || !companyId}>
+                  {pbiExporting ? 'Exportando…' : 'Exportar Power BI (ZIP)'}
+                </Button>
+                {pbiExportError ? <div className="alert danger">{pbiExportError}</div> : null}
+              </div>
+            ) : !isClient ? (
+              <div className="upload-hint" style={{ maxWidth: 260, textAlign: 'right' }}>
+                Export Power BI disponible en <Link to="/pricing" className="badge">PLATINUM</Link>.
+              </div>
+            ) : null}
           </div>
         }
       />
@@ -185,9 +267,11 @@ export default function DashboardPage() {
               <strong>{formatMoney(latest?.endingBalance)}</strong>
             </div>
           </div>
-          {isClient ? (
-            <div className="upload-hint" style={{ marginTop: 10 }}>
-              Consejo: si el neto es negativo, prioriza cobros y revisa gastos fijos antes de recortar ventas.
+          {cashCoach ? (
+            <div style={{ marginTop: 12 }}>
+              <Alert tone={cashCoach.tone} title={cashCoach.title}>
+                {cashCoach.message}
+              </Alert>
             </div>
           ) : null}
         </div>
@@ -197,9 +281,14 @@ export default function DashboardPage() {
             <div className="empty">{isClient ? 'Sin datos todavía. Tu consultora debe importar el CSV/XLSX.' : 'Sin datos todavía. Importa un CSV.'}</div>
           ) : (
             <div style={{ marginBottom: 16 }}>
-              <KpiChart
-                title={isClient ? `Neto mensual (últimos ${monthsCount} meses)` : `Net Flow (últimos ${monthsCount} meses)`}
-                points={chartPoints}
+              <CashFlowBiChart
+                kpis={(data?.kpis || []).map((k: any) => ({
+                  period: String(k.period),
+                  inflows: Number(k.inflows || 0),
+                  outflows: Number(k.outflows || 0),
+                  netFlow: Number(k.netFlow || 0),
+                  endingBalance: Number(k.endingBalance || 0)
+                }))}
               />
             </div>
           )}

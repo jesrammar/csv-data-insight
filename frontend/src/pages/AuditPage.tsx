@@ -1,0 +1,88 @@
+import { useQuery } from '@tanstack/react-query'
+import { getAuditEvents, getUserRole } from '../api'
+import PageHeader from '../components/ui/PageHeader'
+import Alert from '../components/ui/Alert'
+import Button from '../components/ui/Button'
+import { useCompanySelection } from '../hooks/useCompany'
+
+function fmtTime(iso: string) {
+  try {
+    return new Date(iso).toLocaleString()
+  } catch {
+    return iso
+  }
+}
+
+export default function AuditPage() {
+  const { id: companyId } = useCompanySelection()
+  const role = getUserRole()
+
+  const { data, error, isFetching, refetch } = useQuery({
+    queryKey: ['audit', companyId],
+    queryFn: () => getAuditEvents(companyId as number, 80),
+    enabled: !!companyId && (role === 'ADMIN' || role === 'CONSULTOR')
+  })
+
+  return (
+    <div>
+      <PageHeader
+        title="Auditoría"
+        subtitle="Registro de acciones relevantes (imports, exportaciones, reportes, limpieza)."
+        actions={
+          <Button variant="ghost" size="sm" onClick={() => refetch()} disabled={!companyId || isFetching}>
+            {isFetching ? 'Actualizando…' : 'Refrescar'}
+          </Button>
+        }
+      />
+
+      {!companyId ? (
+        <Alert tone="warning" title="Falta seleccionar empresa">
+          Selecciona una empresa arriba para ver eventos.
+        </Alert>
+      ) : error ? (
+        <Alert tone="danger" title="No se pudo cargar la auditoría">
+          {String((error as any)?.message || error)}
+        </Alert>
+      ) : null}
+
+      <div className="card section">
+        <h3 style={{ marginTop: 0 }}>Eventos</h3>
+        {!data?.length ? (
+          <div className="empty">No hay eventos todavía.</div>
+        ) : (
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Fecha</th>
+                <th>Acción</th>
+                <th>HTTP</th>
+                <th>Status</th>
+                <th>Duración</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(data || []).map((e) => (
+                <tr key={e.id}>
+                  <td style={{ whiteSpace: 'nowrap' }}>{fmtTime(e.at)}</td>
+                  <td>
+                    <strong>{e.action}</strong>
+                    {e.path ? <div className="upload-hint">{e.path}</div> : null}
+                    {e.resourceType || e.resourceId ? (
+                      <div className="upload-hint">
+                        {(e.resourceType || 'resource').toUpperCase()}
+                        {e.resourceId ? ` #${e.resourceId}` : ''}
+                      </div>
+                    ) : null}
+                  </td>
+                  <td>{e.method || '—'}</td>
+                  <td>{e.status ?? '—'}</td>
+                  <td>{e.durationMs != null ? `${e.durationMs}ms` : '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  )
+}

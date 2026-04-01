@@ -2,6 +2,8 @@
 
 Plataforma demo para ASECON con multiempresa, importación CSV/XLSX, KPIs mensuales, alertas, automatización y reportes HTML.
 
+> Nota: la app antigua se movió a legacy/csv-data-insight/. La aplicación principal es ackend/ + rontend/.
+
 ## Stack
 - Backend: Java 21 + Spring Boot 3 (Maven), Spring Web/Security/Data JPA/Validation
 - DB: PostgreSQL
@@ -47,6 +49,13 @@ Reglas de validación:
 3. Frontend en `http://localhost:5174`
 4. Postgres en `localhost:5433` (solo dev)
 
+## Deploy (producción)
+- En VPS: usar docker-compose.prod.yml (imágenes GHCR de enterpriseiq-backend y enterpriseiq-frontend).
+- Variables recomendadas:
+  - IMAGE_OWNER (usuario/orga de GitHub)
+  - JWT_SECRET`r
+  - CORS_ALLOWED_ORIGINS (si no usas el proxy /api del frontend)
+
 ## Ingesta automática (sin API)
 Si tu ERP no tiene API o no tienes credenciales, puedes automatizar por “carpeta vigilada”.
 
@@ -69,6 +78,9 @@ La integración con Cegid API no está implementada; se considera conector futur
 
 ## TODO PDF
 El reporte se genera en HTML. Para PDF, se propone usar OpenHTMLtoPDF y exponer descarga.
+
+## Known issues (TFG)
+- Ver `docs/known-issues.md`.
 
 ## Autenticación (JWT)
 - Login: `POST /api/auth/login` devuelve `accessToken`, `refreshToken`, `role`, `userId`

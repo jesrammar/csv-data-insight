@@ -682,6 +682,12 @@ button:disabled {
   padding: 10px 16px;
 }
 
+.btn-primary {
+  background: linear-gradient(135deg, #1d4ed8, #60a5fa);
+  color: #f8fafc;
+  border: none;
+}
+
 .btn-ghost {
   background: rgba(230, 237, 248, 0.08);
   border: 1px solid rgba(96, 165, 250, 0.25);
@@ -1600,4 +1606,12 @@ select:focus {
   .pricing-price-row strong {
     font-size: 30px;
   }
+}
+
+.report-frame {
+  width: 100%;
+  height: 70vh;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 14px;
+  background: rgba(10, 16, 28, 0.55);
 }

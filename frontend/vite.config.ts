@@ -16,6 +16,7 @@ export default defineConfig({
           if (normalized.includes('/node_modules/html2canvas/')) return 'html2canvas-vendor'
           if (normalized.includes('/node_modules/jspdf/')) return 'jspdf-vendor'
           if (normalized.includes('/node_modules/papaparse/')) return 'csv-vendor'
+          if (normalized.includes('/node_modules/echarts/')) return 'charts-vendor'
           return undefined
         }
       }

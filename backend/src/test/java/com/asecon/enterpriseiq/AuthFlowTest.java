@@ -7,8 +7,10 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -26,34 +28,34 @@ class AuthFlowTest {
 
     @Test
     void login_refresh_rotates_refresh_token() throws Exception {
-        Map<String, Object> login = login("admin@asecon.local", "password");
-        String accessToken = (String) login.get("accessToken");
-        String refreshToken = (String) login.get("refreshToken");
+        LoginResult login = login("admin@asecon.local", "password");
+        String accessToken = (String) login.body.get("accessToken");
+        assertThat(login.refreshCookie).isNotBlank();
 
         mockMvc.perform(get("/api/companies/mine")
                 .header("Authorization", "Bearer " + accessToken))
             .andExpect(status().isOk());
 
-        Map<String, Object> refreshed = refresh(refreshToken);
-        String newRefreshToken = (String) refreshed.get("refreshToken");
-        assertThat(newRefreshToken).isNotEqualTo(refreshToken);
+        RefreshResult refreshed = refreshWithCookie(login.refreshCookiePair);
+        assertThat(refreshed.refreshCookie).isNotBlank();
+        assertThat(refreshed.refreshCookiePair).isNotEqualTo(login.refreshCookiePair);
+        assertThat(refreshed.body.get("refreshToken")).isNull();
 
         mockMvc.perform(post("/api/auth/refresh")
+                .header(HttpHeaders.COOKIE, login.refreshCookiePair)
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(Map.of("refreshToken", refreshToken))))
+                .content("{}"))
             .andExpect(status().isUnauthorized());
     }
 
     @Test
     void logout_revokes_access_token() throws Exception {
-        Map<String, Object> login = login("admin@asecon.local", "password");
-        String accessToken = (String) login.get("accessToken");
-        String refreshToken = (String) login.get("refreshToken");
+        LoginResult login = login("admin@asecon.local", "password");
+        String accessToken = (String) login.body.get("accessToken");
 
         mockMvc.perform(post("/api/auth/logout")
                 .header("Authorization", "Bearer " + accessToken)
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(Map.of("refreshToken", refreshToken))))
+                .header(HttpHeaders.COOKIE, login.refreshCookiePair))
             .andExpect(status().isNoContent());
 
         mockMvc.perform(get("/api/companies/mine")
@@ -61,25 +63,48 @@ class AuthFlowTest {
             .andExpect(status().isUnauthorized());
     }
 
-    private Map<String, Object> login(String email, String password) throws Exception {
-        String response = mockMvc.perform(post("/api/auth/login")
+    private record LoginResult(Map<String, Object> body, String refreshCookie, String refreshCookiePair) {}
+    private record RefreshResult(Map<String, Object> body, String refreshCookie, String refreshCookiePair) {}
+
+    private LoginResult login(String email, String password) throws Exception {
+        MvcResult result = mockMvc.perform(post("/api/auth/login")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(Map.of("email", email, "password", password))))
             .andExpect(status().isOk())
-            .andReturn()
-            .getResponse()
-            .getContentAsString();
-        return objectMapper.readValue(response, new TypeReference<>() {});
+            .andReturn();
+
+        String response = result.getResponse().getContentAsString();
+        Map<String, Object> body = objectMapper.readValue(response, new TypeReference<>() {});
+        String setCookie = result.getResponse().getHeader(HttpHeaders.SET_COOKIE);
+        String pair = cookiePair(setCookie, "enterpriseiq_refresh");
+        return new LoginResult(body, setCookie, pair);
     }
 
-    private Map<String, Object> refresh(String refreshToken) throws Exception {
-        String response = mockMvc.perform(post("/api/auth/refresh")
+    private RefreshResult refreshWithCookie(String refreshCookiePair) throws Exception {
+        MvcResult result = mockMvc.perform(post("/api/auth/refresh")
+                .header(HttpHeaders.COOKIE, refreshCookiePair)
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(Map.of("refreshToken", refreshToken))))
+                .content("{}"))
             .andExpect(status().isOk())
-            .andReturn()
-            .getResponse()
-            .getContentAsString();
-        return objectMapper.readValue(response, new TypeReference<>() {});
+            .andReturn();
+
+        String response = result.getResponse().getContentAsString();
+        Map<String, Object> body = objectMapper.readValue(response, new TypeReference<>() {});
+        String setCookie = result.getResponse().getHeader(HttpHeaders.SET_COOKIE);
+        String pair = cookiePair(setCookie, "enterpriseiq_refresh");
+        return new RefreshResult(body, setCookie, pair);
+    }
+
+    private static String cookiePair(String setCookie, String cookieName) {
+        assertThat(setCookie).isNotNull();
+        String prefix = cookieName + "=";
+        int start = setCookie.indexOf(prefix);
+        assertThat(start).isGreaterThanOrEqualTo(0);
+        int valueStart = start + prefix.length();
+        int end = setCookie.indexOf(';', valueStart);
+        if (end < 0) end = setCookie.length();
+        String value = setCookie.substring(valueStart, end);
+        assertThat(value).isNotBlank();
+        return cookieName + "=" + value;
     }
 }
