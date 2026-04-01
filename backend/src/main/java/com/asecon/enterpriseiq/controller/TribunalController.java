@@ -5,6 +5,7 @@ import com.asecon.enterpriseiq.dto.TribunalSummaryDto;
 import com.asecon.enterpriseiq.model.Plan;
 import com.asecon.enterpriseiq.service.AccessService;
 import com.asecon.enterpriseiq.service.TribunalImportService;
+import com.asecon.enterpriseiq.service.UploadLimitService;
 import jakarta.validation.constraints.NotNull;
 import java.io.IOException;
 import org.springframework.http.MediaType;
@@ -23,10 +24,14 @@ import org.springframework.web.multipart.MultipartFile;
 public class TribunalController {
     private final TribunalImportService tribunalImportService;
     private final AccessService accessService;
+    private final UploadLimitService uploadLimitService;
 
-    public TribunalController(TribunalImportService tribunalImportService, AccessService accessService) {
+    public TribunalController(TribunalImportService tribunalImportService,
+                              AccessService accessService,
+                              UploadLimitService uploadLimitService) {
         this.tribunalImportService = tribunalImportService;
         this.accessService = accessService;
+        this.uploadLimitService = uploadLimitService;
     }
 
     @GetMapping("/summary")
@@ -44,6 +49,7 @@ public class TribunalController {
         var user = accessService.currentUser();
         accessService.requireCompanyAccess(user, companyId);
         accessService.requirePlanAtLeast(companyId, Plan.GOLD);
+        uploadLimitService.requireAllowed(file);
         return tribunalImportService.importCsv(companyId, file);
     }
 

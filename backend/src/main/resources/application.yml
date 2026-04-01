@@ -6,6 +6,10 @@ spring:
     url: jdbc:postgresql://postgres:5432/enterpriseiq
     username: enterpriseiq
     password: enterpriseiq
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 20MB
   jpa:
     hibernate:
       ddl-auto: validate
@@ -15,6 +19,8 @@ spring:
     locations: classpath:db/migration
 
 app:
+  upload:
+    max-bytes: 20971520
   jwt:
     secret: "change-this-in-prod-please-change-this-in-prod"
     access-expiration-minutes: 60
@@ -25,12 +31,21 @@ app:
     reports: ./storage/reports
     universal: ./storage/universal
     inbox: ./storage/inbox
+    retention:
+      enabled: true
+      imports-days: 30
+      reports-days: 180
+      universal-days: 30
+      keep-import-files-per-company: 10
+      keep-report-files-per-company: 24
+      keep-universal-files-per-company: 3
   scheduler:
     import-fixed-delay-ms: 120000
     token-cleanup-fixed-delay-ms: 86400000
     refresh-revoked-retention-days: 7
     automation-worker-fixed-delay-ms: 5000
     inbox-fixed-delay-ms: 30000
+    storage-cleanup-fixed-delay-ms: 86400000
     kpi-daily-cron: "0 15 2 * * *"
     macro-daily-cron: "0 5 2 * * *"
     kpi-weekly-cron: "0 30 3 * * 0"

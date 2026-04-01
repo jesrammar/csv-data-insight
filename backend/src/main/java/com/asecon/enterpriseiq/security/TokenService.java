@@ -85,6 +85,10 @@ public class TokenService {
         return revokedTokenRepository.existsByJti(jti);
     }
 
+    public long getRefreshExpirationDays() {
+        return jwtService.getRefreshExpirationDays();
+    }
+
     private RefreshTokenWithRaw createRefreshToken(User user) {
         String raw = generateRefreshToken();
         Instant now = Instant.now();

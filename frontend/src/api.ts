@@ -1,58 +1,97 @@
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080'
+const API_URL =
+  (import.meta.env.VITE_API_URL ?? '').trim() ||
+  (import.meta.env.DEV ? 'http://localhost:8081' : '')
 
 export type LoginResponse = {
   accessToken: string
-  refreshToken: string
+  refreshToken?: string | null
   role: string
   userId: number
   accessTokenExpiresInSeconds: number
 }
 
-const ACCESS_TOKEN_KEY = 'token'
-const REFRESH_TOKEN_KEY = 'refresh_token'
 const USER_ROLE_KEY = 'user_role'
 const USER_ID_KEY = 'user_id'
 const COMPANY_ID_KEY = 'companyId'
 const COMPANY_PLAN_KEY = 'companyPlan'
 
-export function setTokens(accessToken: string, refreshToken: string) {
-  localStorage.setItem(ACCESS_TOKEN_KEY, accessToken)
-  localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken)
+const AUTH_EVENT = 'auth-change'
+let accessToken: string | null = null
+let roleCache: string = ''
+let userIdCache: number | null = null
+
+function notifyAuthChange() {
+  window.dispatchEvent(new Event(AUTH_EVENT))
 }
 
-export function setToken(accessToken: string) {
-  localStorage.setItem(ACCESS_TOKEN_KEY, accessToken)
-}
-
-export function setUserMeta(role: string, userId: number) {
-  localStorage.setItem(USER_ROLE_KEY, String(role || ''))
-  localStorage.setItem(USER_ID_KEY, String(userId ?? ''))
-}
-
-export function getToken() {
-  return localStorage.getItem(ACCESS_TOKEN_KEY)
-}
-
-export function getRefreshToken() {
-  return localStorage.getItem(REFRESH_TOKEN_KEY)
+export function getAccessToken() {
+  return accessToken
 }
 
 export function getUserRole() {
-  return (localStorage.getItem(USER_ROLE_KEY) || '').toUpperCase()
+  if (roleCache) return roleCache.toUpperCase()
+  try {
+    return (sessionStorage.getItem(USER_ROLE_KEY) || '').toUpperCase()
+  } catch {
+    return ''
+  }
 }
 
 export function getUserId() {
-  const raw = localStorage.getItem(USER_ID_KEY)
-  return raw ? Number(raw) : null
+  if (userIdCache != null) return userIdCache
+  try {
+    const raw = sessionStorage.getItem(USER_ID_KEY)
+    return raw ? Number(raw) : null
+  } catch {
+    return null
+  }
 }
 
-export function clearTokens() {
-  localStorage.removeItem(ACCESS_TOKEN_KEY)
-  localStorage.removeItem(REFRESH_TOKEN_KEY)
-  localStorage.removeItem(USER_ROLE_KEY)
-  localStorage.removeItem(USER_ID_KEY)
+export function clearAuthSession() {
+  accessToken = null
+  roleCache = ''
+  userIdCache = null
+  try {
+    sessionStorage.removeItem(USER_ROLE_KEY)
+    sessionStorage.removeItem(USER_ID_KEY)
+  } catch {
+    // ignore
+  }
+  // Migration cleanup: remove legacy token storage
+  try {
+    localStorage.removeItem('token')
+    localStorage.removeItem('refresh_token')
+    localStorage.removeItem(USER_ROLE_KEY)
+    localStorage.removeItem(USER_ID_KEY)
+  } catch {
+    // ignore
+  }
   localStorage.removeItem(COMPANY_ID_KEY)
   localStorage.removeItem(COMPANY_PLAN_KEY)
+  notifyAuthChange()
+}
+
+function applyLogin(data: LoginResponse) {
+  accessToken = data.accessToken
+  roleCache = String(data.role || '')
+  userIdCache = typeof data.userId === 'number' ? data.userId : null
+  try {
+    sessionStorage.setItem(USER_ROLE_KEY, roleCache)
+    sessionStorage.setItem(USER_ID_KEY, String(userIdCache ?? ''))
+  } catch {
+    // ignore
+  }
+  notifyAuthChange()
+}
+
+export function onAuthChange(handler: () => void) {
+  window.addEventListener(AUTH_EVENT, handler)
+  return () => window.removeEventListener(AUTH_EVENT, handler)
+}
+
+export async function bootstrapAuth() {
+  if (getAccessToken()) return
+  await refreshAccessToken()
 }
 
 type RequestConfig = { auth?: boolean; retry?: boolean }
@@ -60,25 +99,21 @@ type RequestConfig = { auth?: boolean; retry?: boolean }
 let refreshPromise: Promise<string | null> | null = null
 
 async function refreshAccessToken(): Promise<string | null> {
-  const refreshToken = getRefreshToken()
-  if (!refreshToken) return null
   if (refreshPromise) return refreshPromise
 
   refreshPromise = (async () => {
     const res = await fetch(`${API_URL}/api/auth/refresh`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refreshToken })
+      credentials: 'include',
+      body: '{}'
     })
     if (!res.ok) {
-      clearTokens()
+      clearAuthSession()
       return null
     }
     const data = (await res.json()) as LoginResponse
-    setTokens(data.accessToken, data.refreshToken)
-    if (data.role && typeof data.userId === 'number') {
-      setUserMeta(data.role, data.userId)
-    }
+    applyLogin(data)
     return data.accessToken
   })()
 
@@ -89,14 +124,14 @@ async function refreshAccessToken(): Promise<string | null> {
 
 async function request<T = any>(path: string, options: RequestInit = {}, config: RequestConfig = {}): Promise<T> {
   const { auth = true, retry = true } = config
-  const token = getToken()
+  const token = getAccessToken()
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(options.headers as Record<string, string>)
   }
   if (auth && token) headers.Authorization = `Bearer ${token}`
 
-  const res = await fetch(`${API_URL}${path}`, { ...options, headers })
+  const res = await fetch(`${API_URL}${path}`, { ...options, headers, credentials: 'include' })
   if (res.status === 401 && retry && path !== '/api/auth/login' && path !== '/api/auth/refresh') {
     const newToken = await refreshAccessToken()
     if (newToken) {
@@ -115,21 +150,24 @@ async function request<T = any>(path: string, options: RequestInit = {}, config:
 }
 
 export async function login(email: string, password: string) {
-  return request<LoginResponse>('/api/auth/login', {
-    method: 'POST',
-    body: JSON.stringify({ email, password })
-  })
-}
-
-export async function logout(refreshToken?: string) {
-  return request<void>(
-    '/api/auth/logout',
+  const data = await request<LoginResponse>(
+    '/api/auth/login',
     {
       method: 'POST',
-      body: JSON.stringify({ refreshToken: refreshToken || getRefreshToken() })
+      body: JSON.stringify({ email, password })
     },
-    { auth: true, retry: false }
+    { auth: false, retry: false }
   )
+  applyLogin(data)
+  return data
+}
+
+export async function logout() {
+  try {
+    await request<void>('/api/auth/logout', { method: 'POST' }, { auth: true, retry: false })
+  } finally {
+    clearAuthSession()
+  }
 }
 
 export async function getCompanies() {
@@ -141,16 +179,18 @@ export async function getDashboard(companyId: number, from: string, to: string) 
 }
 
 export async function downloadPowerBiExportZip(companyId: number, from: string, to: string) {
-  const token = getToken()
+  const token = getAccessToken()
   const url = `${API_URL}/api/companies/${companyId}/powerbi/export.zip?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`
   let res = await fetch(url, {
-    headers: token ? { Authorization: `Bearer ${token}` } : undefined
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    credentials: 'include'
   })
   if (res.status === 401) {
     const newToken = await refreshAccessToken()
     if (newToken) {
       res = await fetch(url, {
-        headers: { Authorization: `Bearer ${newToken}` }
+        headers: { Authorization: `Bearer ${newToken}` },
+        credentials: 'include'
       })
     }
   }
@@ -166,7 +206,7 @@ export async function getImports(companyId: number) {
 }
 
 export async function uploadImport(companyId: number, period: string, file: File) {
-  const token = getToken()
+  const token = getAccessToken()
   const form = new FormData()
   form.append('period', period)
   form.append('file', file)
@@ -174,7 +214,8 @@ export async function uploadImport(companyId: number, period: string, file: File
   let res = await fetch(`${API_URL}/api/companies/${companyId}/imports`, {
     method: 'POST',
     headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-    body: form
+    body: form,
+    credentials: 'include'
   })
   if (res.status === 401) {
     const newToken = await refreshAccessToken()
@@ -182,7 +223,8 @@ export async function uploadImport(companyId: number, period: string, file: File
       res = await fetch(`${API_URL}/api/companies/${companyId}/imports`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${newToken}` },
-        body: form
+        body: form,
+        credentials: 'include'
       })
     }
   }
@@ -202,7 +244,7 @@ export type ImportPreviewDto = {
 }
 
 export async function previewImport(companyId: number, file: File, opts: { sheetIndex?: number; headerRow?: number } = {}) {
-  const token = getToken()
+  const token = getAccessToken()
   const form = new FormData()
   form.append('file', file)
   if (opts.sheetIndex != null) form.append('sheetIndex', String(opts.sheetIndex))
@@ -211,7 +253,8 @@ export async function previewImport(companyId: number, file: File, opts: { sheet
   let res = await fetch(`${API_URL}/api/companies/${companyId}/imports/preview`, {
     method: 'POST',
     headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-    body: form
+    body: form,
+    credentials: 'include'
   })
   if (res.status === 401) {
     const newToken = await refreshAccessToken()
@@ -219,7 +262,8 @@ export async function previewImport(companyId: number, file: File, opts: { sheet
       res = await fetch(`${API_URL}/api/companies/${companyId}/imports/preview`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${newToken}` },
-        body: form
+        body: form,
+        credentials: 'include'
       })
     }
   }
@@ -244,7 +288,7 @@ export async function uploadImportSmart(
     headerRow?: number
   }
 ) {
-  const token = getToken()
+  const token = getAccessToken()
   const form = new FormData()
   form.append('period', period)
   form.append('file', file)
@@ -259,7 +303,8 @@ export async function uploadImportSmart(
   let res = await fetch(`${API_URL}/api/companies/${companyId}/imports/smart`, {
     method: 'POST',
     headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-    body: form
+    body: form,
+    credentials: 'include'
   })
   if (res.status === 401) {
     const newToken = await refreshAccessToken()
@@ -267,7 +312,8 @@ export async function uploadImportSmart(
       res = await fetch(`${API_URL}/api/companies/${companyId}/imports/smart`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${newToken}` },
-        body: form
+        body: form,
+        credentials: 'include'
       })
     }
   }
@@ -427,15 +473,17 @@ export async function downloadTransactionsCsv(
   })
   const query = qs.toString()
 
-  const token = getToken()
+  const token = getAccessToken()
   let res = await fetch(`${API_URL}/api/companies/${companyId}/transactions/export.csv${query ? `?${query}` : ''}`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : undefined
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    credentials: 'include'
   })
   if (res.status === 401) {
     const newToken = await refreshAccessToken()
     if (newToken) {
       res = await fetch(`${API_URL}/api/companies/${companyId}/transactions/export.csv${query ? `?${query}` : ''}`, {
-        headers: { Authorization: `Bearer ${newToken}` }
+        headers: { Authorization: `Bearer ${newToken}` },
+        credentials: 'include'
       })
     }
   }
@@ -447,14 +495,15 @@ export async function downloadTransactionsCsv(
 }
 
 export async function uploadTribunalImport(companyId: number, file: File) {
-  const token = getToken()
+  const token = getAccessToken()
   const form = new FormData()
   form.append('file', file)
 
   let res = await fetch(`${API_URL}/api/companies/${companyId}/tribunal/imports`, {
     method: 'POST',
     headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-    body: form
+    body: form,
+    credentials: 'include'
   })
   if (res.status === 401) {
     const newToken = await refreshAccessToken()
@@ -462,7 +511,8 @@ export async function uploadTribunalImport(companyId: number, file: File) {
       res = await fetch(`${API_URL}/api/companies/${companyId}/tribunal/imports`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${newToken}` },
-        body: form
+        body: form,
+        credentials: 'include'
       })
     }
   }
@@ -537,20 +587,22 @@ export async function uploadTribunalImportWithProgress(
       xhr.send(form)
     }
 
-    send(getToken())
+    send(getAccessToken())
   })
 }
 
 export async function downloadTribunalCsv(companyId: number) {
-  const token = getToken()
+  const token = getAccessToken()
   let res = await fetch(`${API_URL}/api/companies/${companyId}/tribunal/exports.csv`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : undefined
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    credentials: 'include'
   })
   if (res.status === 401) {
     const newToken = await refreshAccessToken()
     if (newToken) {
       res = await fetch(`${API_URL}/api/companies/${companyId}/tribunal/exports.csv`, {
-        headers: { Authorization: `Bearer ${newToken}` }
+        headers: { Authorization: `Bearer ${newToken}` },
+        credentials: 'include'
       })
     }
   }
@@ -572,15 +624,17 @@ export async function getUniversalLatestRows(companyId: number, limit = 50) {
 }
 
 export async function downloadUniversalNormalizedCsv(companyId: number) {
-  const token = getToken()
+  const token = getAccessToken()
   let res = await fetch(`${API_URL}/api/companies/${companyId}/universal/imports/latest/normalized.csv`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : undefined
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    credentials: 'include'
   })
   if (res.status === 401) {
     const newToken = await refreshAccessToken()
     if (newToken) {
       res = await fetch(`${API_URL}/api/companies/${companyId}/universal/imports/latest/normalized.csv`, {
-        headers: { Authorization: `Bearer ${newToken}` }
+        headers: { Authorization: `Bearer ${newToken}` },
+        credentials: 'include'
       })
     }
   }
@@ -720,7 +774,7 @@ export async function assistantChat(companyId: number, messages: AssistantMessag
 }
 
 export async function previewUniversalXlsx(companyId: number, file: File, opts: { sheetIndex?: number; headerRow?: number } = {}) {
-  const token = getToken()
+  const token = getAccessToken()
   const form = new FormData()
   form.append('file', file)
   if (opts.sheetIndex != null) form.append('sheetIndex', String(opts.sheetIndex))
@@ -729,7 +783,8 @@ export async function previewUniversalXlsx(companyId: number, file: File, opts: 
   let res = await fetch(`${API_URL}/api/companies/${companyId}/universal/xlsx/preview`, {
     method: 'POST',
     headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-    body: form
+    body: form,
+    credentials: 'include'
   })
   if (res.status === 401) {
     const newToken = await refreshAccessToken()
@@ -737,7 +792,8 @@ export async function previewUniversalXlsx(companyId: number, file: File, opts: 
       res = await fetch(`${API_URL}/api/companies/${companyId}/universal/xlsx/preview`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${newToken}` },
-        body: form
+        body: form,
+        credentials: 'include'
       })
     }
   }
@@ -753,7 +809,7 @@ export async function uploadUniversalImport(
   file: File,
   opts: { sheetIndex?: number; headerRow?: number } = {}
 ) {
-  const token = getToken()
+  const token = getAccessToken()
   const form = new FormData()
   form.append('file', file)
   if (opts.sheetIndex != null) form.append('sheetIndex', String(opts.sheetIndex))
@@ -762,7 +818,8 @@ export async function uploadUniversalImport(
   let res = await fetch(`${API_URL}/api/companies/${companyId}/universal/imports`, {
     method: 'POST',
     headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-    body: form
+    body: form,
+    credentials: 'include'
   })
   if (res.status === 401) {
     const newToken = await refreshAccessToken()
@@ -770,7 +827,8 @@ export async function uploadUniversalImport(
       res = await fetch(`${API_URL}/api/companies/${companyId}/universal/imports`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${newToken}` },
-        body: form
+        body: form,
+        credentials: 'include'
       })
     }
   }
@@ -792,6 +850,29 @@ export async function getReportContent(companyId: number, reportId: number) {
   return request<string>(`/api/companies/${companyId}/reports/${reportId}/content`)
 }
 
+export async function downloadReportPdf(companyId: number, reportId: number) {
+  const token = getAccessToken()
+  const url = `${API_URL}/api/companies/${companyId}/reports/${reportId}/content.pdf`
+  let res = await fetch(url, {
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    credentials: 'include'
+  })
+  if (res.status === 401) {
+    const newToken = await refreshAccessToken()
+    if (newToken) {
+      res = await fetch(url, {
+        headers: { Authorization: `Bearer ${newToken}` },
+        credentials: 'include'
+      })
+    }
+  }
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(text || `HTTP ${res.status}`)
+  }
+  return res.blob()
+}
+
 export type ReportDto = {
   id: number
   companyId: number
@@ -803,4 +884,40 @@ export type ReportDto = {
 
 export async function generateAdvisorReport(companyId: number) {
   return request<ReportDto>(`/api/companies/${companyId}/assistant/report`, { method: 'POST' })
+}
+
+export type AuditEventDto = {
+  id: number
+  at: string
+  userId: number | null
+  companyId: number | null
+  action: string
+  method: string | null
+  path: string | null
+  status: number | null
+  durationMs: number | null
+  resourceType: string | null
+  resourceId: string | null
+}
+
+export async function getAuditEvents(companyId: number, limit = 50) {
+  return request<AuditEventDto[]>(`/api/companies/${companyId}/audit?limit=${limit}`)
+}
+
+export type StorageCleanupResult = {
+  startedAt: string
+  finishedAt: string
+  enabled: boolean
+  errors: number
+  imports: { refsCleared: number }
+  reports: { refsCleared: number }
+  universal: { refsCleared: number }
+}
+
+export async function runStorageCleanupNow() {
+  return request<StorageCleanupResult>(`/api/admin/storage/cleanup/run`, { method: 'POST' })
+}
+
+export async function getStorageCleanupLast() {
+  return request<StorageCleanupResult | null>(`/api/admin/storage/cleanup/last`)
 }

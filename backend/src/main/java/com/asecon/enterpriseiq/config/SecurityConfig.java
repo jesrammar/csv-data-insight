@@ -1,6 +1,7 @@
 package com.asecon.enterpriseiq.config;
 
 import com.asecon.enterpriseiq.security.JwtAuthFilter;
+import com.asecon.enterpriseiq.security.AuditLogFilter;
 import java.util.Arrays;
 import java.util.List;
 import org.springframework.context.annotation.Bean;
@@ -24,11 +25,14 @@ import org.springframework.beans.factory.annotation.Value;
 @EnableMethodSecurity
 public class SecurityConfig {
     private final JwtAuthFilter jwtAuthFilter;
+    private final AuditLogFilter auditLogFilter;
     private final String allowedOrigins;
 
     public SecurityConfig(JwtAuthFilter jwtAuthFilter,
+                          AuditLogFilter auditLogFilter,
                           @Value("${cors.allowed-origins}") String allowedOrigins) {
         this.jwtAuthFilter = jwtAuthFilter;
+        this.auditLogFilter = auditLogFilter;
         this.allowedOrigins = allowedOrigins;
     }
 
@@ -60,7 +64,8 @@ public class SecurityConfig {
                     response.getWriter().write("{\"error\":\"forbidden\"}");
                 })
             )
-            .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
+            .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)
+            .addFilterAfter(auditLogFilter, JwtAuthFilter.class);
         return http.build();
     }
 
@@ -84,9 +89,15 @@ public class SecurityConfig {
         if (origins.isEmpty()) {
             origins = List.of("http://localhost:5173", "http://127.0.0.1:5173");
         }
-        config.setAllowedOriginPatterns(origins);
+        boolean hasWildcard = origins.stream().anyMatch(o -> o.contains("*"));
+        if (hasWildcard) {
+            config.setAllowedOriginPatterns(origins);
+        } else {
+            config.setAllowedOrigins(origins);
+        }
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(List.of("*"));
+        config.setExposedHeaders(List.of("Content-Disposition"));
         config.setAllowCredentials(true);
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", config);

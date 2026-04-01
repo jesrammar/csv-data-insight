@@ -5,6 +5,8 @@ import com.asecon.enterpriseiq.model.Report;
 import com.asecon.enterpriseiq.model.ReportFormat;
 import com.asecon.enterpriseiq.model.ReportStatus;
 import com.asecon.enterpriseiq.repo.ReportRepository;
+import com.openhtmltopdf.pdfboxout.PdfRendererBuilder;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -20,6 +22,20 @@ public class ReportService {
     public ReportService(ReportRepository reportRepository, @Value("${app.storage.reports}") String reportsRoot) {
         this.reportRepository = reportRepository;
         this.reportsRoot = Path.of(reportsRoot);
+    }
+
+    public byte[] renderPdfFromHtml(String htmlContent) {
+        if (htmlContent == null) htmlContent = "";
+        try (var baos = new ByteArrayOutputStream()) {
+            PdfRendererBuilder builder = new PdfRendererBuilder();
+            builder.useFastMode();
+            builder.withHtmlContent(htmlContent, null);
+            builder.toStream(baos);
+            builder.run();
+            return baos.toByteArray();
+        } catch (Exception ex) {
+            throw new IllegalStateException("No se pudo generar PDF: " + ex.getMessage(), ex);
+        }
     }
 
     public Report generateHtmlReport(Company company, String period, String htmlContent) throws IOException {
@@ -63,9 +79,6 @@ public class ReportService {
             <p><strong>Periodo:</strong> %s</p>
             <p><strong>Resumen:</strong> %s</p>
           </div>
-          <p style='margin-top:24px;'>
-            TODO: Generar PDF desde HTML con OpenHTMLtoPDF.
-          </p>
         </body>
         </html>
         """.formatted(company.getName(), period, summary);
