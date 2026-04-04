@@ -2,9 +2,10 @@ import { useMemo, useState } from 'react'
 import { confirmPasswordFromToken, login } from '../api'
 import Button from '../components/ui/Button'
 import Alert from '../components/ui/Alert'
-import { useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 
 export default function LoginPage() {
+  const navigate = useNavigate()
   const [sp] = useSearchParams()
   const token = (sp.get('token') || '').trim()
   const action = (sp.get('action') || '').trim().toLowerCase() === 'invite' ? ('invite' as const) : ('reset' as const)
@@ -29,6 +30,16 @@ export default function LoginPage() {
     return { hasUpper, hasLower, hasDigit, len }
   }, [newPassword])
 
+  const canSetPassword =
+    !!token &&
+    newPassword.trim().length > 0 &&
+    newPassword2.trim().length > 0 &&
+    newPassword === newPassword2 &&
+    passwordHint.len >= 10 &&
+    passwordHint.hasUpper &&
+    passwordHint.hasLower &&
+    passwordHint.hasDigit
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError('')
@@ -52,6 +63,10 @@ export default function LoginPage() {
     }
     if (newPassword !== newPassword2) {
       setError('Las contraseñas no coinciden.')
+      return
+    }
+    if (!canSetPassword) {
+      setError('La contraseña no cumple los requisitos de seguridad.')
       return
     }
     setSettingPassword(true)
@@ -97,6 +112,20 @@ export default function LoginPage() {
             done ? (
               <Alert tone="success" title="Contraseña actualizada">
                 Ya puedes iniciar sesión con tu email y tu nueva contraseña.
+                <div style={{ marginTop: 12, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => {
+                      setDone(false)
+                      setNewPassword('')
+                      setNewPassword2('')
+                      navigate('/', { replace: true })
+                    }}
+                  >
+                    Ir a iniciar sesión
+                  </Button>
+                </div>
               </Alert>
             ) : (
               <form onSubmit={handleSetPassword}>
@@ -143,7 +172,7 @@ export default function LoginPage() {
                   </div>
                 )}
                 <div style={{ marginTop: 12 }}>
-                  <Button type="submit" disabled={settingPassword}>
+                  <Button type="submit" disabled={settingPassword || !canSetPassword}>
                     {settingPassword ? 'Guardando…' : 'Guardar contraseña'}
                   </Button>
                 </div>
