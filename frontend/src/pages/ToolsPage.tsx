@@ -103,12 +103,6 @@ export default function ToolsPage() {
           <h3 style={{ marginTop: 0 }}>Operación</h3>
           <div className="grid" style={{ marginTop: 12 }}>
             <Card
-              title="Tareas automáticas"
-              subtitle="Ejecuta recompute KPIs, informes y snapshots."
-              to="/automation"
-              badge="BRONZE+"
-            />
-            <Card
               title="Auditoría"
               subtitle="Registro de acciones (descargas, imports, etc.)."
               to="/audit"
@@ -121,6 +115,20 @@ export default function ToolsPage() {
               badge="Info"
             />
           </div>
+
+          <details style={{ marginTop: 14 }}>
+            <summary className="upload-hint" style={{ cursor: 'pointer' }}>
+              Avanzado (soporte/operación)
+            </summary>
+            <div className="grid" style={{ marginTop: 12 }}>
+              <Card
+                title="Operaciones · Automatización"
+                subtitle="Forzar/reintentar jobs si algo no corre (KPIs, informes, snapshots). Normalmente no hace falta tocarlo."
+                to="/automation"
+                badge="Avanzado"
+              />
+            </div>
+          </details>
         </div>
       </div>
     </div>

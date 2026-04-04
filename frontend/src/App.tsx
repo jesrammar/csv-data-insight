@@ -170,7 +170,7 @@ export default function App() {
           <Route
             path="/automation"
             element={
-              <Guard allow={!isClient}>
+              <Guard allow={isAdmin || isConsultor}>
                 <AutomationPage />
               </Guard>
             }
