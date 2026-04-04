@@ -3,12 +3,18 @@ package com.asecon.enterpriseiq.controller;
 import com.asecon.enterpriseiq.dto.LoginRequest;
 import com.asecon.enterpriseiq.dto.LoginResponse;
 import com.asecon.enterpriseiq.dto.LogoutRequest;
+import com.asecon.enterpriseiq.dto.PasswordChangeRequest;
+import com.asecon.enterpriseiq.dto.PasswordResetConfirmRequest;
 import com.asecon.enterpriseiq.dto.RefreshRequest;
+import com.asecon.enterpriseiq.model.UserTokenPurpose;
 import com.asecon.enterpriseiq.repo.UserRepository;
 import com.asecon.enterpriseiq.security.TokenService;
+import com.asecon.enterpriseiq.service.AccessService;
+import com.asecon.enterpriseiq.service.UserService;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import java.time.Duration;
+import java.util.Locale;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseCookie;
@@ -26,17 +32,23 @@ public class AuthController {
     private final TokenService tokenService;
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
+    private final AccessService accessService;
+    private final UserService userService;
     private final boolean cookieSecure;
     private final String cookieSameSite;
 
     public AuthController(TokenService tokenService,
                           UserRepository userRepository,
                           PasswordEncoder passwordEncoder,
+                          AccessService accessService,
+                          UserService userService,
                           @Value("${app.cookies.secure:false}") boolean cookieSecure,
                           @Value("${app.cookies.same-site:Lax}") String cookieSameSite) {
         this.tokenService = tokenService;
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
+        this.accessService = accessService;
+        this.userService = userService;
         this.cookieSecure = cookieSecure;
         this.cookieSameSite = cookieSameSite;
     }
@@ -45,8 +57,12 @@ public class AuthController {
     public ResponseEntity<LoginResponse> login(@Valid @RequestBody LoginRequest request,
                                                HttpServletResponse response,
                                                @RequestHeader(value = "X-Auth-Mode", required = false) String authMode) {
-        var user = userRepository.findByEmail(request.getEmail())
+        String email = request.getEmail() == null ? null : request.getEmail().trim().toLowerCase(Locale.ROOT);
+        var user = userRepository.findByEmail(email)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Credenciales incorrectas"));
+        if (!user.isEnabled()) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Usuario deshabilitado");
+        }
         if (!passwordEncoder.matches(request.getPassword(), user.getPasswordHash())) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Credenciales incorrectas");
         }
@@ -73,6 +89,7 @@ public class AuthController {
         if (refreshToken == null || refreshToken.isBlank()) {
             refreshToken = refreshCookieValue;
         }
+        refreshToken = normalizeToken(refreshToken);
         if (refreshToken == null || refreshToken.isBlank()) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Refresh token invalido");
         }
@@ -94,6 +111,7 @@ public class AuthController {
                 tokens.accessTokenExpiresInSeconds()
             ));
         } catch (IllegalArgumentException ex) {
+            response.addHeader(HttpHeaders.SET_COOKIE, clearRefreshCookie().toString());
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Refresh token invalido");
         }
     }
@@ -108,6 +126,7 @@ public class AuthController {
         if (refreshToken == null || refreshToken.isBlank()) {
             refreshToken = refreshCookieValue;
         }
+        refreshToken = normalizeToken(refreshToken);
         if (refreshToken != null && !refreshToken.isBlank()) {
             tokenService.revokeRefreshToken(refreshToken);
         }
@@ -119,6 +138,21 @@ public class AuthController {
             }
         }
         response.addHeader(HttpHeaders.SET_COOKIE, clearRefreshCookie().toString());
+    }
+
+    @PostMapping("/password/change")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void changePassword(@Valid @RequestBody PasswordChangeRequest request) {
+        var actor = accessService.currentUser();
+        userService.changeOwnPassword(actor, request.getCurrentPassword(), request.getNewPassword());
+    }
+
+    @PostMapping("/password/confirm")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void confirmPassword(@Valid @RequestBody PasswordResetConfirmRequest request) {
+        String action = request.getAction() == null ? "" : request.getAction().trim().toLowerCase(Locale.ROOT);
+        UserTokenPurpose purpose = "invite".equals(action) ? UserTokenPurpose.INVITE : UserTokenPurpose.PASSWORD_RESET;
+        userService.setPasswordFromToken(request.getToken(), request.getNewPassword(), purpose);
     }
 
     private ResponseCookie buildRefreshCookie(String refreshToken) {
@@ -141,5 +175,14 @@ public class AuthController {
             .maxAge(Duration.ZERO)
             .sameSite(cookieSameSite)
             .build();
+    }
+
+    private static String normalizeToken(String token) {
+        if (token == null) return null;
+        String v = token.trim();
+        if (v.length() >= 2 && v.startsWith("\"") && v.endsWith("\"")) {
+            v = v.substring(1, v.length() - 1).trim();
+        }
+        return v;
     }
 }

@@ -45,7 +45,7 @@ public class ReportController {
         var user = accessService.currentUser();
         accessService.requireCompanyAccess(user, companyId);
         var company = companyRepository.findById(companyId).orElseThrow();
-        String summary = "Reporte base generado desde EnterpriseIQ";
+        String summary = "Informe generado automáticamente con KPIs de tesorería, tendencia y alertas del periodo.";
         String html = reportService.buildHtmlTemplate(company, request.getPeriod(), summary);
         Report report = reportService.generateHtmlReport(company, request.getPeriod(), html);
         return toDto(report);

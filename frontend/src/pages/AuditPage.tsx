@@ -67,6 +67,27 @@ export default function AuditPage() {
                   <td>
                     <strong>{e.action}</strong>
                     {e.path ? <div className="upload-hint">{e.path}</div> : null}
+                    {e.metaJson ? (
+                      <div className="upload-hint" title={String(e.metaJson)}>
+                        {(() => {
+                          try {
+                            const m = JSON.parse(String(e.metaJson))
+                            const added = Array.isArray(m?.addedCompanyIds) ? m.addedCompanyIds.length : 0
+                            const removed = Array.isArray(m?.removedCompanyIds) ? m.removedCompanyIds.length : 0
+                            const pieces: string[] = []
+                            if (m?.targetEmail) pieces.push(String(m.targetEmail))
+                            if (m?.roleFrom || m?.roleTo) pieces.push(`role ${m.roleFrom ?? '—'} → ${m.roleTo ?? '—'}`)
+                            if (typeof m?.enabledFrom === 'boolean' || typeof m?.enabledTo === 'boolean') {
+                              pieces.push(`enabled ${String(m.enabledFrom)} → ${String(m.enabledTo)}`)
+                            }
+                            if (added || removed) pieces.push(`empresas +${added} -${removed}`)
+                            return pieces.length ? pieces.join(' · ') : String(e.metaJson).slice(0, 120)
+                          } catch {
+                            return String(e.metaJson).slice(0, 120)
+                          }
+                        })()}
+                      </div>
+                    ) : null}
                     {e.resourceType || e.resourceId ? (
                       <div className="upload-hint">
                         {(e.resourceType || 'resource').toUpperCase()}

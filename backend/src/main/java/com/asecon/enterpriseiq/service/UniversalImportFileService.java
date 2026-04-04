@@ -31,6 +31,11 @@ public class UniversalImportFileService {
         return importRepository.findFirstByCompanyIdOrderByCreatedAtDesc(companyId);
     }
 
+    public Optional<UniversalImport> find(Long companyId, Long importId) {
+        if (importId == null) return Optional.empty();
+        return importRepository.findByIdAndCompanyId(importId, companyId);
+    }
+
     public byte[] latestNormalizedCsv(Long companyId) {
         UniversalImport imp = latest(companyId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No hay imports universales"));
@@ -41,18 +46,31 @@ public class UniversalImportFileService {
         }
     }
 
-    public UniversalRowsDto latestRows(Long companyId, int limit) {
-        if (limit < 1) limit = 1;
-        if (limit > 200) limit = 200;
-        UniversalImport imp = latest(companyId)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No hay imports universales"));
-
-        byte[] bytes;
+    public byte[] normalizedCsv(Long companyId, Long importId) {
+        if (importId == null) return latestNormalizedCsv(companyId);
+        UniversalImport imp = importRepository.findByIdAndCompanyId(importId, companyId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Import universal no encontrado"));
         try {
-            bytes = universalStorageService.readBytes(imp.getStorageRef());
+            return universalStorageService.readBytes(imp.getStorageRef());
         } catch (Exception ex) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "CSV normalizado no disponible");
         }
+    }
+
+    public UniversalRowsDto latestRows(Long companyId, int limit) {
+        return rows(companyId, null, limit);
+    }
+
+    public UniversalRowsDto rows(Long companyId, Long importId, int limit) {
+        if (limit < 1) limit = 1;
+        if (limit > 200) limit = 200;
+
+        UniversalImport imp = importId == null
+            ? latest(companyId).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No hay imports universales"))
+            : importRepository.findByIdAndCompanyId(importId, companyId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Import universal no encontrado"));
+
+        byte[] bytes = normalizedCsv(companyId, imp.getId());
 
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(new ByteArrayInputStream(bytes), StandardCharsets.UTF_8))) {
             CSVParser parser = CSVFormat.DEFAULT.builder()

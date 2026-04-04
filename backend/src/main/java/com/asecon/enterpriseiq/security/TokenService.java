@@ -67,6 +67,11 @@ public class TokenService {
         });
     }
 
+    public int revokeAllRefreshTokensForUser(Long userId) {
+        if (userId == null) return 0;
+        return refreshTokenRepository.revokeAllForUser(userId, Instant.now());
+    }
+
     public void revokeAccessToken(String accessTokenRaw) {
         if (accessTokenRaw == null || accessTokenRaw.isBlank()) {
             return;

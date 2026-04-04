@@ -1,0 +1,56 @@
+global:
+  resolve_timeout: 5m
+  smtp_smarthost: ${SMTP_HOST}:${SMTP_PORT}
+  smtp_from: ${SMTP_FROM}
+  smtp_auth_username: ${SMTP_USER}
+  smtp_auth_password: ${SMTP_PASSWORD}
+
+route:
+  receiver: "null"
+  group_by: ["alertname"]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - receiver: "email-critical"
+      matchers: ['severity="critical"']
+      group_wait: 10s
+      repeat_interval: 1h
+    - receiver: "email-warning"
+      matchers: ['severity="warning"']
+      repeat_interval: 2h
+    - receiver: "email-info"
+      matchers: ['severity="info"']
+      repeat_interval: 8h
+
+inhibit_rules:
+  - source_matchers: ['severity="critical"']
+    target_matchers: ['severity=~"warning|info"']
+    equal: ["alertname"]
+  - source_matchers: ['severity="warning"']
+    target_matchers: ['severity="info"']
+    equal: ["alertname"]
+
+receivers:
+  - name: "null"
+
+  - name: "email-critical"
+    email_configs:
+      - to: ${ALERT_EMAIL_TO}
+        send_resolved: true
+        headers:
+          subject: "[CRITICAL] {{ .CommonLabels.alertname }}"
+
+  - name: "email-warning"
+    email_configs:
+      - to: ${ALERT_EMAIL_TO}
+        send_resolved: true
+        headers:
+          subject: "[WARNING] {{ .CommonLabels.alertname }}"
+
+  - name: "email-info"
+    email_configs:
+      - to: ${ALERT_EMAIL_TO}
+        send_resolved: true
+        headers:
+          subject: "[INFO] {{ .CommonLabels.alertname }}"

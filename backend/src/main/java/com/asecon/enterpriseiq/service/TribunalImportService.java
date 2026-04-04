@@ -61,22 +61,9 @@ public class TribunalImportService {
         this.activityRepository = activityRepository;
     }
 
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public TribunalImportDto importCsv(Long companyId, MultipartFile file) throws IOException {
         Company company = companyRepository.findById(companyId).orElseThrow();
-
-        activityRepository.deleteByCompanyId(companyId);
-        clientRepository.deleteByCompanyId(companyId);
-        importRepository.deleteByCompanyId(companyId);
-
-        TribunalImport imp = new TribunalImport();
-        imp.setCompany(company);
-        imp.setFilename(file.getOriginalFilename() == null ? "tribunal.csv" : file.getOriginalFilename());
-        imp.setCreatedAt(Instant.now());
-        imp.setRowCount(0);
-        imp.setWarningCount(0);
-        imp.setErrorCount(0);
-        imp = importRepository.save(imp);
 
         int warnings = 0;
         int errors = 0;
@@ -94,21 +81,35 @@ public class TribunalImportService {
         char delimiter = detectDelimiter(firstLine);
 
         try (BufferedReader reader = new BufferedReader(new java.io.InputStreamReader(new ByteArrayInputStream(bytes), charset))) {
-            CSVParser parser = CSVFormat.DEFAULT.builder()
-                .setDelimiter(delimiter)
-                .setHeader()
-                .setSkipHeaderRecord(true)
-                .setAllowMissingColumnNames(true)
-                .setIgnoreEmptyLines(true)
-                .build()
-                .parse(reader);
+            CSVParser parser;
+            try {
+                parser = CSVFormat.DEFAULT.builder()
+                    .setDelimiter(delimiter)
+                    .setHeader()
+                    .setSkipHeaderRecord(true)
+                    .setAllowMissingColumnNames(true)
+                    .setIgnoreEmptyLines(true)
+                    .build()
+                    .parse(reader);
+            } catch (Exception ex) {
+                throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "CSV malformado o no compatible. Re-exporta como CSV UTF-8 (una sola tabla con cabeceras en la primera fila).",
+                    ex
+                );
+            }
 
             Map<String, String> headerIndex = normalizeHeaders(parser.getHeaderMap().keySet());
             List<String> missing = requiredMissing(headerIndex);
             if (!missing.isEmpty()) {
+                String headersSeen = parser.getHeaderMap().keySet().stream()
+                    .filter(Objects::nonNull)
+                    .limit(30)
+                    .collect(Collectors.joining(", "));
                 throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST,
                     "CSV sin columnas requeridas: " + String.join(", ", missing)
+                        + (headersSeen.isBlank() ? "" : ". Cabeceras detectadas: " + headersSeen)
                 );
             }
 
@@ -116,7 +117,6 @@ public class TribunalImportService {
                 rowCount++;
 
                 TribunalClient client = new TribunalClient();
-                client.setTribunalImport(imp);
                 client.setCompany(company);
                 client.setRowId(parseInteger(safeGet(record, headerIndex, "")));
                 client.setTipoCliente(safeGet(record, headerIndex, "tipocliente"));
@@ -209,17 +209,6 @@ public class TribunalImportService {
 
                 clients.add(client);
             }
-        } catch (Exception ex) {
-            errors = Math.max(errors, 1);
-            throw ex;
-        } finally {
-            imp.setRowCount(rowCount);
-            imp.setWarningCount(warnings);
-            imp.setErrorCount(errors);
-            if (!rowErrors.isEmpty()) {
-                imp.setErrorSummary(String.join(" | ", rowErrors));
-            }
-            importRepository.save(imp);
         }
 
         if (clients.isEmpty()) {
@@ -227,8 +216,34 @@ public class TribunalImportService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, msg);
         }
 
+        activityRepository.deleteByCompanyId(companyId);
+        clientRepository.deleteByCompanyId(companyId);
+        importRepository.deleteByCompanyId(companyId);
+
+        TribunalImport imp = new TribunalImport();
+        imp.setCompany(company);
+        imp.setFilename(file.getOriginalFilename() == null ? "tribunal.csv" : file.getOriginalFilename());
+        imp.setCreatedAt(Instant.now());
+        imp.setRowCount(rowCount);
+        imp.setWarningCount(warnings);
+        imp.setErrorCount(errors);
+        if (!rowErrors.isEmpty()) {
+            imp.setErrorSummary(String.join(" | ", rowErrors));
+        }
+        imp = importRepository.save(imp);
+
+        for (TribunalClient client : clients) {
+            client.setTribunalImport(imp);
+        }
         clientRepository.saveAll(clients);
         return toDto(imp);
+    }
+
+    @Transactional(readOnly = true)
+    public TribunalImportDto getLatestImport(Long companyId) {
+        return importRepository.findFirstByCompanyIdOrderByCreatedAtDesc(companyId)
+            .map(this::toDto)
+            .orElse(null);
     }
 
     @Transactional(readOnly = true)

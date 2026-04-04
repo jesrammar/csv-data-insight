@@ -22,6 +22,7 @@ import org.springframework.data.jpa.domain.Specification;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -31,6 +32,7 @@ import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBo
 
 @RestController
 @RequestMapping("/api/companies/{companyId}/transactions")
+@PreAuthorize("hasAnyRole('ADMIN','CONSULTOR')")
 public class TransactionController {
     private final TransactionRepository transactionRepository;
     private final AccessService accessService;
@@ -57,7 +59,7 @@ public class TransactionController {
                                    @RequestParam(defaultValue = "50") int size) {
         var user = accessService.currentUser();
         accessService.requireCompanyAccess(user, companyId);
-        accessService.requirePlanAtLeast(companyId, Plan.GOLD);
+        accessService.requirePlanAtLeast(companyId, Plan.PLATINUM);
 
         int safeSize = Math.min(Math.max(size, 1), 200);
         int safePage = Math.max(page, 0);
@@ -82,7 +84,7 @@ public class TransactionController {
                                              @RequestParam(required = false) Integer topN) {
         var user = accessService.currentUser();
         accessService.requireCompanyAccess(user, companyId);
-        accessService.requirePlanAtLeast(companyId, Plan.GOLD);
+        accessService.requirePlanAtLeast(companyId, Plan.PLATINUM);
         return transactionAnalyticsService.analytics(companyId, period, fromDate, toDate, q, minAmount, maxAmount, direction, topN);
     }
 

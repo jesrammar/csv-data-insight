@@ -11,6 +11,10 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.DistributionSummary;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVPrinter;
 import org.apache.poi.ss.usermodel.Cell;
@@ -20,6 +24,9 @@ import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.ss.usermodel.WorkbookFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
@@ -27,6 +34,8 @@ import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class TabularFileService {
+    private static final Logger log = LoggerFactory.getLogger(TabularFileService.class);
+
     public record TabularCsv(String filename, byte[] bytes, Charset charset, boolean convertedFromXlsx) {}
 
     public record XlsxOptions(Integer sheetIndex, Integer headerRow1Based) {}
@@ -36,6 +45,18 @@ public class TabularFileService {
                               Integer detectedHeaderRow1Based,
                               List<String> detectedHeaders,
                               List<List<String>> sampleRows) {}
+
+    private final int maxXlsxRows;
+    private final int maxXlsxSeconds;
+    private final MeterRegistry meterRegistry;
+
+    public TabularFileService(@Value("${app.upload.xlsx.max-rows:120000}") int maxXlsxRows,
+                              @Value("${app.upload.xlsx.max-seconds:25}") int maxXlsxSeconds,
+                              MeterRegistry meterRegistry) {
+        this.maxXlsxRows = Math.max(0, maxXlsxRows);
+        this.maxXlsxSeconds = Math.max(5, maxXlsxSeconds);
+        this.meterRegistry = meterRegistry;
+    }
 
     public TabularCsv toCsv(MultipartFile file, XlsxOptions xlsxOptions) throws IOException {
         if (file == null || file.isEmpty()) {
@@ -62,6 +83,8 @@ public class TabularFileService {
         if (maxSampleRows < 1) maxSampleRows = 1;
         if (maxSampleRows > 20) maxSampleRows = 20;
 
+        long start = System.nanoTime();
+        String resultTag = "ok";
         try (Workbook wb = WorkbookFactory.create(file.getInputStream())) {
             if (wb.getNumberOfSheets() == 0) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "XLSX sin hojas");
@@ -85,6 +108,7 @@ public class TabularFileService {
             List<List<String>> sample = new ArrayList<>();
             int emptyStreak = 0;
             for (int r = headerInfo.rowIndex + 1; r <= sheet.getLastRowNum() && sample.size() < maxSampleRows; r++) {
+                if ((r % 200) == 0) checkTimeout(start);
                 Row row = sheet.getRow(r);
                 if (row == null) {
                     emptyStreak++;
@@ -117,14 +141,31 @@ public class TabularFileService {
                 sample
             );
         } catch (ResponseStatusException ex) {
+            resultTag = safeErrorTag(ex);
             throw ex;
         } catch (Exception ex) {
+            resultTag = "invalid";
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "XLSX invalido o no soportado");
+        } finally {
+            try {
+                long durMs = Math.max(0L, (System.nanoTime() - start) / 1_000_000L);
+                Timer.builder("ingestion.xlsx.preview.duration")
+                    .tag("result", resultTag)
+                    .register(meterRegistry)
+                    .record(durMs, java.util.concurrent.TimeUnit.MILLISECONDS);
+                Counter.builder("ingestion.xlsx.preview.count")
+                    .tag("result", resultTag)
+                    .register(meterRegistry)
+                    .increment();
+            } catch (Exception ignored) {}
         }
     }
 
     private TabularCsv convertXlsxToCsv(MultipartFile file, XlsxOptions xlsxOptions) throws IOException {
         String filename = file.getOriginalFilename() == null ? "data.xlsx" : file.getOriginalFilename();
+        long start = System.nanoTime();
+        String resultTag = "ok";
+        int dataRows = 0;
         try (Workbook wb = WorkbookFactory.create(file.getInputStream())) {
             if (wb.getNumberOfSheets() == 0) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "XLSX sin hojas");
@@ -139,12 +180,22 @@ public class TabularFileService {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No se detectaron encabezados en el XLSX");
             }
 
+            dataRows = Math.max(0, sheet.getLastRowNum() - headerInfo.rowIndex);
+            if (maxXlsxRows > 0 && dataRows > maxXlsxRows) {
+                log.warn("METRIC ingestion.xlsx.rejected filename={} sheetIndex={} dataRows={} maxRows={}", filename, sheetIndex, dataRows, maxXlsxRows);
+                throw new ResponseStatusException(
+                    HttpStatus.PAYLOAD_TOO_LARGE,
+                    "XLSX demasiado grande (" + dataRows + " filas). Límite: " + maxXlsxRows + ". Recomendación: filtra/exporta un periodo o sube un fichero más pequeño."
+                );
+            }
+
             StringWriter writer = new StringWriter();
             try (CSVPrinter printer = new CSVPrinter(writer, CSVFormat.DEFAULT.builder().setDelimiter(',').build())) {
                 printer.printRecord((Object[]) headerInfo.headers);
 
                 int emptyStreak = 0;
                 for (int r = headerInfo.rowIndex + 1; r <= sheet.getLastRowNum(); r++) {
+                    if ((r % 200) == 0) checkTimeout(start);
                     Row row = sheet.getRow(r);
                     if (row == null) {
                         emptyStreak++;
@@ -173,9 +224,52 @@ public class TabularFileService {
             byte[] bytes = writer.toString().getBytes(StandardCharsets.UTF_8);
             return new TabularCsv(filename.replaceAll("(?i)\\.xlsx$", ".csv"), bytes, StandardCharsets.UTF_8, true);
         } catch (ResponseStatusException ex) {
+            resultTag = safeErrorTag(ex);
             throw ex;
         } catch (Exception ex) {
+            resultTag = "invalid";
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "XLSX invalido o no soportado");
+        } finally {
+            try {
+                long durMs = Math.max(0L, (System.nanoTime() - start) / 1_000_000L);
+                Timer.builder("ingestion.xlsx.convert.duration")
+                    .tag("result", resultTag)
+                    .register(meterRegistry)
+                    .record(durMs, java.util.concurrent.TimeUnit.MILLISECONDS);
+                DistributionSummary.builder("ingestion.xlsx.convert.rows")
+                    .baseUnit("rows")
+                    .register(meterRegistry)
+                    .record(dataRows);
+                Counter.builder("ingestion.xlsx.convert.count")
+                    .tag("result", resultTag)
+                    .register(meterRegistry)
+                    .increment();
+            } catch (Exception ignored) {}
+        }
+    }
+
+    private void checkTimeout(long startNs) {
+        long elapsedMs = Math.max(0L, (System.nanoTime() - startNs) / 1_000_000L);
+        if (elapsedMs > (long) maxXlsxSeconds * 1000L) {
+            log.warn("METRIC ingestion.xlsx.timeout maxSeconds={} elapsedMs={}", maxXlsxSeconds, elapsedMs);
+            try {
+                Counter.builder("ingestion.xlsx.timeout.count")
+                    .register(meterRegistry)
+                    .increment();
+            } catch (Exception ignored) {}
+            throw new ResponseStatusException(
+                HttpStatus.REQUEST_TIMEOUT,
+                "Tiempo de análisis agotado (" + maxXlsxSeconds + "s). Recomendación: exporta menos filas/columnas o sube el fichero por periodos."
+            );
+        }
+    }
+
+    private static String safeErrorTag(ResponseStatusException ex) {
+        if (ex == null) return "http_unknown";
+        try {
+            return "http_" + ex.getStatusCode().value();
+        } catch (Exception ignored) {
+            return "http_unknown";
         }
     }
 

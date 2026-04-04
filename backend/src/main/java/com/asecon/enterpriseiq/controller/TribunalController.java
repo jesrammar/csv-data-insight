@@ -35,11 +35,21 @@ public class TribunalController {
     }
 
     @GetMapping("/summary")
+    @PreAuthorize("hasAnyRole('ADMIN','CONSULTOR')")
     public TribunalSummaryDto summary(@PathVariable Long companyId) {
         var user = accessService.currentUser();
         accessService.requireCompanyAccess(user, companyId);
         accessService.requirePlanAtLeast(companyId, Plan.GOLD);
         return tribunalImportService.getSummary(companyId);
+    }
+
+    @GetMapping("/status")
+    @PreAuthorize("hasAnyRole('ADMIN','CONSULTOR')")
+    public TribunalImportDto status(@PathVariable Long companyId) {
+        var user = accessService.currentUser();
+        accessService.requireCompanyAccess(user, companyId);
+        accessService.requirePlanAtLeast(companyId, Plan.GOLD);
+        return tribunalImportService.getLatestImport(companyId);
     }
 
     @PostMapping("/imports")
@@ -49,11 +59,13 @@ public class TribunalController {
         var user = accessService.currentUser();
         accessService.requireCompanyAccess(user, companyId);
         accessService.requirePlanAtLeast(companyId, Plan.GOLD);
-        uploadLimitService.requireAllowed(file);
+        var company = accessService.requireCompany(companyId);
+        uploadLimitService.requireAllowed(file, company.getPlan());
         return tribunalImportService.importCsv(companyId, file);
     }
 
     @GetMapping(value = "/exports.csv", produces = "text/csv")
+    @PreAuthorize("hasAnyRole('ADMIN','CONSULTOR')")
     public ResponseEntity<String> exportCsv(@PathVariable Long companyId) throws IOException {
         var user = accessService.currentUser();
         accessService.requireCompanyAccess(user, companyId);

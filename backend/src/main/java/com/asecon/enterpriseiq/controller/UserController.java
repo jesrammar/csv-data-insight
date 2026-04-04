@@ -1,8 +1,11 @@
 package com.asecon.enterpriseiq.controller;
 
 import com.asecon.enterpriseiq.dto.CreateUserRequest;
+import com.asecon.enterpriseiq.dto.UserActionLinkDto;
+import com.asecon.enterpriseiq.dto.UpdateUserRequest;
 import com.asecon.enterpriseiq.dto.UserDto;
 import com.asecon.enterpriseiq.model.User;
+import com.asecon.enterpriseiq.service.AccessService;
 import com.asecon.enterpriseiq.service.UserService;
 import jakarta.validation.Valid;
 import java.util.List;
@@ -15,27 +18,55 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/api/users")
 public class UserController {
     private final UserService userService;
+    private final AccessService accessService;
 
-    public UserController(UserService userService) {
+    public UserController(UserService userService, AccessService accessService) {
         this.userService = userService;
+        this.accessService = accessService;
     }
 
     @GetMapping
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN','CONSULTOR')")
     public List<UserDto> list() {
-        return userService.findAll().stream().map(this::toDto).collect(Collectors.toList());
+        var actor = accessService.currentUser();
+        return userService.listForActor(actor).stream().map(this::toDto).collect(Collectors.toList());
     }
 
     @PostMapping
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN','CONSULTOR')")
     public UserDto create(@Valid @RequestBody CreateUserRequest request) {
-        return toDto(userService.create(request));
+        var actor = accessService.currentUser();
+        return toDto(userService.createForActor(actor, request));
     }
 
     @PutMapping("/{id}/companies")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN','CONSULTOR')")
     public UserDto updateCompanies(@PathVariable Long id, @RequestBody Set<Long> companyIds) {
-        return toDto(userService.updateCompanies(id, companyIds));
+        var actor = accessService.currentUser();
+        return toDto(userService.updateCompaniesForActor(actor, id, companyIds));
+    }
+
+    @PatchMapping("/{id}")
+    @PreAuthorize("hasAnyRole('ADMIN','CONSULTOR')")
+    public UserDto update(@PathVariable Long id, @RequestBody UpdateUserRequest request) {
+        var actor = accessService.currentUser();
+        return toDto(userService.updateUserForActor(actor, id, request));
+    }
+
+    @PostMapping("/{id}/invite-link")
+    @PreAuthorize("hasAnyRole('ADMIN','CONSULTOR')")
+    public UserActionLinkDto inviteLink(@PathVariable Long id) {
+        var actor = accessService.currentUser();
+        var issued = userService.issueInviteLinkForActor(actor, id);
+        return new UserActionLinkDto("/?action=invite&token=" + issued.token(), issued.token(), issued.expiresAt());
+    }
+
+    @PostMapping("/{id}/password-reset-link")
+    @PreAuthorize("hasAnyRole('ADMIN','CONSULTOR')")
+    public UserActionLinkDto passwordResetLink(@PathVariable Long id) {
+        var actor = accessService.currentUser();
+        var issued = userService.issuePasswordResetLinkForActor(actor, id);
+        return new UserActionLinkDto("/?action=reset&token=" + issued.token(), issued.token(), issued.expiresAt());
     }
 
     private UserDto toDto(User user) {
