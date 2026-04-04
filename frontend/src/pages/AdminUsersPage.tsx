@@ -1,6 +1,17 @@
 import { useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { createUser, getCompanies, getUsers, getUserRole, updateUser, updateUserCompanies, type UserDto } from '../api'
+import {
+  createInviteLink,
+  createPasswordResetLink,
+  createUser,
+  getCompanies,
+  getUsers,
+  getUserRole,
+  updateUser,
+  updateUserCompanies,
+  type UserActionLink,
+  type UserDto
+} from '../api'
 import PageHeader from '../components/ui/PageHeader'
 import Alert from '../components/ui/Alert'
 import Button from '../components/ui/Button'
@@ -44,6 +55,17 @@ export default function AdminUsersPage() {
   const [editingRole, setEditingRole] = useState<'CONSULTOR' | 'CLIENTE'>('CONSULTOR')
   const [editingEnabled, setEditingEnabled] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [linkLoading, setLinkLoading] = useState(false)
+  const [actionLink, setActionLink] = useState<UserActionLink | null>(null)
+
+  async function copyLink(text: string) {
+    try {
+      await navigator.clipboard.writeText(text)
+      toast.push({ tone: 'success', title: 'Copiado', message: 'Enlace copiado al portapapeles.' })
+    } catch {
+      toast.push({ tone: 'warning', title: 'Copia manual', message: 'No se pudo copiar automáticamente. Copia el enlace a mano.' })
+    }
+  }
 
   async function handleCreate() {
     if (!isAdmin) return
@@ -73,6 +95,7 @@ export default function AdminUsersPage() {
     const r = String(u.role || '').toUpperCase()
     setEditingRole(r === 'CLIENTE' ? 'CLIENTE' : 'CONSULTOR')
     setEditingEnabled(!!u.enabled)
+    setActionLink(null)
   }
 
   async function handleSaveAll() {
@@ -275,6 +298,71 @@ export default function AdminUsersPage() {
             <Button onClick={handleSaveAll} disabled={saving}>
               {saving ? 'Guardando…' : 'Guardar'}
             </Button>
+          </div>
+
+          <div style={{ marginTop: 16 }}>
+            <div className="upload-hint" style={{ marginBottom: 8 }}>
+              Enlaces de acceso (envíalo al usuario)
+            </div>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              <Button
+                size="sm"
+                variant="secondary"
+                loading={linkLoading}
+                onClick={async () => {
+                  if (!editingUserId) return
+                  setLinkLoading(true)
+                  try {
+                    const l = await createInviteLink(editingUserId)
+                    setActionLink(l)
+                    await copyLink(`${window.location.origin}${l.path}`)
+                  } catch (e: any) {
+                    toast.push({ tone: 'danger', title: 'Error', message: e?.message || 'No se pudo generar el enlace.' })
+                  } finally {
+                    setLinkLoading(false)
+                  }
+                }}
+              >
+                Generar enlace (activación)
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                loading={linkLoading}
+                onClick={async () => {
+                  if (!editingUserId) return
+                  setLinkLoading(true)
+                  try {
+                    const l = await createPasswordResetLink(editingUserId)
+                    setActionLink(l)
+                    await copyLink(`${window.location.origin}${l.path}`)
+                  } catch (e: any) {
+                    toast.push({ tone: 'danger', title: 'Error', message: e?.message || 'No se pudo generar el enlace.' })
+                  } finally {
+                    setLinkLoading(false)
+                  }
+                }}
+              >
+                Generar enlace (reset)
+              </Button>
+            </div>
+
+            {actionLink ? (
+              <div className="card soft" style={{ padding: 12, marginTop: 10 }}>
+                <div className="upload-hint">Enlace</div>
+                <div style={{ marginTop: 6, fontWeight: 800, wordBreak: 'break-all' }}>
+                  {`${window.location.origin}${actionLink.path}`}
+                </div>
+                <div className="upload-hint" style={{ marginTop: 6 }}>
+                  Caduca: {actionLink.expiresAt ? new Date(actionLink.expiresAt).toLocaleString() : '—'}
+                </div>
+                <div style={{ marginTop: 10 }}>
+                  <Button size="sm" variant="ghost" onClick={() => copyLink(`${window.location.origin}${actionLink.path}`)}>
+                    Copiar enlace
+                  </Button>
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
       ) : null}
