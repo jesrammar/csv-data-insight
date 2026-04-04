@@ -1,4 +1,6 @@
-import React, { useMemo, useState } from 'react'
+import { useMemo } from 'react'
+import EChart from './charts/EChart'
+import { formatChartValue } from '../utils/chartFormat'
 
 type Point = { label: string; value: number }
 
@@ -7,171 +9,126 @@ type Props = {
   points: Point[]
   variant?: 'line' | 'area' | 'bar'
   valueSuffix?: string
+  onPointClick?: (label: string, value: number, index: number) => void
 }
 
-export default function KpiChart({ title, points, variant = 'line', valueSuffix = '' }: Props) {
-  if (!points.length) {
-    return <div className="empty">Sin datos para graficar.</div>
-  }
+export default function KpiChart({ title, points, variant = 'line', valueSuffix = '', onPointClick }: Props) {
+  if (!points.length) return <div className="empty">Sin datos para graficar.</div>
 
-  const [hovered, setHovered] = useState<number | null>(null)
-  const values = points.map((p) => p.value)
+  const values = points.map((p) => Number(p.value))
   const min = Math.min(...values)
   const max = Math.max(...values)
-  const range = max - min || 1
   const avg = values.reduce((acc, v) => acc + v, 0) / values.length
-  const padding = 16
-  const width = 520
-  const height = 180
-  const innerW = width - padding * 2
-  const innerH = height - padding * 2
+  const hasMany = points.length > 14
 
-  const coords = useMemo(() => {
-    return points.map((p, i) => {
-      const x = padding + (innerW * i) / (points.length - 1 || 1)
-      const y = padding + innerH - ((p.value - min) / range) * innerH
-      return { x, y }
-    })
-  }, [points, innerW, innerH, padding, min, range])
+  const option = useMemo(() => {
+    const labels = points.map((p) => p.label)
+    const seriesData = points.map((p) => Number(p.value))
 
-  const path = useMemo(() => {
-    return coords.map((c, i) => `${i === 0 ? 'M' : 'L'} ${c.x} ${c.y}`).join(' ')
-  }, [coords])
+    const commonLine = {
+      smooth: true,
+      symbol: 'circle',
+      symbolSize: 7,
+      itemStyle: { color: 'rgba(96, 165, 250, 0.95)' },
+      lineStyle: { width: 3, color: 'rgba(96, 165, 250, 0.95)' }
+    }
 
-  const areaPath = `${path} L ${padding + innerW} ${padding + innerH} L ${padding} ${padding + innerH} Z`
-  const avgY = padding + innerH - ((avg - min) / range) * innerH
-
-  function handleMove(evt: React.MouseEvent<SVGSVGElement>) {
-    const rect = evt.currentTarget.getBoundingClientRect()
-    const x = evt.clientX - rect.left
-    const idx = Math.round(((x - padding) / innerW) * (points.length - 1))
-    const clamped = Math.max(0, Math.min(points.length - 1, idx))
-    setHovered(clamped)
-  }
-
-  function formatValue(value: number) {
-    const base = Number.isInteger(value) ? value.toString() : value.toFixed(2)
-    return `${base}${valueSuffix}`
-  }
+    return {
+      legend: { show: false },
+      grid: { left: 14, right: 14, top: 34, bottom: hasMany ? 46 : 32, containLabel: true },
+      xAxis: {
+        type: 'category',
+        data: labels,
+        axisLine: { lineStyle: { color: 'rgba(148, 163, 184, 0.25)' } },
+        axisLabel: {
+          color: 'rgba(226, 232, 240, 0.75)',
+          interval: 'auto',
+          rotate: hasMany ? 35 : 0
+        }
+      },
+      yAxis: {
+        type: 'value',
+        axisLine: { show: false },
+        splitLine: { lineStyle: { color: 'rgba(148, 163, 184, 0.12)' } },
+        axisLabel: { color: 'rgba(226, 232, 240, 0.65)', formatter: (v: any) => formatChartValue(Number(v), valueSuffix) }
+      },
+      tooltip: {
+        trigger: 'axis',
+        formatter: (params: any) => {
+          const p = Array.isArray(params) ? params[0] : params
+          const label = String(p?.axisValue ?? '')
+          const val = Number(p?.data)
+          return `<div style="font-weight:700;margin-bottom:4px">${label}</div><div>${formatChartValue(val, valueSuffix)}</div>`
+        }
+      },
+      dataZoom: hasMany
+        ? [
+            { type: 'inside', start: 0, end: 100 },
+            {
+              type: 'slider',
+              height: 18,
+              bottom: 6,
+              borderColor: 'rgba(148, 163, 184, 0.2)',
+              fillerColor: 'rgba(96, 165, 250, 0.15)',
+              backgroundColor: 'rgba(148, 163, 184, 0.06)',
+              handleStyle: { color: 'rgba(96, 165, 250, 0.6)' },
+              textStyle: { color: 'rgba(226, 232, 240, 0.7)' }
+            }
+          ]
+        : undefined,
+      series: [
+        variant === 'bar'
+          ? {
+              name: title,
+              type: 'bar',
+              data: seriesData,
+              barMaxWidth: 22,
+              itemStyle: { color: 'rgba(20, 184, 166, 0.85)' },
+              markLine: {
+                symbol: 'none',
+                lineStyle: { color: 'rgba(250, 204, 21, 0.5)', type: 'dashed' },
+                data: [{ yAxis: avg, name: 'Media' }]
+              }
+            }
+          : {
+              name: title,
+              type: 'line',
+              data: seriesData,
+              ...commonLine,
+              areaStyle: variant === 'area' ? { color: 'rgba(96, 165, 250, 0.15)' } : undefined,
+              markLine: {
+                symbol: 'none',
+                lineStyle: { color: 'rgba(250, 204, 21, 0.5)', type: 'dashed' },
+                data: [{ yAxis: avg, name: 'Media' }]
+              }
+            }
+      ]
+    }
+  }, [points, variant, valueSuffix, avg, hasMany, title])
 
   return (
     <div className="chart-wrap">
       <h4 style={{ margin: '0 0 8px' }}>{title}</h4>
-      <svg
-        width="100%"
-        height={height}
-        viewBox={`0 0 ${width} ${height}`}
-        onMouseMove={handleMove}
-        onMouseLeave={() => setHovered(null)}
-      >
-        <defs>
-          <filter id="neonGlow" x="-40%" y="-40%" width="180%" height="180%">
-            <feDropShadow dx="0" dy="0" stdDeviation="3" floodColor="#60a5fa" floodOpacity="0.45" />
-            <feDropShadow dx="0" dy="0" stdDeviation="4" floodColor="#14b8a6" floodOpacity="0.22" />
-          </filter>
-          <linearGradient id="lineGrad" x1="0" x2="1" y1="0" y2="0">
-            <stop offset="0%" stopColor="#14b8a6" />
-            <stop offset="100%" stopColor="#60a5fa" />
-          </linearGradient>
-          <linearGradient id="areaGrad" x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stopColor="rgba(20, 184, 166, 0.45)" />
-            <stop offset="100%" stopColor="rgba(20, 184, 166, 0.02)" />
-          </linearGradient>
-        </defs>
-        <rect
-          x="0"
-          y="0"
-          width={width}
-          height={height}
-          fill="rgba(10, 16, 28, 0.72)"
-          stroke="rgba(96, 165, 250, 0.18)"
-          rx="14"
+      <div className="chart-surface">
+        <EChart
+          style={{ height: 240 }}
+          option={option as any}
+          onClick={(params) => {
+            if (!onPointClick) return
+            const label = String(params?.name ?? params?.axisValue ?? '')
+            const raw = params?.value
+            const value = Array.isArray(raw) ? Number(raw[1]) : Number(raw)
+            const idx = typeof params?.dataIndex === 'number' ? params.dataIndex : -1
+            if (!label) return
+            if (!Number.isFinite(value)) return
+            onPointClick(label, value, idx)
+          }}
         />
-        {[0.25, 0.5, 0.75].map((t, idx) => (
-          <line
-            key={idx}
-            x1={padding}
-            x2={padding + innerW}
-            y1={padding + innerH * t}
-            y2={padding + innerH * t}
-            stroke="rgba(148, 163, 184, 0.2)"
-            strokeDasharray="4 6"
-          />
-        ))}
-        <line
-          x1={padding}
-          x2={padding + innerW}
-          y1={avgY}
-          y2={avgY}
-          stroke="rgba(250, 204, 21, 0.55)"
-          strokeDasharray="6 6"
-        />
-        {variant === 'bar' ? (
-          coords.map((c, idx) => {
-            const barW = innerW / (points.length || 1)
-            const barH = padding + innerH - c.y
-            return (
-              <rect
-                key={idx}
-                x={c.x - barW / 2 + 1}
-                y={c.y}
-                width={barW - 2}
-                height={barH}
-                rx="6"
-                fill="url(#lineGrad)"
-                filter="url(#neonGlow)"
-                opacity={hovered === idx ? 1 : 0.7}
-              />
-            )
-          })
-        ) : (
-          <>
-            {variant === 'area' && <path d={areaPath} fill="url(#areaGrad)" />}
-            <path d={path} fill="none" stroke="url(#lineGrad)" strokeWidth="3" filter="url(#neonGlow)" />
-            {coords.map((c, idx) => (
-              <circle
-                key={idx}
-                cx={c.x}
-                cy={c.y}
-                r={hovered === idx ? 5 : 4}
-                fill="#0ea5a4"
-                opacity={hovered === idx ? 1 : 0.92}
-              />
-            ))}
-          </>
-        )}
-        {hovered !== null ? (
-          <g>
-            <rect
-              x={coords[hovered].x - 36}
-              y={coords[hovered].y - 32}
-              width="72"
-              height="24"
-              rx="6"
-              fill="rgba(15, 23, 42, 0.95)"
-              stroke="rgba(148, 163, 184, 0.35)"
-            />
-            <text
-              x={coords[hovered].x}
-              y={coords[hovered].y - 16}
-              textAnchor="middle"
-              fontSize="11"
-              fill="#e2e8f0"
-            >
-              {formatValue(points[hovered].value)}
-            </text>
-          </g>
-        ) : null}
-      </svg>
-      <div className="chart-labels">
-        {points.map((p) => (
-          <span key={p.label}>{p.label}</span>
-        ))}
       </div>
       <div className="mini-row">
-        <span>Min: {formatValue(min)}</span>
-        <span>Media: {formatValue(avg)}</span>
-        <span>Max: {formatValue(max)}</span>
+        <span>Min: {formatChartValue(min, valueSuffix)}</span>
+        <span>Media: {formatChartValue(avg, valueSuffix)}</span>
+        <span>Max: {formatChartValue(max, valueSuffix)}</span>
       </div>
     </div>
   )

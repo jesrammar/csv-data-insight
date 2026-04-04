@@ -1,0 +1,22 @@
+# Umbrales locales (ajusta aquí con tu carga real).
+# Este fichero está montado en Prometheus y se incluye en `rule_files`.
+# Los umbrales están como "recording rules" para evitar duplicar alertas.
+
+groups:
+  - name: enterpriseiq.thresholds
+    rules:
+      - record: enterpriseiq:threshold_import_p95_warn_seconds
+        expr: 8
+      - record: enterpriseiq:threshold_import_p95_crit_seconds
+        expr: 15
+
+      - record: enterpriseiq:threshold_universal_p95_warn_seconds
+        expr: 12
+      - record: enterpriseiq:threshold_universal_p95_crit_seconds
+        expr: 20
+
+      - record: enterpriseiq:threshold_api_latency_p95_warn_seconds
+        expr: 1.5
+
+      - record: enterpriseiq:threshold_error_tag_cardinality
+        expr: 12

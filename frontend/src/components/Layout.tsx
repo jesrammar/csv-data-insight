@@ -1,8 +1,7 @@
-﻿import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { getCompanies, getUserRole, logout } from '../api'
-import { useCompanySelection } from '../hooks/useCompany'
 import CompanySelector from './CompanySelector'
 import Button from './ui/Button'
 import Icon from './ui/Icon'
@@ -16,18 +15,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     retry: 1
   })
 
-  const { plan } = useCompanySelection()
   const role = getUserRole()
   const isClient = role === 'CLIENTE'
   const isAdmin = role === 'ADMIN'
-  const hasGold = plan === 'GOLD' || plan === 'PLATINUM'
-  const [consultingOpen, setConsultingOpen] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem('nav_consultoria_open') === '1'
-    } catch {
-      return false
-    }
-  })
+  const isConsultor = role === 'CONSULTOR'
 
   useEffect(() => {
     const list = (companies || []) as any[]
@@ -46,14 +37,6 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     document.body.classList.toggle('body-client', isClient)
     return () => document.body.classList.remove('body-client')
   }, [isClient])
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('nav_consultoria_open', consultingOpen ? '1' : '0')
-    } catch {
-      // ignore
-    }
-  }, [consultingOpen])
 
   async function handleLogout() {
     try {
@@ -105,7 +88,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             </>
           ) : (
             <>
-              <div className="nav-section">Operativa</div>
+              <div className="nav-section">Principal</div>
               <NavLink to="/overview" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
                 <Icon name="overview" />
                 Vista ejecutiva
@@ -123,46 +106,23 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 Entregables
               </NavLink>
 
-              <button
-                type="button"
-                className="nav-section nav-section-toggle"
-                style={{ marginTop: 12 }}
-                onClick={() => setConsultingOpen((v) => !v)}
-                aria-expanded={consultingOpen}
-              >
-                <span>ConsultorÃ­a</span>
-                <span className="nav-section-caret">{consultingOpen ? 'â–¾' : 'â–¸'}</span>
-              </button>
+              <div className="nav-section" style={{ marginTop: 12 }}>
+                Más
+              </div>
+              <NavLink to="/guides" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+                <Icon name="help" />
+                Guías de carga
+              </NavLink>
+              <NavLink to="/tools" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+                <Icon name="advisor" />
+                Herramientas
+              </NavLink>
 
-              {consultingOpen ? (
-                <>
-                  {hasGold ? (
-                    <NavLink to="/tribunal" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-                      <Icon name="tribunal" />
-                      Cumplimiento (Tribunal)
-                    </NavLink>
-                  ) : null}
-                  <NavLink to="/universal" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-                    <Icon name="universal" />
-                    AnÃ¡lisis avanzado
-                  </NavLink>
-                  <NavLink to="/advisor" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-                    <Icon name="advisor" />
-                    Asesor
-                  </NavLink>
-                  <NavLink to="/automation" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-                    <Icon name="automation" />
-                    Tareas automÃ¡ticas
-                  </NavLink>
-                  <NavLink to="/audit" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-                    <Icon name="audit" />
-                    Auditoría
-                  </NavLink>
-                  <NavLink to="/pricing" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-                    <Icon name="pricing" />
-                    Planes
-                  </NavLink>
-                </>
+              {isConsultor ? (
+                <NavLink to="/portfolio" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+                  <Icon name="overview" />
+                  Cartera
+                </NavLink>
               ) : null}
 
               {isAdmin ? (
@@ -170,6 +130,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                   <div className="nav-section" style={{ marginTop: 14 }}>
                     Admin
                   </div>
+                  <NavLink to="/admin/users" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+                    <Icon name="admin" />
+                    Usuarios y empresas
+                  </NavLink>
                   <NavLink to="/admin/storage" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
                     <Icon name="admin" />
                     Storage cleanup
@@ -188,7 +152,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           <div className="top-left">
             <div className="status-dot" />
             <span className="top-title">{isClient ? 'Panel operativo' : 'Control financiero operativo'}</span>
-            <span className={`pill ${isClient ? 'pill-client' : 'pill-consultant'}`}>{isClient ? 'Cliente' : 'ConsultorÃ­a'}</span>
+            <span className={`pill ${isClient ? 'pill-client' : 'pill-consultant'}`}>{isClient ? 'Cliente' : 'Consultoría'}</span>
             {companiesPending ? <span className="pill" style={{ marginLeft: 12 }}>Cargando empresas...</span> : null}
             {companiesError ? (
               <span
@@ -212,7 +176,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 Reintentar
               </Button>
             ) : null}
-            <Button variant="ghost" size="sm" onClick={handleLogout} title="Cerrar sesiÃ³n">
+            <Button variant="ghost" size="sm" onClick={handleLogout} title="Cerrar sesión">
               <Icon name="logout" /> Salir
             </Button>
           </div>

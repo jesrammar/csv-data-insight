@@ -11,7 +11,7 @@ public class UniversalStorageService {
     private final Path universalRoot;
 
     public UniversalStorageService(@Value("${app.storage.universal}") String universalRoot) {
-        this.universalRoot = Path.of(universalRoot);
+        this.universalRoot = Path.of(universalRoot).toAbsolutePath().normalize();
     }
 
     public Path writeNormalizedCsv(long importId, byte[] bytes) throws IOException {
@@ -25,7 +25,14 @@ public class UniversalStorageService {
         if (storageRef == null || storageRef.isBlank()) {
             throw new IOException("Missing storageRef");
         }
-        return Files.readAllBytes(Path.of(storageRef));
+        Path candidate = Path.of(storageRef);
+        Path absFile = candidate.isAbsolute()
+            ? candidate.toAbsolutePath().normalize()
+            : universalRoot.resolve(storageRef).toAbsolutePath().normalize();
+        if (!absFile.startsWith(universalRoot)) {
+            throw new IOException("Invalid storageRef (path traversal)");
+        }
+        return Files.readAllBytes(absFile);
     }
 }
 

@@ -1,0 +1,22 @@
+# Ejemplo (opcional) de reverse-proxy con HTTPS + Basic Auth para Grafana
+#
+# - Mantén `docker-compose.prod.yml` con Grafana/Prometheus/Alertmanager en localhost.
+# - Expón solo el 443 público y proxya a localhost.
+#
+# Requiere Caddy en el host:
+# - Debian/Ubuntu: https://caddyserver.com/docs/install
+#
+# Sustituye `grafana.tudominio.com` por tu dominio y crea usuarios:
+#   caddy hash-password --plaintext 'tu-password'
+#
+grafana.tudominio.com {
+  encode gzip
+
+  basicauth {
+    # admin <hash>
+    admin $2a$14$REEMPLAZA_CON_HASH
+  }
+
+  reverse_proxy 127.0.0.1:3000
+}
+

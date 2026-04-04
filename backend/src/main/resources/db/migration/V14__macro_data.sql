@@ -21,4 +21,3 @@ create table if not exists macro_observation (
 );
 
 create index if not exists idx_macro_obs_series_period on macro_observation(series_id, period);
-

@@ -8,4 +8,5 @@ import org.springframework.data.jpa.repository.JpaRepository;
 public interface UniversalImportRepository extends JpaRepository<UniversalImport, Long> {
     Optional<UniversalImport> findFirstByCompanyIdOrderByCreatedAtDesc(Long companyId);
     List<UniversalImport> findByCompanyIdOrderByCreatedAtDesc(Long companyId);
+    Optional<UniversalImport> findByIdAndCompanyId(Long id, Long companyId);
 }

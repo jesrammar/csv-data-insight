@@ -33,7 +33,7 @@ public class KpiAutomationService {
         for (int i = 0; i < take; i++) {
             String period = periods.get(i);
             var kpi = kpiService.recompute(company, period, (BigDecimal) null);
-            alertService.evaluateThreshold(company, kpi);
+            alertService.evaluateMonthly(company, kpi);
         }
     }
 }

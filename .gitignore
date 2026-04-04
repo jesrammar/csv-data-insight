@@ -29,6 +29,7 @@ replay_pid*
 /backend/storage/
 /backend/.maven/
 /.m2repo/
+/.m2/
 
 # Frontend
 /frontend/node_modules/
@@ -57,3 +58,6 @@ qc
 # Legacy app (moved out of EnterpriseIQ entrypoints)
 /legacy/**/target/
 /legacy/**/node_modules/
+
+# Local sample inputs
+/samples/incoming/

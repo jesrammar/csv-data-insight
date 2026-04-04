@@ -11,14 +11,21 @@ const ImportsPage = lazy(() => import('./pages/ImportsPage'))
 const ReportsPage = lazy(() => import('./pages/ReportsPage'))
 const TribunalDashboardPage = lazy(() => import('./pages/TribunalDashboardPage'))
 const UniversalDashboardPage = lazy(() => import('./pages/UniversalDashboardPage'))
+const UniversalViewsPage = lazy(() => import('./pages/UniversalViewsPage'))
+const UniversalViewPage = lazy(() => import('./pages/UniversalViewPage'))
+const BudgetDashboardPage = lazy(() => import('./pages/BudgetDashboardPage'))
 const PricingPage = lazy(() => import('./pages/PricingPage'))
 const AutomationPage = lazy(() => import('./pages/AutomationPage'))
 const AdvisorPage = lazy(() => import('./pages/AdvisorPage'))
+const ToolsPage = lazy(() => import('./pages/ToolsPage'))
 const ClientHomePage = lazy(() => import('./pages/ClientHomePage'))
 const AlertsPage = lazy(() => import('./pages/AlertsPage'))
 const HelpPage = lazy(() => import('./pages/HelpPage'))
 const AuditPage = lazy(() => import('./pages/AuditPage'))
 const AdminStoragePage = lazy(() => import('./pages/AdminStoragePage'))
+const AdminUsersPage = lazy(() => import('./pages/AdminUsersPage'))
+const PortfolioPage = lazy(() => import('./pages/PortfolioPage'))
+const GuidesPage = lazy(() => import('./pages/GuidesPage'))
 
 function RouteFallback() {
   return (
@@ -41,6 +48,7 @@ export default function App() {
   const role = getUserRole()
   const isClient = useMemo(() => role === 'CLIENTE', [role])
   const isAdmin = useMemo(() => role === 'ADMIN', [role])
+  const isConsultor = useMemo(() => role === 'CONSULTOR', [role])
 
   useEffect(() => {
     return onAuthChange(() => {
@@ -128,6 +136,30 @@ export default function App() {
             }
           />
           <Route
+            path="/universal/views"
+            element={
+              <Guard allow={!isClient}>
+                <UniversalViewsPage />
+              </Guard>
+            }
+          />
+          <Route
+            path="/universal/views/:viewId"
+            element={
+              <Guard allow={!isClient}>
+                <UniversalViewPage />
+              </Guard>
+            }
+          />
+          <Route
+            path="/budget"
+            element={
+              <Guard allow={!isClient}>
+                <BudgetDashboardPage />
+              </Guard>
+            }
+          />
+          <Route
             path="/pricing"
             element={
               <Guard allow={!isClient}>
@@ -140,6 +172,14 @@ export default function App() {
             element={
               <Guard allow={!isClient}>
                 <AutomationPage />
+              </Guard>
+            }
+          />
+          <Route
+            path="/tools"
+            element={
+              <Guard allow={!isClient}>
+                <ToolsPage />
               </Guard>
             }
           />
@@ -164,6 +204,30 @@ export default function App() {
             element={
               <Guard allow={isAdmin}>
                 <AdminStoragePage />
+              </Guard>
+            }
+          />
+          <Route
+            path="/admin/users"
+            element={
+              <Guard allow={isAdmin}>
+                <AdminUsersPage />
+              </Guard>
+            }
+          />
+          <Route
+            path="/portfolio"
+            element={
+              <Guard allow={isConsultor}>
+                <PortfolioPage />
+              </Guard>
+            }
+          />
+          <Route
+            path="/guides"
+            element={
+              <Guard allow={!isClient}>
+                <GuidesPage />
               </Guard>
             }
           />

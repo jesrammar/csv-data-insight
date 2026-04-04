@@ -36,6 +36,7 @@ public class ImportController {
     }
 
     @GetMapping
+    @PreAuthorize("hasAnyRole('ADMIN','CONSULTOR')")
     public List<ImportDto> list(@PathVariable Long companyId) {
         var user = accessService.currentUser();
         accessService.requireCompanyAccess(user, companyId);
@@ -49,7 +50,8 @@ public class ImportController {
                             @RequestPart("file") MultipartFile file) throws IOException {
         var user = accessService.currentUser();
         accessService.requireCompanyAccess(user, companyId);
-        uploadLimitService.requireAllowed(file);
+        var company = accessService.requireCompany(companyId);
+        uploadLimitService.requireAllowed(file, company.getPlan());
         ImportJob job = importService.createImport(companyId, period, file);
         return toDto(job);
     }
@@ -62,7 +64,8 @@ public class ImportController {
                                     @RequestPart(name = "headerRow", required = false) String headerRow) throws IOException {
         var user = accessService.currentUser();
         accessService.requireCompanyAccess(user, companyId);
-        uploadLimitService.requireAllowed(file);
+        var company = accessService.requireCompany(companyId);
+        uploadLimitService.requireAllowed(file, company.getPlan());
         TabularFileService.XlsxOptions xlsxOptions = null;
         Integer sheet = parseOptionalInt(sheetIndex);
         Integer header = parseOptionalInt(headerRow);
@@ -86,7 +89,8 @@ public class ImportController {
                                  @RequestPart(name = "headerRow", required = false) String headerRow) throws IOException {
         var user = accessService.currentUser();
         accessService.requireCompanyAccess(user, companyId);
-        uploadLimitService.requireAllowed(file);
+        var company = accessService.requireCompany(companyId);
+        uploadLimitService.requireAllowed(file, company.getPlan());
         Integer sheet = parseOptionalInt(sheetIndex);
         Integer header = parseOptionalInt(headerRow);
         ImportJob job = importService.createImportMapped(companyId, period, file, txnDateCol, amountCol, descriptionCol, counterpartyCol, balanceEndCol, sheet, header);
