@@ -31,6 +31,31 @@ export default function AutomationPage() {
 
   const rows = useMemo(() => (Array.isArray(jobs) ? jobs : jobs?.value || []), [jobs])
 
+  const typeLabel = (t: string) => {
+    const v = String(t || '').toUpperCase()
+    if (v.includes('RECOMPUTE') && v.includes('KPI')) return 'Recalcular KPIs'
+    if (v.includes('MONTH') && v.includes('REPORT')) return 'Informe mensual'
+    if (v.includes('SNAPSHOT') && v.includes('RECOMMEND')) return 'Snapshot recomendaciones'
+    return String(t || '—')
+  }
+
+  const statusTone = (s: string) => {
+    const v = String(s || '').toUpperCase()
+    if (v === 'SUCCESS') return 'ok'
+    if (v === 'RETRY') return 'warn'
+    if (v === 'DEAD' || v === 'ERROR' || v === 'FAILED') return 'err'
+    return ''
+  }
+
+  const copyText = async (label: string, text: string) => {
+    try {
+      await navigator.clipboard.writeText(text)
+      toast.push({ tone: 'success', title: 'Copiado', message: `${label} copiado.` })
+    } catch {
+      toast.push({ tone: 'warning', title: 'Copia manual', message: 'No se pudo copiar automáticamente.' })
+    }
+  }
+
   const recompute = useMutation({
     mutationFn: () => runRecomputeKpis(companyId as number, monthsBack),
     onSuccess: async () => {
@@ -61,8 +86,8 @@ export default function AutomationPage() {
   return (
     <div>
       <PageHeader
-        title="Automatización"
-        subtitle="Jobs programados + cola con reintentos. Útil para operar como consultora sin tareas manuales."
+        title="Operaciones · Automatización"
+        subtitle="Pantalla avanzada para forzar/reintentar jobs (KPIs, informes, snapshots) cuando algo no corre solo."
         actions={<span className="badge">{plan}</span>}
       />
 
@@ -71,9 +96,19 @@ export default function AutomationPage() {
       ) : null}
       {error ? <Alert tone="danger">No se pudieron cargar los jobs: {String((error as any).message)}</Alert> : null}
 
+      <Alert tone="info" title="¿Cuándo usar esto?">
+        <div className="upload-hint" style={{ marginTop: 8 }}>
+          Solo si acabas de subir datos y quieres resultados ya, o si un job se quedó en RETRY/DEAD. Si no sabes qué es, probablemente no lo
+          necesitas.
+        </div>
+      </Alert>
+
       <div className="grid section">
         <div className="card">
-          <h3 style={{ marginTop: 0 }}>Run now</h3>
+          <h3 style={{ marginTop: 0 }}>Ejecutar ahora</h3>
+          <div className="upload-hint" style={{ marginTop: 8 }}>
+            Úsalo si acabas de subir datos y quieres forzar cálculo/entregables sin esperar al scheduler.
+          </div>
           <div className="upload-row" style={{ marginTop: 10 }}>
             <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <span style={{ width: 140 }}>Recalcular KPIs</span>
@@ -138,50 +173,76 @@ export default function AutomationPage() {
             </div>
           ) : (
             <div style={{ marginTop: 12 }}>
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>ID</th>
-                    <th>Tipo</th>
-                    <th>Status</th>
-                    <th>Attempts</th>
-                    <th>Run after</th>
-                    <th>Trace</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.slice(0, 20).map((j: any) => (
-                    <tr key={j.id}>
-                      <td>{j.id}</td>
-                      <td>{j.type}</td>
-                      <td>
-                        <span
-                          className={`badge ${
-                            j.status === 'SUCCESS'
-                              ? 'ok'
-                              : j.status === 'RETRY'
-                              ? 'warn'
-                              : j.status === 'DEAD'
-                              ? 'err'
-                              : ''
-                          }`}
-                        >
-                          {j.status}
-                        </span>
-                      </td>
-                      <td>
-                        {j.attempts}/{j.maxAttempts}
-                      </td>
-                      <td className="upload-hint">{String(j.runAfter || '').slice(0, 19)}</td>
-                      <td className="upload-hint">{String(j.traceId || '').slice(0, 12)}</td>
+              <div className="table-wrap">
+                <table className="table table-fixed">
+                  <thead>
+                    <tr>
+                      <th style={{ width: 56 }}>ID</th>
+                      <th style={{ width: 220 }}>Tipo</th>
+                      <th style={{ width: 110 }}>Estado</th>
+                      <th style={{ width: 110 }}>Intentos</th>
+                      <th style={{ width: 160 }}>Run after</th>
+                      <th style={{ width: 180 }}>Trace</th>
+                      <th style={{ width: 120 }} />
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {rows.slice(0, 20).map((j: any) => {
+                      const trace = String(j.traceId || '')
+                      const runAfter = String(j.runAfter || '').slice(0, 19)
+                      return (
+                        <tr key={j.id}>
+                          <td className="mono">{j.id}</td>
+                          <td title={String(j.type || '')}>{typeLabel(j.type)}</td>
+                          <td>
+                            <span className={`badge ${statusTone(j.status)}`}>{String(j.status || '—')}</span>
+                          </td>
+                          <td className="mono">
+                            {j.attempts}/{j.maxAttempts}
+                          </td>
+                          <td className="upload-hint mono" title={runAfter}>
+                            {runAfter || '—'}
+                          </td>
+                          <td className="upload-hint mono" title={trace}>
+                            {trace ? trace.slice(0, 12) : '—'}
+                          </td>
+                          <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                            {trace ? (
+                              <Button size="sm" variant="ghost" onClick={() => copyText('Trace', trace)}>
+                                Copiar
+                              </Button>
+                            ) : null}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
               {rows.some((j: any) => j.lastError) ? (
-                <div className="empty" style={{ marginTop: 12 }}>
-                  Hay errores en jobs recientes. Revisa `lastError` desde API o logs del backend.
-                </div>
+                <details style={{ marginTop: 12 }}>
+                  <summary className="upload-hint" style={{ cursor: 'pointer' }}>
+                    Ver errores recientes
+                  </summary>
+                  <div className="card soft" style={{ padding: 12, marginTop: 10 }}>
+                    {(rows as any[])
+                      .filter((j) => j.lastError)
+                      .slice(0, 3)
+                      .map((j) => (
+                        <div key={`err-${j.id}`} style={{ marginBottom: 10 }}>
+                          <div className="mini-row" style={{ marginTop: 0 }}>
+                            <span className="badge err">JOB {j.id}</span>
+                            <span className="upload-hint">{typeLabel(j.type)}</span>
+                          </div>
+                          <div className="upload-hint mono" style={{ marginTop: 6, whiteSpace: 'pre-wrap' }}>
+                            {String(j.lastError || '').slice(0, 600)}
+                          </div>
+                        </div>
+                      ))}
+                    <div className="upload-hint">Tip: usa el Trace para buscar en logs/auditoría.</div>
+                  </div>
+                </details>
               ) : null}
             </div>
           )}
