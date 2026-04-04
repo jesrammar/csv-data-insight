@@ -14,9 +14,10 @@ public class AuditEventDto {
     private Long durationMs;
     private String resourceType;
     private String resourceId;
+    private String metaJson;
 
     public AuditEventDto(Long id, Instant at, Long userId, Long companyId, String action, String method, String path,
-                         Integer status, Long durationMs, String resourceType, String resourceId) {
+                         Integer status, Long durationMs, String resourceType, String resourceId, String metaJson) {
         this.id = id;
         this.at = at;
         this.userId = userId;
@@ -28,6 +29,7 @@ public class AuditEventDto {
         this.durationMs = durationMs;
         this.resourceType = resourceType;
         this.resourceId = resourceId;
+        this.metaJson = metaJson;
     }
 
     public Long getId() { return id; }
@@ -41,5 +43,6 @@ public class AuditEventDto {
     public Long getDurationMs() { return durationMs; }
     public String getResourceType() { return resourceType; }
     public String getResourceId() { return resourceId; }
+    public String getMetaJson() { return metaJson; }
 }
 

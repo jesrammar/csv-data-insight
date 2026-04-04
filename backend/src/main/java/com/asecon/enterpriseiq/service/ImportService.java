@@ -9,6 +9,7 @@ import com.asecon.enterpriseiq.repo.CompanyRepository;
 import com.asecon.enterpriseiq.repo.ImportJobRepository;
 import com.asecon.enterpriseiq.repo.StagingTransactionRepository;
 import com.asecon.enterpriseiq.repo.TransactionRepository;
+import com.asecon.enterpriseiq.metrics.ErrorTagger;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
@@ -31,6 +32,10 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.DistributionSummary;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVParser;
 import org.apache.commons.csv.CSVPrinter;
@@ -40,6 +45,8 @@ import org.apache.poi.ss.usermodel.DateUtil;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -49,6 +56,8 @@ import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class ImportService {
+    private static final Logger log = LoggerFactory.getLogger(ImportService.class);
+
     private final ImportJobRepository importJobRepository;
     private final CompanyRepository companyRepository;
     private final StagingTransactionRepository stagingRepository;
@@ -58,6 +67,8 @@ public class ImportService {
     private final ObjectMapper objectMapper;
     private final Path importsRoot;
     private final TabularFileService tabularFileService;
+    private final MeterRegistry meterRegistry;
+    private final ErrorTagger errorTagger;
 
     public ImportService(ImportJobRepository importJobRepository,
                          CompanyRepository companyRepository,
@@ -67,7 +78,9 @@ public class ImportService {
                          AlertService alertService,
                          ObjectMapper objectMapper,
                          @Value("${app.storage.imports}") String importsRoot,
-                         TabularFileService tabularFileService) {
+                         TabularFileService tabularFileService,
+                         MeterRegistry meterRegistry,
+                         ErrorTagger errorTagger) {
         this.importJobRepository = importJobRepository;
         this.companyRepository = companyRepository;
         this.stagingRepository = stagingRepository;
@@ -77,6 +90,8 @@ public class ImportService {
         this.objectMapper = objectMapper;
         this.importsRoot = Path.of(importsRoot).toAbsolutePath().normalize();
         this.tabularFileService = tabularFileService;
+        this.meterRegistry = meterRegistry;
+        this.errorTagger = errorTagger;
         try {
             Files.createDirectories(this.importsRoot);
         } catch (IOException ex) {
@@ -85,6 +100,7 @@ public class ImportService {
     }
 
     public ImportJob createImport(Long companyId, String period, MultipartFile file) throws IOException {
+        Timer.Sample uploadSample = Timer.start(meterRegistry);
         Company company = companyRepository.findById(companyId).orElseThrow();
         ImportJob job = new ImportJob();
         job.setCompany(company);
@@ -121,9 +137,30 @@ public class ImportService {
             throw ex;
         }
 
+        try {
+            long fileBytes = Files.size(target);
+            log.info("METRIC ingestion.import.upload companyId={} importId={} period={} fileBytes={} originalFilename={} contentType={}",
+                companyId, job.getId(), job.getPeriod(), fileBytes, job.getOriginalFilename(), job.getContentType());
+
+            DistributionSummary.builder("ingestion.import.upload.bytes")
+                .baseUnit("bytes")
+                .tag("kind", "raw")
+                .tag("contentType", safeContentType(job.getContentType()))
+                .register(meterRegistry)
+                .record(fileBytes);
+            Counter.builder("ingestion.import.upload.count")
+                .tag("kind", "raw")
+                .register(meterRegistry)
+                .increment();
+        } catch (Exception ignored) {}
+
         job.setStorageRef(storageRef);
         job.setUpdatedAt(Instant.now());
         importJobRepository.save(job);
+
+        uploadSample.stop(Timer.builder("ingestion.import.upload.duration")
+            .tag("kind", "raw")
+            .register(meterRegistry));
         return job;
     }
 
@@ -137,6 +174,7 @@ public class ImportService {
                                         String balanceEndCol,
                                         Integer sheetIndex,
                                         Integer headerRow1Based) throws IOException {
+        Timer.Sample uploadSample = Timer.start(meterRegistry);
         if (txnDateCol == null || txnDateCol.isBlank() || amountCol == null || amountCol.isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Faltan columnas requeridas (fecha e importe).");
         }
@@ -188,6 +226,7 @@ public class ImportService {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Las columnas seleccionadas no existen en el fichero.");
             }
 
+            long mappedRows = 0;
             for (CSVRecord record : parser) {
                 String rawDate = safeGet(record, txnDateCol);
                 String rawAmount = safeGet(record, amountCol);
@@ -228,7 +267,13 @@ public class ImportService {
                     rawCp == null ? "" : rawCp,
                     rawBal == null ? "" : rawBal
                 );
+                mappedRows++;
             }
+
+            DistributionSummary.builder("ingestion.import.mapped.rows")
+                .baseUnit("rows")
+                .register(meterRegistry)
+                .record(mappedRows);
 
             printer.flush();
             Files.writeString(target, sw.toString(), StandardCharsets.UTF_8);
@@ -257,6 +302,23 @@ public class ImportService {
             throw ex;
         }
 
+        try {
+            long mappedBytes = Files.size(target);
+            log.info("METRIC ingestion.import.upload_mapped companyId={} importId={} period={} fileBytes={} originalFilename={} mappedBytes={} warnings={} errors={}",
+                companyId, job.getId(), job.getPeriod(), file.getSize(), job.getOriginalFilename(), mappedBytes, warnings, errors);
+
+            DistributionSummary.builder("ingestion.import.upload.bytes")
+                .baseUnit("bytes")
+                .tag("kind", "mapped")
+                .tag("contentType", "text/csv")
+                .register(meterRegistry)
+                .record(mappedBytes);
+            Counter.builder("ingestion.import.upload.count")
+                .tag("kind", "mapped")
+                .register(meterRegistry)
+                .increment();
+        } catch (Exception ignored) {}
+
         job.setStorageRef(storageRef);
         job.setWarningCount(warnings);
         job.setErrorCount(errors);
@@ -265,6 +327,10 @@ public class ImportService {
         }
         job.setUpdatedAt(Instant.now());
         importJobRepository.save(job);
+
+        uploadSample.stop(Timer.builder("ingestion.import.upload.duration")
+            .tag("kind", "mapped")
+            .register(meterRegistry));
         return job;
     }
 
@@ -288,6 +354,22 @@ public class ImportService {
         Path target = importsRoot.resolve(storageRef);
         Files.copy(csvFile, target);
         job.setStorageRef(storageRef);
+        try {
+            long fileBytes = Files.size(target);
+            log.info("METRIC ingestion.import.upload_path companyId={} importId={} period={} fileBytes={} originalFilename={}",
+                companyId, job.getId(), job.getPeriod(), fileBytes, job.getOriginalFilename());
+
+            DistributionSummary.builder("ingestion.import.upload.bytes")
+                .baseUnit("bytes")
+                .tag("kind", "path")
+                .tag("contentType", "text/csv")
+                .register(meterRegistry)
+                .record(fileBytes);
+            Counter.builder("ingestion.import.upload.count")
+                .tag("kind", "path")
+                .register(meterRegistry)
+                .increment();
+        } catch (Exception ignored) {}
         job.setUpdatedAt(Instant.now());
         importJobRepository.save(job);
         return job;
@@ -299,6 +381,7 @@ public class ImportService {
 
     @Transactional
     public void processImport(Long importJobId) {
+        long startNs = System.nanoTime();
         ImportJob job = importJobRepository.findById(importJobId).orElse(null);
         if (job == null) return;
 
@@ -320,20 +403,25 @@ public class ImportService {
         }
 
         stagingRepository.deleteByImportJobId(job.getId());
-        transactionRepository.deleteByCompanyIdAndPeriod(job.getCompany().getId(), job.getPeriod());
 
         try {
             List<Transaction> normalized = new ArrayList<>();
             List<StagingTransaction> staging = new ArrayList<>();
+            int nonEmptyRows = 0;
+            int validRows = 0;
 
             for (var row : readRows(filePath)) {
                 String txnDateRaw = row.getOrDefault("txn_date", "");
                 String amountRaw = row.getOrDefault("amount", "");
+                if ((txnDateRaw == null || txnDateRaw.isBlank()) && (amountRaw == null || amountRaw.isBlank())) {
+                    continue;
+                }
+                nonEmptyRows++;
                 LocalDate txnDate;
                 BigDecimal amount;
 
                 try {
-                    txnDate = LocalDate.parse(txnDateRaw);
+                    txnDate = parseFlexibleDate(txnDateRaw);
                 } catch (Exception ex) {
                     warnings++;
                     continue;
@@ -342,6 +430,10 @@ public class ImportService {
                 try {
                     amount = parseAmount(amountRaw);
                 } catch (Exception ex) {
+                    warnings++;
+                    continue;
+                }
+                if (amount == null) {
                     warnings++;
                     continue;
                 }
@@ -367,6 +459,7 @@ public class ImportService {
                 tx.setAmount(amount);
                 tx.setCounterparty(counterparty);
                 normalized.add(tx);
+                validRows++;
 
                 if (row.containsKey("balance_end")) {
                     try {
@@ -377,6 +470,23 @@ public class ImportService {
                 }
             }
 
+            if (normalized.isEmpty()) {
+                job.setStatus(ImportStatus.ERROR);
+                job.setProcessedAt(Instant.now());
+                job.setUpdatedAt(job.getProcessedAt());
+                job.setWarningCount(warnings);
+                job.setErrorCount(1);
+                job.setLastError("NoValidRows");
+                if (nonEmptyRows == 0) {
+                    job.setErrorSummary("Import vacío o sin filas con datos (txn_date/amount). No se han modificado transacciones.");
+                } else {
+                    job.setErrorSummary("0 filas válidas. Revisa formato de fecha/importe. No se han modificado transacciones.");
+                }
+                importJobRepository.save(job);
+                return;
+            }
+
+            transactionRepository.deleteByCompanyIdAndPeriod(job.getCompany().getId(), job.getPeriod());
             stagingRepository.saveAll(staging);
             transactionRepository.saveAll(normalized);
 
@@ -394,8 +504,63 @@ public class ImportService {
             importJobRepository.save(job);
 
             var kpi = kpiService.recompute(job.getCompany(), job.getPeriod(), lastBalanceEnd);
-            alertService.evaluateThreshold(job.getCompany(), kpi);
+            alertService.evaluateMonthly(job.getCompany(), kpi);
+
+            try {
+                long durMs = Math.max(0L, (System.nanoTime() - startNs) / 1_000_000L);
+                long fileBytes = Files.size(filePath);
+                log.info(
+                    "METRIC ingestion.import.processed companyId={} importId={} period={} fileBytes={} durationMs={} nonEmptyRows={} validRows={} warnings={} status={}",
+                    job.getCompany().getId(),
+                    job.getId(),
+                    job.getPeriod(),
+                    fileBytes,
+                    durMs,
+                    nonEmptyRows,
+                    validRows,
+                    warnings,
+                    status
+                );
+
+                Timer.builder("ingestion.import.process.duration")
+                    .tag("result", status == ImportStatus.WARNING ? "warning" : "ok")
+                    .register(meterRegistry)
+                    .record(durMs, java.util.concurrent.TimeUnit.MILLISECONDS);
+                DistributionSummary.builder("ingestion.import.process.bytes")
+                    .baseUnit("bytes")
+                    .register(meterRegistry)
+                    .record(fileBytes);
+                DistributionSummary.builder("ingestion.import.process.rows.non_empty")
+                    .baseUnit("rows")
+                    .register(meterRegistry)
+                    .record(nonEmptyRows);
+                DistributionSummary.builder("ingestion.import.process.rows.valid")
+                    .baseUnit("rows")
+                    .register(meterRegistry)
+                    .record(validRows);
+                DistributionSummary.builder("ingestion.import.process.warnings")
+                    .baseUnit("rows")
+                    .register(meterRegistry)
+                    .record(warnings);
+                Counter.builder("ingestion.import.process.count")
+                    .tag("result", status == ImportStatus.WARNING ? "warning" : "ok")
+                    .register(meterRegistry)
+                    .increment();
+            } catch (Exception ignored) {}
         } catch (Exception ex) {
+            try {
+                long durMs = Math.max(0L, (System.nanoTime() - startNs) / 1_000_000L);
+                Timer.builder("ingestion.import.process.duration")
+                    .tag("result", "failed")
+                    .tag("error", safeErrorTag(ex))
+                    .register(meterRegistry)
+                    .record(durMs, java.util.concurrent.TimeUnit.MILLISECONDS);
+                Counter.builder("ingestion.import.process.count")
+                    .tag("result", "failed")
+                    .tag("error", safeErrorTag(ex))
+                    .register(meterRegistry)
+                    .increment();
+            } catch (Exception ignored) {}
             handleFailure(job, ex);
         }
     }
@@ -404,6 +569,13 @@ public class ImportService {
     public ImportJob retry(Long companyId, Long importJobId) {
         ImportJob job = importJobRepository.findById(importJobId).orElseThrow();
         if (!job.getCompany().getId().equals(companyId)) throw new IllegalArgumentException("Import job not in company");
+        Path file = resolveImportPath(job).toAbsolutePath().normalize();
+        if (job.getStorageRef() == null || job.getStorageRef().isBlank() || !Files.exists(file)) {
+            throw new ResponseStatusException(
+                HttpStatus.GONE,
+                "No se puede reintentar: el fichero del import ya no existe (retención/limpieza). Vuelve a subir el archivo."
+            );
+        }
         job.setStatus(ImportStatus.RETRY);
         job.setRunAfter(Instant.now());
         job.setUpdatedAt(Instant.now());
@@ -413,6 +585,22 @@ public class ImportService {
     }
 
     private void handleFailure(ImportJob job, Exception ex) {
+        try {
+            log.warn("METRIC ingestion.import.failed companyId={} importId={} period={} attempts={} err={}",
+                job == null || job.getCompany() == null ? null : job.getCompany().getId(),
+                job == null ? null : job.getId(),
+                job == null ? null : job.getPeriod(),
+                job == null ? null : job.getAttempts(),
+                ex == null ? null : ex.getClass().getSimpleName() + ": " + ex.getMessage());
+        } catch (Exception ignored) {}
+
+        try {
+            Counter.builder("ingestion.import.failed.count")
+                .tag("error", safeErrorTag(ex))
+                .register(meterRegistry)
+                .increment();
+        } catch (Exception ignored) {}
+
         int nextAttempts = (job.getAttempts() == null ? 0 : job.getAttempts()) + 1;
         job.setAttempts(nextAttempts);
         job.setUpdatedAt(Instant.now());
@@ -438,6 +626,19 @@ public class ImportService {
         String ref = job.getStorageRef();
         if (ref == null || ref.isBlank()) return importsRoot.resolve("import-" + job.getId() + ".csv");
         return importsRoot.resolve(ref);
+    }
+
+    private static String safeContentType(String raw) {
+        if (raw == null || raw.isBlank()) return "unknown";
+        String v = raw.trim().toLowerCase();
+        if (v.length() > 80) v = v.substring(0, 80);
+        int semi = v.indexOf(';');
+        if (semi > 0) v = v.substring(0, semi).trim();
+        return v.isEmpty() ? "unknown" : v;
+    }
+
+    private String safeErrorTag(Exception ex) {
+        return errorTagger.tag(ex);
     }
 
     private List<Map<String, String>> readRows(Path filePath) throws IOException {
@@ -562,12 +763,21 @@ public class ImportService {
                 .parse(reader);
 
             Map<String, Integer> headers = parser.getHeaderMap();
-            if (!headers.containsKey("txn_date") || !headers.containsKey("amount")) {
+            var normalizedHeaders = headers.keySet().stream().map(ImportService::normalizeHeader).collect(Collectors.toSet());
+            if (!normalizedHeaders.contains("txn_date") || !normalizedHeaders.contains("amount")) {
                 throw new IOException("Missing required columns: txn_date and/or amount");
             }
 
             List<Map<String, String>> out = new ArrayList<>();
-            for (CSVRecord record : parser) out.add(record.toMap());
+            for (CSVRecord record : parser) {
+                Map<String, String> normalized = new LinkedHashMap<>();
+                for (var e : record.toMap().entrySet()) {
+                    String key = normalizeHeader(e.getKey());
+                    String val = e.getValue();
+                    normalized.put(key, val == null ? "" : val.trim());
+                }
+                out.add(normalized);
+            }
             return out;
         }
     }
@@ -585,8 +795,8 @@ public class ImportService {
             List<String> headers = new ArrayList<>();
             int lastCell = headerRow.getLastCellNum();
             for (int i = 0; i < lastCell; i++) {
-                String h = formatter.formatCellValue(headerRow.getCell(i)).trim();
-                headers.add(h);
+                String h = formatter.formatCellValue(headerRow.getCell(i));
+                headers.add(normalizeHeader(h));
             }
 
             if (!headers.contains("txn_date") || !headers.contains("amount")) {
@@ -645,13 +855,22 @@ public class ImportService {
 
     private static char detectDelimiter(Path filePath) {
         try {
-            String first = Files.readAllLines(filePath, StandardCharsets.UTF_8).stream().findFirst().orElse("");
+            String first;
+            try (BufferedReader reader = Files.newBufferedReader(filePath, StandardCharsets.UTF_8)) {
+                first = reader.readLine();
+            }
+            if (first == null) first = "";
             long commas = first.chars().filter(ch -> ch == ',').count();
             long semis = first.chars().filter(ch -> ch == ';').count();
             return semis > commas ? ';' : ',';
         } catch (Exception ignored) {
             return ',';
         }
+    }
+
+    private static String normalizeHeader(String header) {
+        if (header == null) return "";
+        return header.trim().toLowerCase();
     }
 
     private static String safeFilename(String name) {

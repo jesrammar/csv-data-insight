@@ -42,14 +42,13 @@ public class ReportAutomationService {
     @Transactional
     public void generateMonthly(Long companyId, String period) throws IOException {
         String resolvedPeriod = normalizePeriod(period);
-        if (reportRepository.findByCompanyIdAndPeriod(companyId, resolvedPeriod).isPresent()) return;
-
         var company = companyRepository.findById(companyId).orElseThrow();
         String html;
         if (company.getPlan() != null && company.getPlan().isAtLeast(Plan.PLATINUM)) {
             html = advisorAssistantService.buildConsultingReportHtml(companyId, company.getName());
         } else {
-            html = buildBasicMonthly(companyId, company.getName(), resolvedPeriod);
+            String summary = "Informe mensual generado automáticamente con KPIs, tendencia y alertas del periodo.";
+            html = reportService.buildHtmlTemplate(company, resolvedPeriod, summary);
         }
         reportService.generateHtmlReport(company, resolvedPeriod, html);
     }

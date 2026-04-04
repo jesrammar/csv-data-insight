@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { useRef, useState, useEffect } from 'react'
-import { downloadTribunalCsv, getTribunalSummary, uploadTribunalImportWithProgress } from '../api'
+import { downloadTribunalCsv, getTribunalStatus, getTribunalSummary, uploadTribunalImportWithProgress } from '../api'
 import KpiChart from '../components/KpiChart'
 import { useCompanySelection } from '../hooks/useCompany'
 import Papa from 'papaparse'
@@ -34,12 +34,35 @@ export default function TribunalDashboardPage() {
   const [previewError, setPreviewError] = useState<string | null>(null)
   const [importInfo, setImportInfo] = useState<any | null>(null)
   const dashboardRef = useRef<HTMLDivElement | null>(null)
+  const uploadAnchorRef = useRef<HTMLDivElement | null>(null)
+
+  const [gestorSort, setGestorSort] = useState<{ key: 'gestor' | 'total' | 'active' | 'minuta' | 'carga'; dir: 'asc' | 'desc' }>({
+    key: 'carga',
+    dir: 'desc'
+  })
+  const [riskGestor, setRiskGestor] = useState<string>('')
+  const [riskQuery, setRiskQuery] = useState<string>('')
 
   const { data, error, refetch } = useQuery({
     queryKey: ['tribunal-summary', companyId],
     queryFn: () => getTribunalSummary(companyId as number),
     enabled: !!companyId && hasGold
   })
+
+  const { data: status, refetch: refetchStatus } = useQuery({
+    queryKey: ['tribunal-status', companyId],
+    queryFn: () => getTribunalStatus(companyId as number),
+    enabled: !!companyId && hasGold
+  })
+
+  function fmtTime(iso?: string | null) {
+    if (!iso) return '—'
+    try {
+      return new Date(iso).toLocaleString()
+    } catch {
+      return String(iso)
+    }
+  }
 
   async function handleUpload() {
     if (!companyId || !file || !hasGold) return
@@ -51,6 +74,7 @@ export default function TribunalDashboardPage() {
       const result = await uploadTribunalImportWithProgress(companyId, file, (pct) => setUploadProgress(pct))
       setImportInfo(result)
       await refetch()
+      await refetchStatus()
       setFile(null)
       const warn = result?.warningCount ? ` (${result.warningCount} avisos)` : ''
       setUploadOk(`CSV cargado correctamente${warn}.`)
@@ -83,6 +107,23 @@ export default function TribunalDashboardPage() {
   }
 
   const isCsv = !file ? true : file.name.toLowerCase().endsWith('.csv')
+  const canUpload = !!companyId && hasGold && !!file && isCsv && !uploading && !previewError
+
+  function downloadTemplate() {
+    const csv =
+      'cliente,cif,gestor,minutas,falta,fbaja,cargadetrabajo,pctcontabilidad\n' +
+      'ACME S.L.,B12345678,CARMEN,1200,2024-01,,6,100\n' +
+      'EJEMPLO S.A.,A11111111,I.S.,800,2023-06,2025-02,4,60\n'
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'plantilla-tribunal.csv'
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  }
 
   useEffect(() => {
     let interval: number | undefined
@@ -191,6 +232,29 @@ export default function TribunalDashboardPage() {
     minuta: Number(g.minutasAvg || 0)
   }))
 
+  const gestoresTable = (data?.gestores || []).map((g: any) => ({
+    gestor: String(g.gestor ?? ''),
+    total: Number(g.totalClients || 0),
+    active: Number(g.activeClients || 0),
+    minuta: Number(g.minutasAvg || 0),
+    carga: Number(g.cargaAvg || 0)
+  }))
+
+  const gestoresSorted = gestoresTable.slice().sort((a: any, b: any) => {
+    const dir = gestorSort.dir === 'asc' ? 1 : -1
+    if (gestorSort.key === 'gestor') return dir * a.gestor.localeCompare(b.gestor)
+    return dir * (Number(a[gestorSort.key]) - Number(b[gestorSort.key]))
+  })
+
+  function toggleGestorSort(key: 'gestor' | 'total' | 'active' | 'minuta' | 'carga') {
+    setGestorSort((s) => (s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'desc' }))
+  }
+
+  function sortMark(key: 'gestor' | 'total' | 'active' | 'minuta' | 'carga') {
+    if (gestorSort.key !== key) return ''
+    return gestorSort.dir === 'asc' ? ' ↑' : ' ↓'
+  }
+
   const topGestores = gestores
     .slice()
     .sort((a: GestorRow, b: GestorRow) => b.carga - a.carga)
@@ -201,12 +265,41 @@ export default function TribunalDashboardPage() {
     value: g.carga
   }))
 
+  const totalClients = Number((data as any)?.kpis?.totalClients || 0)
+  const hasData = totalClients > 0
+  const riskRows: any[] = (data as any)?.risk || []
+  const gestorOptions = Array.from(new Set(riskRows.map((r) => String(r?.gestor || 'SIN GESTOR')))).sort((a, b) =>
+    a.localeCompare(b)
+  )
+  const riskFiltered = riskRows.filter((r) => {
+    const g = String(r?.gestor || 'SIN GESTOR')
+    const text = `${r?.cliente || ''} ${r?.cif || ''} ${r?.issues || ''}`.toLowerCase()
+    const okGestor = !riskGestor || g === riskGestor
+    const okQuery = !riskQuery || text.includes(riskQuery.trim().toLowerCase())
+    return okGestor && okQuery
+  })
+
   return (
     <div ref={dashboardRef}>
       <PageHeader
         title="Dashboard Tribunal"
         subtitle="Cumplimiento, riesgos y gestión por gestor. Carga un CSV y el tablero se actualiza."
-        actions={<span className="badge">{plan}</span>}
+        actions={
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', justifyContent: 'flex-end' }}>
+            <span className="badge">{plan}</span>
+            {hasGold ? (
+              <div className="card soft" style={{ padding: 12, minWidth: 240 }}>
+                <div className="upload-hint">Última carga</div>
+                <div style={{ fontWeight: 800, marginTop: 6 }}>{fmtTime(status?.createdAt)}</div>
+                <div className="upload-hint" style={{ marginTop: 6 }}>{status?.filename ? `Fichero: ${status.filename}` : 'Sin ingestas'}</div>
+                <div className="upload-hint" style={{ marginTop: 4 }}>
+                  {status?.rowCount != null ? `Filas: ${status.rowCount}` : '—'}
+                  {status?.warningCount ? ` · Avisos: ${status.warningCount}` : ''}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        }
       />
       {!hasGold && (
         <div style={{ marginBottom: 14 }}>
@@ -216,8 +309,44 @@ export default function TribunalDashboardPage() {
         </div>
       )}
 
+      {hasGold && (
+        <div
+          className="card soft"
+          style={{
+            position: 'sticky',
+            top: 74,
+            zIndex: 4,
+            margin: '14px 0 18px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 14,
+            flexWrap: 'wrap'
+          }}
+        >
+          <div>
+            <div className="upload-hint">{hasData ? 'Listo para analizar' : 'Siguiente paso: cargar CSV'}</div>
+            <div style={{ fontWeight: 800, marginTop: 4 }}>
+              {hasData ? `${totalClients} clientes en el tablero` : 'Aún no hay datos para este estudio.'}
+            </div>
+            <div className="upload-hint" style={{ marginTop: 6 }}>
+              Mínimo requerido: columnas <strong>cliente</strong> y <strong>cif</strong> (resto opcional).
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            <Button
+              size="sm"
+              onClick={() => uploadAnchorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+              disabled={!companyId}
+            >
+              {hasData ? 'Recargar CSV' : 'Cargar CSV'}
+            </Button>
+          </div>
+        </div>
+      )}
+
       <Section title="1) Ingesta" subtitle="Carga el CSV y sincroniza para recalcular el tablero.">
-        <div className="hero">
+        <div className="hero" ref={uploadAnchorRef}>
           <div>
             <div
               className={`upload-panel ${dragActive ? 'is-dragging' : ''}`}
@@ -240,14 +369,23 @@ export default function TribunalDashboardPage() {
               <div className="upload-actions">
                 <Button
                   onClick={handleUpload}
-                  disabled={!file || !isCsv || uploading || !companyId || !hasGold}
+                  disabled={!canUpload}
                   loading={uploading}
                 >
                   Subir CSV
                 </Button>
+                <Button variant="secondary" size="sm" onClick={downloadTemplate}>
+                  Descargar plantilla
+                </Button>
                 {file && !isCsv && <span className="error">Solo se permite CSV.</span>}
                 {!file && <span className="upload-hint">Arrastra y suelta aquí para cargar rápido.</span>}
                 {file && isCsv && <span className="upload-hint">Tip: puedes re-subir para recalcular al instante.</span>}
+                {previewError && (
+                  <span className="error">
+                    El CSV no se puede previsualizar: {previewError}. Suele pasar por comillas mal cerradas o varias tablas en la
+                    misma hoja.
+                  </span>
+                )}
                 <label className="upload-toggle">
                   <input type="checkbox" checked={autoSync} onChange={(e) => setAutoSync(e.target.checked)} />
                   Auto-sync
@@ -291,6 +429,12 @@ export default function TribunalDashboardPage() {
                 </Alert>
               </div>
             )}
+            <div style={{ marginTop: 12 }} className="upload-hint">
+              Recomendado: separador <strong>;</strong> o <strong>,</strong> y cabeceras en la primera fila. Mínimo requerido:{' '}
+              <strong>cliente</strong> y <strong>cif</strong>. Si tu fichero es un presupuesto con varias tablas/gráficas, este estudio
+              no lo va a “entender”: súbelo a <strong>Universal</strong> (Cargar datos) y luego lo conectamos a un tablero de
+              presupuestos.
+            </div>
           </div>
           <div className="card soft">
             <h3 style={{ marginTop: 0 }}>Exportaciones</h3>
@@ -407,21 +551,31 @@ export default function TribunalDashboardPage() {
               <table className="table">
                 <thead>
                   <tr>
-                    <th>Gestor</th>
-                    <th>Total</th>
-                    <th>Activos</th>
-                    <th>Minuta media</th>
-                    <th>Carga media</th>
+                    <th style={{ cursor: 'pointer' }} onClick={() => toggleGestorSort('gestor')}>
+                      Gestor{sortMark('gestor')}
+                    </th>
+                    <th style={{ cursor: 'pointer' }} onClick={() => toggleGestorSort('total')}>
+                      Total{sortMark('total')}
+                    </th>
+                    <th style={{ cursor: 'pointer' }} onClick={() => toggleGestorSort('active')}>
+                      Activos{sortMark('active')}
+                    </th>
+                    <th style={{ cursor: 'pointer' }} onClick={() => toggleGestorSort('minuta')}>
+                      Minuta media{sortMark('minuta')}
+                    </th>
+                    <th style={{ cursor: 'pointer' }} onClick={() => toggleGestorSort('carga')}>
+                      Carga media{sortMark('carga')}
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
-                  {(data?.gestores || []).map((g: any) => (
-                    <tr key={g.gestor}>
-                      <td>{g.gestor}</td>
-                      <td>{g.totalClients}</td>
-                      <td>{g.activeClients}</td>
-                      <td>{g.minutasAvg}</td>
-                      <td>{g.cargaAvg}</td>
+                  {gestoresSorted.map((g: any) => (
+                    <tr key={g.gestor || `${g.total}-${g.active}-${g.minuta}-${g.carga}`}>
+                      <td>{g.gestor || '—'}</td>
+                      <td>{g.total}</td>
+                      <td>{g.active}</td>
+                      <td>{g.minuta}</td>
+                      <td>{g.carga}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -433,26 +587,47 @@ export default function TribunalDashboardPage() {
             {!data?.risk?.length ? (
               <div className="empty">No se detectaron riesgos.</div>
             ) : (
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Cliente</th>
-                    <th>CIF</th>
-                    <th>Gestor</th>
-                    <th>Motivo</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(data?.risk || []).map((r: any, idx: number) => (
-                    <tr key={`${r.cif}-${idx}`}>
-                      <td>{r.cliente}</td>
-                      <td>{r.cif}</td>
-                      <td>{r.gestor}</td>
-                      <td>{r.issues}</td>
+              <div>
+                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', marginBottom: 10 }}>
+                  <select value={riskGestor} onChange={(e) => setRiskGestor(e.target.value)}>
+                    <option value="">Todos los gestores</option>
+                    {gestorOptions.map((g: any) => (
+                      <option key={g} value={g}>
+                        {g}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    value={riskQuery}
+                    onChange={(e) => setRiskQuery(e.target.value)}
+                    placeholder="Buscar (cliente, CIF, motivo)"
+                    style={{ minWidth: 240 }}
+                  />
+                  <span className="upload-hint">
+                    {riskFiltered.length}/{riskRows.length} riesgos
+                  </span>
+                </div>
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Cliente</th>
+                      <th>CIF</th>
+                      <th>Gestor</th>
+                      <th>Motivo</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {riskFiltered.map((r: any, idx: number) => (
+                      <tr key={`${r.cif}-${idx}`}>
+                        <td>{r.cliente}</td>
+                        <td>{r.cif}</td>
+                        <td>{r.gestor}</td>
+                        <td>{r.issues}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
         </div>

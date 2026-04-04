@@ -41,7 +41,8 @@ public class AuditController {
                 e.getStatus(),
                 e.getDurationMs(),
                 e.getResourceType(),
-                e.getResourceId()
+                e.getResourceId(),
+                e.getMetaJson()
             ))
             .toList();
     }

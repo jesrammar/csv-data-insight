@@ -1,29 +1,24 @@
-# EnterpriseIQ (TFG Demo)
+﻿# EnterpriseIQ
 
-Plataforma demo para ASECON con multiempresa, importación CSV/XLSX, KPIs mensuales, alertas, automatización y reportes HTML.
+Plataforma para consultoras (p. ej. ASECON) con multiempresa, ingesta CSV/XLSX, KPIs/alertas, presupuestos, Universal (análisis tabular) y entregables en PDF/HTML.
 
-> Nota: la app antigua se movió a legacy/csv-data-insight/. La aplicación principal es ackend/ + rontend/.
+> Nota: la app antigua está en `legacy/csv-data-insight/`. La app actual es `backend/` + `frontend/`.
 
 ## Stack
-- Backend: Java 21 + Spring Boot 3 (Maven), Spring Web/Security/Data JPA/Validation
-- DB: PostgreSQL
-- Migraciones: Flyway
+- Backend: Java 21 + Spring Boot 3 (Maven)
+- DB: PostgreSQL + Flyway
 - Frontend: React + TypeScript (Vite) + React Router + TanStack Query
-- Auth: JWT (access token + refresh token con rotación)
-- Infra: Docker + docker-compose
+- Auth: JWT (access token + refresh token con rotación) + cartera consultor↔clientes
+- Observabilidad: Spring Actuator + Prometheus + Grafana + Alertmanager
+- Infra: Docker + docker compose
 
 ## Arquitectura (resumen)
-- Backend Spring Boot expone API REST con JWT y autorización por rol.
-- PostgreSQL almacena usuarios, empresas, imports, staging, transacciones, KPIs, alertas, reportes y automatización.
-- Flyway crea esquema y carga datos seed (ADMIN, CONSULTOR, CLIENTE y 2 empresas).
-- Importaciones CSV se suben por API (multipart) y se guardan en filesystem.
-- Scheduler procesa imports PENDING, valida, carga staging y normaliza transacciones.
-- Servicio de KPIs recalcula métricas mensuales y dispara alertas si `net_flow` < umbral.
-- Reportes se generan como HTML y se guardan en filesystem con metadata en DB.
-- Automatización: jobs programados + cola con reintentos (KPIs / informes / recomendaciones).
-- Recomendaciones: snapshot guardado para que el cliente final vea acciones en su vista ejecutiva.
+- Backend REST con permisos por rol (ADMIN/CONSULTOR/CLIENTE) y acceso por empresa.
+- Storage en filesystem (volumen `backend-storage`) para imports, universal y reportes.
+- Automatización: jobs programados (KPIs/informes/snapshots) y reintentos.
+- Auditoría: trazado de acciones relevantes (incluye admin de usuarios, cambios de enabled/empresas y acciones de auth).
 
-## CSV esperado (transacciones)
+## CSV esperado (Caja / transacciones)
 Columnas obligatorias:
 - `txn_date` (YYYY-MM-DD)
 - `amount` (decimal; positivo=entrada, negativo=salida)
@@ -33,59 +28,31 @@ Columnas opcionales:
 - `counterparty` (string)
 - `balance_end` (decimal)
 
-Reglas de validación:
-- Falta `txn_date` o `amount` -> ERROR
-- Fecha inválida -> WARNING (fila se salta)
-- Amount no numérico -> WARNING (fila se salta)
+## Módulos
+- **Caja**: KPIs, tendencias y alertas con import por periodo.
+- **Universal**: sube cualquier CSV/XLSX (modo guiado para XLSX) y obtén resumen, problemas, insights y vistas.
+- **Presupuesto**: normalización a formato largo + insights accionables + PDF.
+- **Entregables**: reportes HTML + descarga PDF.
 
 ## Credenciales seed
 - ADMIN: `admin@asecon.local` / `password`
 - CONSULTOR: `consultor@asecon.local` / `password`
 - CLIENTE: `cliente@acme.local` / `password`
 
-## Levantar con Docker
-1. `docker-compose up --build`
-2. Backend en `http://localhost:8081`
-3. Frontend en `http://localhost:5174`
-4. Postgres en `localhost:5433` (solo dev)
+## Levantar en local
+1. `docker compose up --build`
+2. Backend: `http://localhost:8081`
+3. Frontend: `http://localhost:5174`
+4. Postgres: `localhost:5433` (solo dev)
 
 ## Deploy (producción)
-- En VPS: usar docker-compose.prod.yml (imágenes GHCR de enterpriseiq-backend y enterpriseiq-frontend).
-- Variables recomendadas:
-  - IMAGE_OWNER (usuario/orga de GitHub)
-  - JWT_SECRET`r
-  - CORS_ALLOWED_ORIGINS (si no usas el proxy /api del frontend)
+- VPS: usar `docker-compose.prod.yml` (imágenes GHCR `enterpriseiq-backend` y `enterpriseiq-frontend`).
 
-## Ingesta automática (sin API)
-Si tu ERP no tiene API o no tienes credenciales, puedes automatizar por “carpeta vigilada”.
+## Operación (VPS)
+- Runbook observabilidad: `docs/runbook-observabilidad.md`
+- Backups/restore: `docs/backup-restore.md`
 
-- Ruta dentro del contenedor: `./storage/inbox/<companyId>/`
-- Deja ahí ficheros `*.csv` cuyo nombre incluya un periodo `YYYY-MM` (por ejemplo `transactions-2026-03.csv`).
-- El scheduler detecta nuevos ficheros, crea un import y los mueve a `processed/` (o `errors/` si no detecta periodo).
-
-## Automatización (run now)
-Endpoints para consultor/admin:
-- `POST /api/companies/{companyId}/automation/kpis/recompute?monthsBack=2`
-- `POST /api/companies/{companyId}/automation/reports/monthly?period=2026-03`
-- `POST /api/companies/{companyId}/automation/recommendations/snapshot?period=2026-03`
-- `GET  /api/companies/{companyId}/automation/jobs`
-
-El cliente final puede leer las recomendaciones:
-- `GET /api/companies/{companyId}/recommendations/latest`
-
-## API futuro
-La integración con Cegid API no está implementada; se considera conector futuro.
-
-## TODO PDF
-El reporte se genera en HTML. Para PDF, se propone usar OpenHTMLtoPDF y exponer descarga.
-
-## Known issues (TFG)
-- Ver `docs/known-issues.md`.
-
-## Autenticación (JWT)
-- Login: `POST /api/auth/login` devuelve `accessToken`, `refreshToken`, `role`, `userId`
-- Refresh: `POST /api/auth/refresh` rota el refresh token y entrega nuevos tokens
-- Logout: `POST /api/auth/logout` revoca access y refresh tokens
-
-El frontend guarda ambos tokens en localStorage y renueva el access token automáticamente si el backend responde 401.
-
+## Observabilidad
+- Actuator (Prometheus): `backend:8082/actuator/prometheus`
+- Alertas (ejemplos): p95 import/universal, errores/timeouts, golden signals API, saturación Tomcat/Hikari.
+- Umbrales ajustables: `ops/prometheus/alerts.local.yml`

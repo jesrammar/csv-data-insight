@@ -11,6 +11,7 @@ import com.asecon.enterpriseiq.model.Plan;
 import com.asecon.enterpriseiq.model.UniversalImport;
 import com.asecon.enterpriseiq.repo.CompanyRepository;
 import com.asecon.enterpriseiq.repo.UniversalImportRepository;
+import com.asecon.enterpriseiq.metrics.ErrorTagger;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
@@ -31,15 +32,26 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.DistributionSummary;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVParser;
 import org.apache.commons.csv.CSVRecord;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class UniversalCsvService {
+    private static final Logger log = LoggerFactory.getLogger(UniversalCsvService.class);
+
     private static final int MAX_VALUES_FOR_STATS = 20000;
     private static final int MAX_UNIQUE_VALUES = 2000;
     private static final int TOP_VALUES = 5;
@@ -53,17 +65,65 @@ public class UniversalCsvService {
     private final ObjectMapper objectMapper;
     private final TabularFileService tabularFileService;
     private final UniversalStorageService universalStorageService;
+    private final int maxAnalyzeRowsDefault;
+    private final int maxAnalyzeSecondsDefault;
+    private final int maxAnalyzeRowsBronze;
+    private final int maxAnalyzeRowsGold;
+    private final int maxAnalyzeRowsPlatinum;
+    private final int maxAnalyzeSecondsBronze;
+    private final int maxAnalyzeSecondsGold;
+    private final int maxAnalyzeSecondsPlatinum;
+    private final MeterRegistry meterRegistry;
+    private final ErrorTagger errorTagger;
 
     public UniversalCsvService(CompanyRepository companyRepository,
                                UniversalImportRepository importRepository,
                                ObjectMapper objectMapper,
                                TabularFileService tabularFileService,
-                               UniversalStorageService universalStorageService) {
+                               UniversalStorageService universalStorageService,
+                               @Value("${app.universal.max-analyze-rows:50000}") int maxAnalyzeRows,
+                               @Value("${app.universal.max-analyze-rows-by-plan.bronze:15000}") int maxAnalyzeRowsBronze,
+                               @Value("${app.universal.max-analyze-rows-by-plan.gold:50000}") int maxAnalyzeRowsGold,
+                               @Value("${app.universal.max-analyze-rows-by-plan.platinum:100000}") int maxAnalyzeRowsPlatinum,
+                               @Value("${app.universal.max-seconds:25}") int maxAnalyzeSeconds,
+                               @Value("${app.universal.max-seconds-by-plan.bronze:15}") int maxAnalyzeSecondsBronze,
+                               @Value("${app.universal.max-seconds-by-plan.gold:25}") int maxAnalyzeSecondsGold,
+                               @Value("${app.universal.max-seconds-by-plan.platinum:45}") int maxAnalyzeSecondsPlatinum,
+                               MeterRegistry meterRegistry,
+                               ErrorTagger errorTagger) {
         this.companyRepository = companyRepository;
         this.importRepository = importRepository;
         this.objectMapper = objectMapper;
         this.tabularFileService = tabularFileService;
         this.universalStorageService = universalStorageService;
+        this.maxAnalyzeRowsDefault = Math.max(5_000, maxAnalyzeRows);
+        this.maxAnalyzeSecondsDefault = Math.max(5, maxAnalyzeSeconds);
+        this.maxAnalyzeRowsBronze = Math.max(1_000, maxAnalyzeRowsBronze);
+        this.maxAnalyzeRowsGold = Math.max(5_000, maxAnalyzeRowsGold);
+        this.maxAnalyzeRowsPlatinum = Math.max(5_000, maxAnalyzeRowsPlatinum);
+        this.maxAnalyzeSecondsBronze = Math.max(5, maxAnalyzeSecondsBronze);
+        this.maxAnalyzeSecondsGold = Math.max(5, maxAnalyzeSecondsGold);
+        this.maxAnalyzeSecondsPlatinum = Math.max(5, maxAnalyzeSecondsPlatinum);
+        this.meterRegistry = meterRegistry;
+        this.errorTagger = errorTagger;
+    }
+
+    int effectiveMaxAnalyzeRows(Plan plan) {
+        if (plan == null) return maxAnalyzeRowsDefault;
+        return switch (plan) {
+            case BRONZE -> maxAnalyzeRowsBronze > 0 ? maxAnalyzeRowsBronze : maxAnalyzeRowsDefault;
+            case GOLD -> maxAnalyzeRowsGold > 0 ? maxAnalyzeRowsGold : maxAnalyzeRowsDefault;
+            case PLATINUM -> maxAnalyzeRowsPlatinum > 0 ? maxAnalyzeRowsPlatinum : maxAnalyzeRowsDefault;
+        };
+    }
+
+    int effectiveMaxAnalyzeSeconds(Plan plan) {
+        if (plan == null) return maxAnalyzeSecondsDefault;
+        return switch (plan) {
+            case BRONZE -> maxAnalyzeSecondsBronze > 0 ? maxAnalyzeSecondsBronze : maxAnalyzeSecondsDefault;
+            case GOLD -> maxAnalyzeSecondsGold > 0 ? maxAnalyzeSecondsGold : maxAnalyzeSecondsDefault;
+            case PLATINUM -> maxAnalyzeSecondsPlatinum > 0 ? maxAnalyzeSecondsPlatinum : maxAnalyzeSecondsDefault;
+        };
     }
 
     @Transactional
@@ -71,6 +131,18 @@ public class UniversalCsvService {
         Company company = companyRepository.findById(companyId).orElseThrow();
 
         var tabular = tabularFileService.toCsv(file, xlsxOptions);
+        try {
+            DistributionSummary.builder("ingestion.universal.upload.bytes")
+                .baseUnit("bytes")
+                .tag("convertedFromXlsx", String.valueOf(tabular.convertedFromXlsx()))
+                .register(meterRegistry)
+                .record(tabular.bytes().length);
+            Counter.builder("ingestion.universal.upload.count")
+                .tag("convertedFromXlsx", String.valueOf(tabular.convertedFromXlsx()))
+                .register(meterRegistry)
+                .increment();
+        } catch (Exception ignored) {}
+
         String displayFilename = file.getOriginalFilename() == null
             ? (tabular.convertedFromXlsx() ? "data.xlsx" : "data.csv")
             : file.getOriginalFilename();
@@ -92,24 +164,124 @@ public class UniversalCsvService {
         var csvPath = universalStorageService.writeNormalizedCsv(imp.getId(), tabular.bytes());
         imp.setStorageRef(csvPath.toString());
 
-        AnalysisResult result = analyze(displayFilename, tabular.bytes(), charset, plan, imp.getCreatedAt());
-        String json = objectMapper.writeValueAsString(result.summary);
+        AnalysisResult result;
+        long analyzeStartNs = System.nanoTime();
+        try {
+            result = analyze(displayFilename, tabular.bytes(), charset, plan, imp.getCreatedAt());
+        } catch (ResponseStatusException ex) {
+            recordUniversalAnalyzeFailure(tabular.bytes().length, tabular.convertedFromXlsx(), analyzeStartNs, ex);
+            throw ex;
+        } catch (IllegalArgumentException ex) {
+            recordUniversalAnalyzeFailure(tabular.bytes().length, tabular.convertedFromXlsx(), analyzeStartNs, ex);
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ex.getMessage());
+        } catch (RuntimeException ex) {
+            recordUniversalAnalyzeFailure(tabular.bytes().length, tabular.convertedFromXlsx(), analyzeStartNs, ex);
+            throw ex;
+        }
+        String json = objectMapper.writeValueAsString(result.summary());
 
-        imp.setRowCount(result.summary.rowCount());
-        imp.setColumnCount(result.summary.columnCount());
+        imp.setRowCount(result.summary().rowCount());
+        imp.setColumnCount(result.summary().columnCount());
         imp.setSummaryJson(json);
         imp = importRepository.save(imp);
 
+        try {
+            log.info(
+                "METRIC ingestion.universal.analyze companyId={} universalImportId={} plan={} fileBytes={} charset={} delimiter={} durationMs={} totalRowsRead={} goodRows={} badRows={} analyzedRows={} sampled={} columns={} removedEmptyColumns={} correlations={}",
+                companyId,
+                imp.getId(),
+                plan == null ? null : plan.name(),
+                result.bytes(),
+                result.charsetName(),
+                String.valueOf(result.delimiter()),
+                result.durationMs(),
+                result.totalRowsRead(),
+                result.goodRows(),
+                result.badRows(),
+                result.summary().rowCount(),
+                result.sampled(),
+                result.summary().columnCount(),
+                result.removedEmptyColumns(),
+                result.summary().correlations() == null ? 0 : result.summary().correlations().size()
+            );
+        } catch (Exception ignored) {}
+
+        try {
+            Timer.builder("ingestion.universal.analyze.duration")
+                .tag("result", "ok")
+                .tag("sampled", String.valueOf(result.sampled()))
+                .tag("convertedFromXlsx", String.valueOf(tabular.convertedFromXlsx()))
+                .register(meterRegistry)
+                .record(result.durationMs(), java.util.concurrent.TimeUnit.MILLISECONDS);
+
+            DistributionSummary.builder("ingestion.universal.analyze.bytes")
+                .baseUnit("bytes")
+                .register(meterRegistry)
+                .record(result.bytes());
+            DistributionSummary.builder("ingestion.universal.analyze.rows.total_read")
+                .baseUnit("rows")
+                .register(meterRegistry)
+                .record(result.totalRowsRead());
+            DistributionSummary.builder("ingestion.universal.analyze.rows.observed")
+                .baseUnit("rows")
+                .register(meterRegistry)
+                .record(result.observedRows());
+            DistributionSummary.builder("ingestion.universal.analyze.rows.analyzed")
+                .baseUnit("rows")
+                .register(meterRegistry)
+                .record(result.summary().rowCount());
+            DistributionSummary.builder("ingestion.universal.analyze.rows.good")
+                .baseUnit("rows")
+                .register(meterRegistry)
+                .record(result.goodRows());
+            DistributionSummary.builder("ingestion.universal.analyze.rows.bad")
+                .baseUnit("rows")
+                .register(meterRegistry)
+                .record(result.badRows());
+            Counter.builder("ingestion.universal.analyze.count")
+                .tag("result", "ok")
+                .tag("sampled", String.valueOf(result.sampled()))
+                .register(meterRegistry)
+                .increment();
+        } catch (Exception ignored) {}
+
         return new UniversalSummaryDto(
             imp.getId(),
-            result.summary.filename(),
-            result.summary.createdAt(),
-            result.summary.rowCount(),
-            result.summary.columnCount(),
-            result.summary.columns(),
-            result.summary.correlations(),
-            result.summary.insights() == null ? List.of() : result.summary.insights()
+            result.summary().filename(),
+            result.summary().createdAt(),
+            result.summary().rowCount(),
+            result.summary().columnCount(),
+            result.summary().columns(),
+            result.summary().correlations(),
+            result.summary().insights() == null ? List.of() : result.summary().insights()
         );
+    }
+
+    private void recordUniversalAnalyzeFailure(long bytes, boolean convertedFromXlsx, long startNs, Exception ex) {
+        try {
+            long durMs = Math.max(0L, (System.nanoTime() - startNs) / 1_000_000L);
+            String error = safeErrorTag(ex);
+
+            Timer.builder("ingestion.universal.analyze.duration")
+                .tag("result", "failed")
+                .tag("error", error)
+                .tag("convertedFromXlsx", String.valueOf(convertedFromXlsx))
+                .register(meterRegistry)
+                .record(durMs, java.util.concurrent.TimeUnit.MILLISECONDS);
+            DistributionSummary.builder("ingestion.universal.analyze.bytes")
+                .baseUnit("bytes")
+                .register(meterRegistry)
+                .record(bytes);
+            Counter.builder("ingestion.universal.analyze.count")
+                .tag("result", "failed")
+                .tag("error", error)
+                .register(meterRegistry)
+                .increment();
+        } catch (Exception ignored) {}
+    }
+
+    private String safeErrorTag(Exception ex) {
+        return errorTagger.tag(ex);
     }
 
     @Transactional(readOnly = true)
@@ -134,23 +306,57 @@ public class UniversalCsvService {
             });
     }
 
+    @Transactional(readOnly = true)
+    public Optional<UniversalSummaryDto> summary(Long companyId, Long importId) {
+        if (importId == null) return latest(companyId);
+        return importRepository.findByIdAndCompanyId(importId, companyId)
+            .map(imp -> {
+                try {
+                    UniversalSummaryDto summary = objectMapper.readValue(imp.getSummaryJson(), UniversalSummaryDto.class);
+                    return new UniversalSummaryDto(
+                        imp.getId(),
+                        summary.filename(),
+                        summary.createdAt(),
+                        summary.rowCount(),
+                        summary.columnCount(),
+                        summary.columns(),
+                        summary.correlations(),
+                        summary.insights() == null ? List.of() : summary.insights()
+                    );
+                } catch (Exception ex) {
+                    return null;
+                }
+            });
+    }
+
     private AnalysisResult analyze(String filename, byte[] bytes, Charset charset, Plan plan, Instant createdAt) throws IOException {
+        long startNs = System.nanoTime();
         BufferedReader reader = new BufferedReader(new InputStreamReader(new ByteArrayInputStream(bytes), charset));
         String firstLine = reader.readLine();
         if (firstLine == null) {
-            throw new IllegalArgumentException("CSV vacio");
+            throw new IllegalArgumentException("CSV vacío");
         }
         firstLine = stripBom(firstLine);
         char delimiter = detectDelimiter(firstLine);
 
-        CSVParser parser = CSVFormat.DEFAULT.builder()
-            .setDelimiter(delimiter)
-            .setHeader()
-            .setSkipHeaderRecord(true)
-            .setAllowMissingColumnNames(true)
-            .setIgnoreEmptyLines(true)
-            .build()
-            .parse(new BufferedReader(new InputStreamReader(new ByteArrayInputStream(bytes), charset)));
+        CSVParser parser;
+        try {
+            parser = CSVFormat.DEFAULT.builder()
+                .setDelimiter(delimiter)
+                .setHeader()
+                .setSkipHeaderRecord(true)
+                .setAllowMissingColumnNames(true)
+                .setIgnoreEmptyLines(true)
+                .setIgnoreSurroundingSpaces(true)
+                .setTrim(true)
+                .build()
+                .parse(new BufferedReader(new InputStreamReader(new ByteArrayInputStream(bytes), charset)));
+        } catch (Exception ex) {
+            throw new IllegalArgumentException(
+                "CSV malformado o no tabular. Si viene de Excel con varias tablas/gráficas, sube el XLSX original (recomendado) o re-exporta como CSV UTF-8 (una sola tabla con cabeceras en la primera fila).",
+                ex
+            );
+        }
 
         List<String> headers = new ArrayList<>(parser.getHeaderMap().keySet()).stream()
             .map(UniversalCsvService::stripBom)
@@ -165,17 +371,58 @@ public class UniversalCsvService {
         }
 
         int rowCount = 0;
+        int goodRows = 0;
+        int badRows = 0;
         int corrRows = 0;
+        int observedRows = 0;
+        boolean sampled = false;
         List<String> numericHeaders = new ArrayList<>();
+        int effectiveMaxRows = effectiveMaxAnalyzeRows(plan);
+        int effectiveMaxSeconds = effectiveMaxAnalyzeSeconds(plan);
 
         for (CSVRecord record : parser) {
             rowCount++;
+            if ((rowCount % 500) == 0) {
+                long elapsedMs = Math.max(0L, (System.nanoTime() - startNs) / 1_000_000L);
+                if (elapsedMs > (long) effectiveMaxSeconds * 1000L) {
+                    throw new ResponseStatusException(
+                        HttpStatus.REQUEST_TIMEOUT,
+                        "Tiempo de análisis agotado (" + effectiveMaxSeconds + "s). Recomendación: exporta menos filas/columnas o sube el fichero por periodos."
+                    );
+                }
+            }
+            if (record.size() < headers.size()) {
+                badRows++;
+                continue;
+            }
+            goodRows++;
+            boolean doObserve = goodRows <= effectiveMaxRows;
+            if (!doObserve) {
+                sampled = true;
+                continue;
+            }
+            observedRows++;
             for (String header : headers) {
                 ColumnStats col = stats.get(header);
-                String raw = clean(record.get(header));
+                String raw;
+                try {
+                    raw = clean(record.get(header));
+                } catch (Exception ex) {
+                    raw = null;
+                }
                 col.observe(raw);
             }
         }
+
+        if (goodRows == 0) {
+            throw new IllegalArgumentException(
+                "No he podido leer ninguna fila válida. Esto suele pasar cuando el CSV tiene varias tablas, filas de títulos sueltas o comillas/saltos de línea mal exportados. Sube el XLSX original o exporta una sola tabla a CSV UTF-8."
+            );
+        }
+
+        // Reportamos filas realmente analizadas (ignorando filas truncadas/irregulares).
+        int totalRowsRead = rowCount;
+        rowCount = sampled ? observedRows : goodRows;
 
         for (ColumnStats col : stats.values()) {
             col.finalizeType();
@@ -237,6 +484,20 @@ public class UniversalCsvService {
         }
 
         List<UniversalInsightDto> insights = buildInsights(plan, headers, columns, correlations, bytes, charset, delimiter);
+        if (sampled) {
+            insights.add(0, new UniversalInsightDto(
+                "info",
+                "Muestreo por rendimiento",
+                "He analizado " + rowCount + " fila(s) de muestra para calcular estadísticas más rápido (total leído: " + goodRows + "). Si necesitas precisión completa, sube el fichero por periodos o reduce columnas."
+            ));
+        }
+        if (badRows > 0) {
+            insights.add(0, new UniversalInsightDto(
+                "warning",
+                "CSV irregular",
+                "He ignorado " + badRows + " fila(s) porque no tenían el mismo número de columnas que la cabecera. Para mejores resultados, sube el XLSX original o exporta una sola tabla limpia a CSV UTF-8."
+            ));
+        }
         if (removedEmptyColumns > 0) {
             insights.add(0, new UniversalInsightDto(
                 "info",
@@ -250,6 +511,7 @@ public class UniversalCsvService {
             insights = insights.stream().limit(6).collect(Collectors.toList());
         }
 
+        long durationMs = Math.max(0L, (System.nanoTime() - startNs) / 1_000_000L);
         UniversalSummaryDto summary = new UniversalSummaryDto(
             null,
             filename,
@@ -262,7 +524,20 @@ public class UniversalCsvService {
             insights
         );
 
-        return new AnalysisResult(summary, corrRows);
+        return new AnalysisResult(
+            summary,
+            corrRows,
+            totalRowsRead,
+            goodRows,
+            badRows,
+            observedRows,
+            sampled,
+            removedEmptyColumns,
+            durationMs,
+            bytes.length,
+            charset == null ? null : charset.name(),
+            delimiter
+        );
     }
 
     private List<UniversalInsightDto> buildInsights(
@@ -439,14 +714,21 @@ public class UniversalCsvService {
             }
         }
 
-        CSVParser parser = CSVFormat.DEFAULT.builder()
-            .setDelimiter(delimiter)
-            .setHeader()
-            .setSkipHeaderRecord(true)
-            .setAllowMissingColumnNames(true)
-            .setIgnoreEmptyLines(true)
-            .build()
-            .parse(new BufferedReader(new InputStreamReader(new ByteArrayInputStream(bytes), charset)));
+        CSVParser parser;
+        try {
+            parser = CSVFormat.DEFAULT.builder()
+                .setDelimiter(delimiter)
+                .setHeader()
+                .setSkipHeaderRecord(true)
+                .setAllowMissingColumnNames(true)
+                .setIgnoreEmptyLines(true)
+                .setIgnoreSurroundingSpaces(true)
+                .setTrim(true)
+                .build()
+                .parse(new BufferedReader(new InputStreamReader(new ByteArrayInputStream(bytes), charset)));
+        } catch (Exception ex) {
+            return List.of();
+        }
 
         int rows = 0;
         for (CSVRecord record : parser) {
@@ -454,7 +736,13 @@ public class UniversalCsvService {
             if (rows > MAX_CORR_ROWS) break;
             Map<String, Double> rowValues = new HashMap<>();
             for (String header : numericHeaders) {
-                Double v = parseNumber(clean(record.get(header)));
+                String raw;
+                try {
+                    raw = record.get(header);
+                } catch (Exception ex) {
+                    continue;
+                }
+                Double v = parseNumber(clean(raw));
                 if (v != null) {
                     rowValues.put(header, v);
                 }
@@ -513,6 +801,23 @@ public class UniversalCsvService {
             if (b0 == 0xFF && b1 == 0xFE) return StandardCharsets.UTF_16LE;
             if (b0 == 0xFE && b1 == 0xFF) return StandardCharsets.UTF_16BE;
         }
+
+        // Heurística: si hay muchos NUL puede ser UTF-16 sin BOM (exportación "rara").
+        int sample = Math.min(bytes.length, 200);
+        int zeros = 0;
+        int evenZeros = 0;
+        int oddZeros = 0;
+        for (int i = 0; i < sample; i++) {
+            if (bytes[i] == 0) {
+                zeros++;
+                if ((i % 2) == 0) evenZeros++; else oddZeros++;
+            }
+        }
+        if (sample >= 20 && zeros > (sample / 5)) { // > 20% NUL
+            // En UTF-16LE, ASCII suele tener NUL en posiciones impares.
+            return oddZeros >= evenZeros ? StandardCharsets.UTF_16LE : StandardCharsets.UTF_16BE;
+        }
+
         return StandardCharsets.UTF_8;
     }
 
@@ -701,7 +1006,18 @@ public class UniversalCsvService {
         }
     }
 
-    private record AnalysisResult(UniversalSummaryDto summary, int corrRows) {}
+    private record AnalysisResult(UniversalSummaryDto summary,
+                                  int corrRows,
+                                  int totalRowsRead,
+                                  int goodRows,
+                                  int badRows,
+                                  int observedRows,
+                                  boolean sampled,
+                                  int removedEmptyColumns,
+                                  long durationMs,
+                                  long bytes,
+                                  String charsetName,
+                                  char delimiter) {}
 
     private static List<UniversalBucketDto> buildHistogram(List<Double> sorted, double min, double max) {
         if (sorted.isEmpty() || min == max) {

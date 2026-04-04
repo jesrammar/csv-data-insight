@@ -8,6 +8,7 @@ import com.asecon.enterpriseiq.repo.CompanyRepository;
 import com.asecon.enterpriseiq.repo.ImportJobRepository;
 import com.asecon.enterpriseiq.repo.ReportRepository;
 import com.asecon.enterpriseiq.repo.UniversalImportRepository;
+import com.asecon.enterpriseiq.repo.UniversalViewRepository;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -31,6 +32,7 @@ public class StorageRetentionService {
     private final ImportJobRepository importJobRepository;
     private final ReportRepository reportRepository;
     private final UniversalImportRepository universalImportRepository;
+    private final UniversalViewRepository universalViewRepository;
 
     private final boolean enabled;
     private final long importsDays;
@@ -50,6 +52,7 @@ public class StorageRetentionService {
                                   ImportJobRepository importJobRepository,
                                   ReportRepository reportRepository,
                                   UniversalImportRepository universalImportRepository,
+                                  UniversalViewRepository universalViewRepository,
                                   @Value("${app.storage.retention.enabled:true}") boolean enabled,
                                   @Value("${app.storage.retention.imports-days:30}") long importsDays,
                                   @Value("${app.storage.retention.reports-days:180}") long reportsDays,
@@ -64,6 +67,7 @@ public class StorageRetentionService {
         this.importJobRepository = importJobRepository;
         this.reportRepository = reportRepository;
         this.universalImportRepository = universalImportRepository;
+        this.universalViewRepository = universalViewRepository;
         this.enabled = enabled;
         this.importsDays = importsDays;
         this.reportsDays = reportsDays;
@@ -208,6 +212,11 @@ public class StorageRetentionService {
                 }
                 Instant created = imp.getCreatedAt();
                 if (created != null && created.isAfter(cutoff)) continue;
+
+                // Do not delete Universal datasets that are referenced by saved dashboards (snapshots).
+                if (imp.getId() != null && universalViewRepository.existsByCompanyIdAndSourceUniversalImportId(companyId, imp.getId())) {
+                    continue;
+                }
 
                 Path file = Path.of(ref).toAbsolutePath().normalize();
                 if (!safeDelete(universalRoot, file)) continue;

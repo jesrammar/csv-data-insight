@@ -22,6 +22,22 @@ export default function ReportsPage() {
   const [html, setHtml] = useState('')
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
+  const [showAllVersions, setShowAllVersions] = useState(false)
+
+  const reportsForUi = (() => {
+    const list = (data || []) as any[]
+    if (showAllVersions) return list
+    const seen = new Set<string>()
+    const out: any[] = []
+    for (const r of list) {
+      const key = String(r?.period || '')
+      if (!key) continue
+      if (seen.has(key)) continue
+      seen.add(key)
+      out.push(r)
+    }
+    return out
+  })()
 
   async function handleGenerate() {
     if (!companyId) return
@@ -30,7 +46,18 @@ export default function ReportsPage() {
     try {
       await generateReport(companyId, period)
       await queryClient.invalidateQueries({ queryKey: ['reports', companyId] })
-      setSuccess('Reporte generado. Puedes abrirlo o exportarlo desde la lista.')
+
+      // Auto-abrir el último informe del periodo para que se vea el resultado al instante.
+      try {
+        const list = await getReports(companyId)
+        const rep = (list || []).find((r: any) => String(r?.period || '') === period) || (list || [])[0]
+        if (rep?.id) {
+          const content = await getReportContent(companyId, rep.id)
+          setHtml(content)
+        }
+      } catch {}
+
+      setSuccess('Reporte generado. Puedes previsualizarlo o descargarlo como PDF.')
       toast.push({ tone: 'success', title: 'Reporte', message: `Generado para ${period}.` })
     } catch (err: any) {
       setError(err.message)
@@ -40,22 +67,42 @@ export default function ReportsPage() {
 
   async function handleView(reportId: number) {
     if (!companyId) return
-    const content = await getReportContent(companyId, reportId)
-    setHtml(content)
+    try {
+      const content = await getReportContent(companyId, reportId)
+      setHtml(content)
+    } catch (err: any) {
+      const msg = String(err?.message || err || 'No se pudo abrir el informe.')
+      setError(
+        msg.toLowerCase().includes('retención') || msg.toLowerCase().includes('no está disponible')
+          ? 'Este informe fue limpiado por retención de ficheros. Genera de nuevo el reporte para ese periodo.'
+          : msg
+      )
+      toast.push({ tone: 'danger', title: 'Error', message: 'No se pudo abrir el informe.' })
+    }
   }
 
   async function handleDownloadPdf(reportId: number, periodLabel?: string) {
     if (!companyId) return
-    const blob = await downloadReportPdf(companyId, reportId)
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `enterpriseiq-report-${periodLabel || reportId}.pdf`
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
-    URL.revokeObjectURL(url)
-    toast.push({ tone: 'success', title: 'PDF', message: 'Descarga iniciada.' })
+    try {
+      const blob = await downloadReportPdf(companyId, reportId)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `enterpriseiq-report-${periodLabel || reportId}.pdf`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+      toast.push({ tone: 'success', title: 'PDF', message: 'Descarga iniciada.' })
+    } catch (err: any) {
+      const msg = String(err?.message || err || 'No se pudo descargar el PDF.')
+      setError(
+        msg.toLowerCase().includes('retención') || msg.toLowerCase().includes('no está disponible')
+          ? 'Este informe fue limpiado por retención de ficheros. Genera de nuevo el reporte para ese periodo.'
+          : msg
+      )
+      toast.push({ tone: 'danger', title: 'Error', message: 'No se pudo descargar el PDF.' })
+    }
   }
 
   return (
@@ -113,37 +160,53 @@ export default function ReportsPage() {
         {!data?.length ? (
           <div className="empty">No hay reportes todavía.</div>
         ) : (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Periodo</th>
-                {!isClient ? <th>ID</th> : null}
-                {!isClient ? <th>Formato</th> : null}
-                <th>Estado</th>
-                <th>Acciones</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(data || []).map((rep: any) => (
-                <tr key={rep.id}>
-                  <td>{rep.period}</td>
-                  {!isClient ? <td>{rep.id}</td> : null}
-                  {!isClient ? <td>{rep.format}</td> : null}
-                  <td>{rep.status}</td>
-                  <td>
-                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                      <Button variant="secondary" size="sm" onClick={() => handleView(rep.id)}>
-                        Abrir
-                      </Button>
-                      <Button variant="ghost" size="sm" onClick={() => handleDownloadPdf(rep.id, rep.period)}>
-                        PDF
-                      </Button>
-                    </div>
-                  </td>
+          <>
+            {!isClient ? (
+              <div
+                className="upload-hint"
+                style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 10, flexWrap: 'wrap' }}
+              >
+                <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <input type="checkbox" checked={showAllVersions} onChange={(e) => setShowAllVersions(e.target.checked)} />
+                  Mostrar versiones antiguas
+                </label>
+                <span>Por defecto se muestra solo el último informe de cada periodo.</span>
+              </div>
+            ) : null}
+
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Periodo</th>
+                  <th>Generado</th>
+                  <th>Estado</th>
+                  <th>Acciones</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {reportsForUi.map((rep: any) => (
+                  <tr key={rep.id}>
+                    <td>
+                      <div style={{ fontWeight: 700 }}>{rep.period}</div>
+                      {!isClient ? <div className="upload-hint">ID: {rep.id}</div> : null}
+                    </td>
+                    <td className="upload-hint">{rep.createdAt ? new Date(rep.createdAt).toLocaleString() : '-'}</td>
+                    <td>{rep.status}</td>
+                    <td>
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                        <Button variant="secondary" size="sm" onClick={() => handleView(rep.id)}>
+                          Vista previa
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => handleDownloadPdf(rep.id, rep.period)}>
+                          Descargar PDF
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </>
         )}
       </div>
 
@@ -151,7 +214,7 @@ export default function ReportsPage() {
         <div className="card section">
           <h3 style={{ marginTop: 0 }}>Vista HTML</h3>
           <div className="upload-hint" style={{ marginBottom: 10 }}>
-            Tip: si el HTML incluye tablas largas, exporta desde el navegador a PDF para el cliente.
+            Esto es una vista previa del informe. Para enviarlo al cliente usa “Descargar PDF”.
           </div>
           <iframe
             className="report-frame"

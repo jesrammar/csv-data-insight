@@ -10,6 +10,32 @@ export type LoginResponse = {
   accessTokenExpiresInSeconds: number
 }
 
+export type UserDto = {
+  id: number
+  email: string
+  role: string
+  enabled: boolean
+  companyIds: number[]
+}
+
+export type CreateUserRequest = {
+  email: string
+  password: string
+  role: 'ADMIN' | 'CONSULTOR' | 'CLIENTE'
+  companyIds?: number[]
+}
+
+export type UpdateUserRequest = {
+  role?: 'ADMIN' | 'CONSULTOR' | 'CLIENTE'
+  enabled?: boolean
+}
+
+export type UserActionLink = {
+  path: string
+  token: string
+  expiresAt: string
+}
+
 const USER_ROLE_KEY = 'user_role'
 const USER_ID_KEY = 'user_id'
 const COMPANY_ID_KEY = 'companyId'
@@ -98,6 +124,64 @@ type RequestConfig = { auth?: boolean; retry?: boolean }
 
 let refreshPromise: Promise<string | null> | null = null
 
+const DEFAULT_TIMEOUT_MS = 30_000
+
+function toHeaderRecord(headers?: HeadersInit): Record<string, string> {
+  if (!headers) return {}
+  if (headers instanceof Headers) {
+    const out: Record<string, string> = {}
+    headers.forEach((v, k) => (out[k] = v))
+    return out
+  }
+  if (Array.isArray(headers)) {
+    const out: Record<string, string> = {}
+    for (const [k, v] of headers) out[k] = v
+    return out
+  }
+  return { ...(headers as Record<string, string>) }
+}
+
+async function fetchWithAuth(
+  url: string,
+  init: RequestInit = {},
+  config: { auth?: boolean; retry?: boolean; timeoutMs?: number } = {}
+) {
+  const { auth = true, retry = true, timeoutMs = DEFAULT_TIMEOUT_MS } = config
+  const controller = timeoutMs > 0 ? new AbortController() : null
+  const baseSignal = init.signal
+  const timer = controller ? window.setTimeout(() => controller.abort(), timeoutMs) : null
+
+  const doFetch = async (tokenOverride?: string | null) => {
+    const headers = toHeaderRecord(init.headers)
+    if (auth) {
+      const token = tokenOverride ?? getAccessToken()
+      if (token && !headers.Authorization) headers.Authorization = `Bearer ${token}`
+    }
+    return fetch(url, {
+      ...init,
+      headers,
+      credentials: init.credentials ?? 'include',
+      signal: controller?.signal ?? baseSignal
+    })
+  }
+
+  try {
+    let res = await doFetch(null)
+    if (res.status === 401 && retry && url.indexOf('/api/auth/login') === -1 && url.indexOf('/api/auth/refresh') === -1) {
+      const newToken = await refreshAccessToken()
+      if (newToken) res = await doFetch(newToken)
+    }
+    return res
+  } catch (e: any) {
+    if (e?.name === 'AbortError') {
+      throw new Error(`Tiempo de espera agotado (${Math.round(timeoutMs / 1000)}s). Si el fichero es grande, súbelo por periodos o usa Universal.`)
+    }
+    throw e
+  } finally {
+    if (timer != null) window.clearTimeout(timer)
+  }
+}
+
 async function refreshAccessToken(): Promise<string | null> {
   if (refreshPromise) return refreshPromise
 
@@ -122,8 +206,8 @@ async function refreshAccessToken(): Promise<string | null> {
   return token
 }
 
-async function request<T = any>(path: string, options: RequestInit = {}, config: RequestConfig = {}): Promise<T> {
-  const { auth = true, retry = true } = config
+async function request<T = any>(path: string, options: RequestInit = {}, config: RequestConfig & { timeoutMs?: number } = {}): Promise<T> {
+  const { auth = true, retry = true, timeoutMs = DEFAULT_TIMEOUT_MS } = config
   const token = getAccessToken()
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -131,13 +215,7 @@ async function request<T = any>(path: string, options: RequestInit = {}, config:
   }
   if (auth && token) headers.Authorization = `Bearer ${token}`
 
-  const res = await fetch(`${API_URL}${path}`, { ...options, headers, credentials: 'include' })
-  if (res.status === 401 && retry && path !== '/api/auth/login' && path !== '/api/auth/refresh') {
-    const newToken = await refreshAccessToken()
-    if (newToken) {
-      return request<T>(path, options, { auth: true, retry: false })
-    }
-  }
+  const res = await fetchWithAuth(`${API_URL}${path}`, { ...options, headers }, { auth, retry, timeoutMs })
   if (!res.ok) {
     const text = await res.text()
     throw new Error(text || `HTTP ${res.status}`)
@@ -174,26 +252,49 @@ export async function getCompanies() {
   return request('/api/companies/mine')
 }
 
+export async function getUsers() {
+  return request<UserDto[]>('/api/users')
+}
+
+export async function createUser(payload: CreateUserRequest) {
+  return request<UserDto>('/api/users', { method: 'POST', body: JSON.stringify(payload) })
+}
+
+export async function updateUserCompanies(userId: number, companyIds: number[]) {
+  return request<UserDto>(`/api/users/${userId}/companies`, { method: 'PUT', body: JSON.stringify(companyIds) })
+}
+
+export async function updateUser(userId: number, payload: UpdateUserRequest) {
+  return request<UserDto>(`/api/users/${userId}`, { method: 'PATCH', body: JSON.stringify(payload || {}) })
+}
+
+export async function createInviteLink(userId: number) {
+  return request<UserActionLink>(`/api/users/${userId}/invite-link`, { method: 'POST', body: '{}' })
+}
+
+export async function createPasswordResetLink(userId: number) {
+  return request<UserActionLink>(`/api/users/${userId}/password-reset-link`, { method: 'POST', body: '{}' })
+}
+
+export async function confirmPasswordFromToken(token: string, newPassword: string, action: 'invite' | 'reset') {
+  await request<void>(
+    `/api/auth/password/confirm`,
+    { method: 'POST', body: JSON.stringify({ token, newPassword, action }) },
+    { auth: false, retry: false }
+  )
+}
+
+export async function changePassword(currentPassword: string, newPassword: string) {
+  await request<void>(`/api/auth/password/change`, { method: 'POST', body: JSON.stringify({ currentPassword, newPassword }) })
+}
+
 export async function getDashboard(companyId: number, from: string, to: string) {
   return request(`/api/companies/${companyId}/dashboard?from=${from}&to=${to}`)
 }
 
 export async function downloadPowerBiExportZip(companyId: number, from: string, to: string) {
-  const token = getAccessToken()
   const url = `${API_URL}/api/companies/${companyId}/powerbi/export.zip?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`
-  let res = await fetch(url, {
-    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-    credentials: 'include'
-  })
-  if (res.status === 401) {
-    const newToken = await refreshAccessToken()
-    if (newToken) {
-      res = await fetch(url, {
-        headers: { Authorization: `Bearer ${newToken}` },
-        credentials: 'include'
-      })
-    }
-  }
+  const res = await fetchWithAuth(url, {}, { auth: true, retry: true, timeoutMs: 120_000 })
   if (!res.ok) {
     const text = await res.text()
     throw new Error(text || `HTTP ${res.status}`)
@@ -206,28 +307,15 @@ export async function getImports(companyId: number) {
 }
 
 export async function uploadImport(companyId: number, period: string, file: File) {
-  const token = getAccessToken()
   const form = new FormData()
   form.append('period', period)
   form.append('file', file)
 
-  let res = await fetch(`${API_URL}/api/companies/${companyId}/imports`, {
-    method: 'POST',
-    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-    body: form,
-    credentials: 'include'
-  })
-  if (res.status === 401) {
-    const newToken = await refreshAccessToken()
-    if (newToken) {
-      res = await fetch(`${API_URL}/api/companies/${companyId}/imports`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${newToken}` },
-        body: form,
-        credentials: 'include'
-      })
-    }
-  }
+  const res = await fetchWithAuth(
+    `${API_URL}/api/companies/${companyId}/imports`,
+    { method: 'POST', body: form },
+    { auth: true, retry: true, timeoutMs: 120_000 }
+  )
 
   if (!res.ok) {
     const text = await res.text()
@@ -244,29 +332,16 @@ export type ImportPreviewDto = {
 }
 
 export async function previewImport(companyId: number, file: File, opts: { sheetIndex?: number; headerRow?: number } = {}) {
-  const token = getAccessToken()
   const form = new FormData()
   form.append('file', file)
   if (opts.sheetIndex != null) form.append('sheetIndex', String(opts.sheetIndex))
   if (opts.headerRow != null) form.append('headerRow', String(opts.headerRow))
 
-  let res = await fetch(`${API_URL}/api/companies/${companyId}/imports/preview`, {
-    method: 'POST',
-    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-    body: form,
-    credentials: 'include'
-  })
-  if (res.status === 401) {
-    const newToken = await refreshAccessToken()
-    if (newToken) {
-      res = await fetch(`${API_URL}/api/companies/${companyId}/imports/preview`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${newToken}` },
-        body: form,
-        credentials: 'include'
-      })
-    }
-  }
+  const res = await fetchWithAuth(
+    `${API_URL}/api/companies/${companyId}/imports/preview`,
+    { method: 'POST', body: form },
+    { auth: true, retry: true, timeoutMs: 45_000 }
+  )
   if (!res.ok) {
     const text = await res.text()
     throw new Error(text || `HTTP ${res.status}`)
@@ -288,7 +363,6 @@ export async function uploadImportSmart(
     headerRow?: number
   }
 ) {
-  const token = getAccessToken()
   const form = new FormData()
   form.append('period', period)
   form.append('file', file)
@@ -300,23 +374,11 @@ export async function uploadImportSmart(
   if (mapping.sheetIndex != null) form.append('sheetIndex', String(mapping.sheetIndex))
   if (mapping.headerRow != null) form.append('headerRow', String(mapping.headerRow))
 
-  let res = await fetch(`${API_URL}/api/companies/${companyId}/imports/smart`, {
-    method: 'POST',
-    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-    body: form,
-    credentials: 'include'
-  })
-  if (res.status === 401) {
-    const newToken = await refreshAccessToken()
-    if (newToken) {
-      res = await fetch(`${API_URL}/api/companies/${companyId}/imports/smart`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${newToken}` },
-        body: form,
-        credentials: 'include'
-      })
-    }
-  }
+  const res = await fetchWithAuth(
+    `${API_URL}/api/companies/${companyId}/imports/smart`,
+    { method: 'POST', body: form },
+    { auth: true, retry: true, timeoutMs: 120_000 }
+  )
 
   if (!res.ok) {
     const text = await res.text()
@@ -345,6 +407,147 @@ export async function getAlerts(companyId: number, period?: string) {
 
 export async function getTribunalSummary(companyId: number) {
   return request(`/api/companies/${companyId}/tribunal/summary`)
+}
+
+export type TribunalImportDto = {
+  id: number
+  companyId: number
+  filename: string
+  createdAt: string
+  rowCount: number
+  warningCount: number
+  errorCount: number
+  errorSummary?: string | null
+}
+
+export async function getTribunalStatus(companyId: number) {
+  return request<TribunalImportDto | null>(`/api/companies/${companyId}/tribunal/status`)
+}
+
+export type BudgetMonth = {
+  monthKey: string
+  label: string
+  income: number
+  expense: number
+  margin: number
+  deltaMargin?: number | null
+  deltaMarginPct?: number | null
+}
+
+export type BudgetSummary = {
+  sourceFilename?: string | null
+  sourceCreatedAt?: string | null
+  months: BudgetMonth[]
+  totalIncome: number
+  totalExpense: number
+  totalMargin: number
+  bestMonth?: string | null
+  worstMonth?: string | null
+}
+
+export async function getBudgetSummary(companyId: number) {
+  return request<BudgetSummary>(`/api/companies/${companyId}/budget/summary`)
+}
+
+export type CashflowMonth = {
+  monthKey: string
+  label: string
+  inflow: number
+  outflow: number
+  net: number
+  endingBalance: number
+  deltaNet?: number | null
+  deltaNetPct?: number | null
+}
+
+export type CashflowSummary = {
+  sourceFilename?: string | null
+  sourceCreatedAt?: string | null
+  openingBalance: number
+  months: CashflowMonth[]
+  totalInflow: number
+  totalOutflow: number
+  totalNet: number
+  endingBalance: number
+  bestMonth?: string | null
+  worstMonth?: string | null
+}
+
+export async function getCashflowSummary(companyId: number) {
+  return request<CashflowSummary>(`/api/companies/${companyId}/budget/cashflow`)
+}
+
+export type BudgetItemInsight = {
+  code?: string | null
+  label?: string | null
+  annualTotal: number
+  zeroMonths: number
+  shareAbsPct: number
+}
+
+export type BudgetMonthTotal = {
+  monthKey: string
+  monthLabel: string
+  total: number
+}
+
+export type BudgetLongInsights = {
+  filename?: string | null
+  createdAt?: string | null
+  itemCount: number
+  totalAbsAnnual: number
+  bestMonth?: string | null
+  worstMonth?: string | null
+  concentrationTop3AbsPct: number
+  monthTotals: BudgetMonthTotal[]
+  topDrivers: BudgetItemInsight[]
+  zeroHeavyItems: BudgetItemInsight[]
+}
+
+export async function getBudgetLongInsights(companyId: number) {
+  return request<BudgetLongInsights>(`/api/companies/${companyId}/budget/long/insights`)
+}
+
+export type BudgetLongRow = {
+  rowType: 'ITEM' | 'TOTAL' | 'TEXT'
+  code?: string | null
+  label?: string | null
+  monthKey: string
+  monthLabel: string
+  amount: number
+}
+
+export type BudgetLongPreview = {
+  filename?: string | null
+  createdAt?: string | null
+  monthKeys: string[]
+  labelHeader: string
+  totalRowsProduced: number
+  sampleRows: BudgetLongRow[]
+}
+
+export async function getBudgetLongPreview(companyId: number) {
+  return request<BudgetLongPreview>(`/api/companies/${companyId}/budget/long/preview`)
+}
+
+export async function downloadBudgetLongCsv(companyId: number) {
+  const url = `${API_URL}/api/companies/${companyId}/budget/long.csv`
+  const res = await fetchWithAuth(url, {}, { auth: true, retry: true, timeoutMs: 120_000 })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(text || `HTTP ${res.status}`)
+  }
+  return res.blob()
+}
+
+export async function downloadBudgetReportPdf(companyId: number) {
+  const url = `${API_URL}/api/companies/${companyId}/budget/report.pdf`
+  const res = await fetchWithAuth(url, {}, { auth: true, retry: true, timeoutMs: 120_000 })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(text || `HTTP ${res.status}`)
+  }
+  return res.blob()
 }
 
 export type TransactionDto = {
@@ -473,20 +676,11 @@ export async function downloadTransactionsCsv(
   })
   const query = qs.toString()
 
-  const token = getAccessToken()
-  let res = await fetch(`${API_URL}/api/companies/${companyId}/transactions/export.csv${query ? `?${query}` : ''}`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-    credentials: 'include'
-  })
-  if (res.status === 401) {
-    const newToken = await refreshAccessToken()
-    if (newToken) {
-      res = await fetch(`${API_URL}/api/companies/${companyId}/transactions/export.csv${query ? `?${query}` : ''}`, {
-        headers: { Authorization: `Bearer ${newToken}` },
-        credentials: 'include'
-      })
-    }
-  }
+  const res = await fetchWithAuth(
+    `${API_URL}/api/companies/${companyId}/transactions/export.csv${query ? `?${query}` : ''}`,
+    {},
+    { auth: true, retry: true, timeoutMs: 120_000 }
+  )
   if (!res.ok) {
     const text = await res.text()
     throw new Error(text || `HTTP ${res.status}`)
@@ -495,27 +689,14 @@ export async function downloadTransactionsCsv(
 }
 
 export async function uploadTribunalImport(companyId: number, file: File) {
-  const token = getAccessToken()
   const form = new FormData()
   form.append('file', file)
 
-  let res = await fetch(`${API_URL}/api/companies/${companyId}/tribunal/imports`, {
-    method: 'POST',
-    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-    body: form,
-    credentials: 'include'
-  })
-  if (res.status === 401) {
-    const newToken = await refreshAccessToken()
-    if (newToken) {
-      res = await fetch(`${API_URL}/api/companies/${companyId}/tribunal/imports`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${newToken}` },
-        body: form,
-        credentials: 'include'
-      })
-    }
-  }
+  const res = await fetchWithAuth(
+    `${API_URL}/api/companies/${companyId}/tribunal/imports`,
+    { method: 'POST', body: form },
+    { auth: true, retry: true, timeoutMs: 120_000 }
+  )
   if (!res.ok) {
     const text = await res.text()
     throw new Error(text || `HTTP ${res.status}`)
@@ -540,6 +721,17 @@ export type ImportJob = {
   lastError?: string | null
   storageRef?: string | null
   originalFilename?: string | null
+}
+
+export type IngestionStatus = {
+  now: string
+  lastImport?: ImportJob | null
+  lastProcessedImport?: ImportJob | null
+  nextScheduledImport?: ImportJob | null
+}
+
+export async function getIngestionStatus(companyId: number) {
+  return request<IngestionStatus>(`/api/companies/${companyId}/ingestion/status`)
 }
 
 export async function retryImport(companyId: number, importId: number) {
@@ -592,20 +784,7 @@ export async function uploadTribunalImportWithProgress(
 }
 
 export async function downloadTribunalCsv(companyId: number) {
-  const token = getAccessToken()
-  let res = await fetch(`${API_URL}/api/companies/${companyId}/tribunal/exports.csv`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-    credentials: 'include'
-  })
-  if (res.status === 401) {
-    const newToken = await refreshAccessToken()
-    if (newToken) {
-      res = await fetch(`${API_URL}/api/companies/${companyId}/tribunal/exports.csv`, {
-        headers: { Authorization: `Bearer ${newToken}` },
-        credentials: 'include'
-      })
-    }
-  }
+  const res = await fetchWithAuth(`${API_URL}/api/companies/${companyId}/tribunal/exports.csv`, {}, { auth: true, retry: true, timeoutMs: 120_000 })
   if (!res.ok) {
     const text = await res.text()
     throw new Error(text || `HTTP ${res.status}`)
@@ -624,20 +803,52 @@ export async function getUniversalLatestRows(companyId: number, limit = 50) {
 }
 
 export async function downloadUniversalNormalizedCsv(companyId: number) {
-  const token = getAccessToken()
-  let res = await fetch(`${API_URL}/api/companies/${companyId}/universal/imports/latest/normalized.csv`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-    credentials: 'include'
-  })
-  if (res.status === 401) {
-    const newToken = await refreshAccessToken()
-    if (newToken) {
-      res = await fetch(`${API_URL}/api/companies/${companyId}/universal/imports/latest/normalized.csv`, {
-        headers: { Authorization: `Bearer ${newToken}` },
-        credentials: 'include'
-      })
-    }
+  const res = await fetchWithAuth(
+    `${API_URL}/api/companies/${companyId}/universal/imports/latest/normalized.csv`,
+    {},
+    { auth: true, retry: true, timeoutMs: 120_000 }
+  )
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(text || `HTTP ${res.status}`)
   }
+  return res.text()
+}
+
+export type UniversalImportDto = {
+  id: number
+  filename: string
+  createdAt: string
+  rowCount: number
+  columnCount: number
+}
+
+export async function listUniversalImports(companyId: number) {
+  return request<UniversalImportDto[]>(`/api/companies/${companyId}/universal/imports`)
+}
+
+export async function getUniversalSummaryForImport(companyId: number, importId?: number | null) {
+  const qs = importId ? `?importId=${encodeURIComponent(String(importId))}` : ''
+  return request(`/api/companies/${companyId}/universal/summary${qs}`)
+}
+
+export async function getUniversalSuggestionsForImport(companyId: number, importId?: number | null) {
+  const qs = importId ? `?importId=${encodeURIComponent(String(importId))}` : ''
+  return request<UniversalAutoSuggestion[]>(`/api/companies/${companyId}/universal/suggestions${qs}`)
+}
+
+export async function getUniversalRows(companyId: number, limit = 50, importId?: number | null) {
+  if (importId) {
+    return request<UniversalRows>(`/api/companies/${companyId}/universal/imports/${importId}/rows?limit=${limit}`)
+  }
+  return request<UniversalRows>(`/api/companies/${companyId}/universal/imports/latest/rows?limit=${limit}`)
+}
+
+export async function downloadUniversalNormalizedCsvForImport(companyId: number, importId?: number | null) {
+  const url = importId
+    ? `${API_URL}/api/companies/${companyId}/universal/imports/${importId}/normalized.csv`
+    : `${API_URL}/api/companies/${companyId}/universal/imports/latest/normalized.csv`
+  const res = await fetchWithAuth(url, {}, { auth: true, retry: true, timeoutMs: 120_000 })
   if (!res.ok) {
     const text = await res.text()
     throw new Error(text || `HTTP ${res.status}`)
@@ -774,29 +985,16 @@ export async function assistantChat(companyId: number, messages: AssistantMessag
 }
 
 export async function previewUniversalXlsx(companyId: number, file: File, opts: { sheetIndex?: number; headerRow?: number } = {}) {
-  const token = getAccessToken()
   const form = new FormData()
   form.append('file', file)
   if (opts.sheetIndex != null) form.append('sheetIndex', String(opts.sheetIndex))
   if (opts.headerRow != null) form.append('headerRow', String(opts.headerRow))
 
-  let res = await fetch(`${API_URL}/api/companies/${companyId}/universal/xlsx/preview`, {
-    method: 'POST',
-    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-    body: form,
-    credentials: 'include'
-  })
-  if (res.status === 401) {
-    const newToken = await refreshAccessToken()
-    if (newToken) {
-      res = await fetch(`${API_URL}/api/companies/${companyId}/universal/xlsx/preview`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${newToken}` },
-        body: form,
-        credentials: 'include'
-      })
-    }
-  }
+  const res = await fetchWithAuth(
+    `${API_URL}/api/companies/${companyId}/universal/xlsx/preview`,
+    { method: 'POST', body: form },
+    { auth: true, retry: true, timeoutMs: 60_000 }
+  )
   if (!res.ok) {
     const text = await res.text()
     throw new Error(text || `HTTP ${res.status}`)
@@ -809,34 +1007,155 @@ export async function uploadUniversalImport(
   file: File,
   opts: { sheetIndex?: number; headerRow?: number } = {}
 ) {
-  const token = getAccessToken()
   const form = new FormData()
   form.append('file', file)
   if (opts.sheetIndex != null) form.append('sheetIndex', String(opts.sheetIndex))
   if (opts.headerRow != null) form.append('headerRow', String(opts.headerRow))
 
-  let res = await fetch(`${API_URL}/api/companies/${companyId}/universal/imports`, {
-    method: 'POST',
-    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-    body: form,
-    credentials: 'include'
-  })
-  if (res.status === 401) {
-    const newToken = await refreshAccessToken()
-    if (newToken) {
-      res = await fetch(`${API_URL}/api/companies/${companyId}/universal/imports`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${newToken}` },
-        body: form,
-        credentials: 'include'
-      })
-    }
-  }
+  const res = await fetchWithAuth(
+    `${API_URL}/api/companies/${companyId}/universal/imports`,
+    { method: 'POST', body: form },
+    { auth: true, retry: true, timeoutMs: 120_000 }
+  )
   if (!res.ok) {
     const text = await res.text()
     throw new Error(text || `HTTP ${res.status}`)
   }
   return res.json()
+}
+
+export type UniversalAutoSuggestion = {
+  title: string
+  description: string
+  request: UniversalViewRequest
+}
+
+export async function getUniversalSuggestions(companyId: number) {
+  return request<UniversalAutoSuggestion[]>(`/api/companies/${companyId}/universal/suggestions`)
+}
+
+export async function downloadUniversalBuilderProblemsCsv(companyId: number, body: UniversalViewRequest, limit = 100) {
+  const url = `${API_URL}/api/companies/${companyId}/universal/builder/problems.csv?limit=${encodeURIComponent(String(limit))}`
+  const res = await fetchWithAuth(
+    url,
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+    { auth: true, retry: true, timeoutMs: 120_000 }
+  )
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(text || `HTTP ${res.status}`)
+  }
+  return res.blob()
+}
+
+export async function downloadUniversalBuilderProblemsCsvForImport(companyId: number, body: UniversalViewRequest, limit = 100, importId?: number | null) {
+  const qs = importId ? `&importId=${encodeURIComponent(String(importId))}` : ''
+  const url = `${API_URL}/api/companies/${companyId}/universal/builder/problems.csv?limit=${encodeURIComponent(String(limit))}${qs}`
+  const res = await fetchWithAuth(
+    url,
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+    { auth: true, retry: true, timeoutMs: 120_000 }
+  )
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(text || `HTTP ${res.status}`)
+  }
+  return res.blob()
+}
+
+export type UniversalViewType =
+  | 'TIME_SERIES'
+  | 'CATEGORY_BAR'
+  | 'KPI_CARDS'
+  | 'SCATTER'
+  | 'HEATMAP'
+  | 'PIVOT_MONTHLY'
+
+export type UniversalViewDto = {
+  id: number
+  companyId: number
+  name: string
+  type: UniversalViewType | string
+  createdAt: string
+  sourceImportId?: number | null
+  sourceFilename?: string | null
+  sourceImportedAt?: string | null
+}
+
+export type UniversalViewRequest = {
+  name?: string
+  type: UniversalViewType
+  dateColumn?: string | null
+  valueColumn?: string | null
+  categoryColumn?: string | null
+  xColumn?: string | null
+  yColumn?: string | null
+  aggregation?: 'sum' | 'avg'
+  filterColumn?: string | null
+  filterValue?: string | null
+  filters?: Array<{ column: string; op: 'eq' | 'contains' | 'year_eq' | 'gt' | 'gte' | 'lt' | 'lte'; value: string }>
+  topN?: number | null
+  maxPoints?: number | null
+}
+
+export type UniversalChartSeries = { name: string; data: any[] }
+export type UniversalChartData = {
+  type: UniversalViewType | string
+  labels: string[]
+  series: UniversalChartSeries[]
+  meta?: Record<string, any>
+}
+
+export async function previewUniversalView(companyId: number, body: UniversalViewRequest) {
+  return request<UniversalChartData>(`/api/companies/${companyId}/universal/builder/preview`, {
+    method: 'POST',
+    body: JSON.stringify(body)
+  })
+}
+
+export async function previewUniversalViewForImport(companyId: number, body: UniversalViewRequest, importId?: number | null) {
+  const qs = importId ? `?importId=${encodeURIComponent(String(importId))}` : ''
+  return request<UniversalChartData>(`/api/companies/${companyId}/universal/builder/preview${qs}`, {
+    method: 'POST',
+    body: JSON.stringify(body)
+  })
+}
+
+export async function listUniversalViews(companyId: number) {
+  return request<UniversalViewDto[]>(`/api/companies/${companyId}/universal/views`)
+}
+
+export async function createUniversalView(companyId: number, body: UniversalViewRequest) {
+  return request<UniversalViewDto>(`/api/companies/${companyId}/universal/views`, {
+    method: 'POST',
+    body: JSON.stringify(body)
+  })
+}
+
+export async function createUniversalViewForImport(companyId: number, body: UniversalViewRequest, importId?: number | null) {
+  const qs = importId ? `?importId=${encodeURIComponent(String(importId))}` : ''
+  return request<UniversalViewDto>(`/api/companies/${companyId}/universal/views${qs}`, {
+    method: 'POST',
+    body: JSON.stringify(body)
+  })
+}
+
+export async function getUniversalViewData(companyId: number, viewId: number) {
+  const data = await request<any>(`/api/companies/${companyId}/universal/views/${viewId}/data`, { method: 'POST' })
+  // Defensive: avoid blank screens if backend returns `null`/empty due to missing dataset/storage.
+  if (!data || typeof data !== 'object') {
+    throw new Error('Respuesta vacía al cargar el dashboard. Sube/re-sube un dataset en Universal y reintenta.')
+  }
+  return data as UniversalChartData
+}
+
+export async function getUniversalViewDataForImport(companyId: number, viewId: number, importId?: number | null) {
+  const qs = importId ? `?importId=${encodeURIComponent(String(importId))}` : ''
+  const data = await request<any>(`/api/companies/${companyId}/universal/views/${viewId}/data${qs}`, { method: 'POST' })
+  if (!data || typeof data !== 'object') {
+    throw new Error('Respuesta vacía al cargar el dashboard. Sube/re-sube un dataset en Universal y reintenta.')
+  }
+  return data as UniversalChartData
 }
 
 export async function generateReport(companyId: number, period: string) {
@@ -851,21 +1170,8 @@ export async function getReportContent(companyId: number, reportId: number) {
 }
 
 export async function downloadReportPdf(companyId: number, reportId: number) {
-  const token = getAccessToken()
   const url = `${API_URL}/api/companies/${companyId}/reports/${reportId}/content.pdf`
-  let res = await fetch(url, {
-    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-    credentials: 'include'
-  })
-  if (res.status === 401) {
-    const newToken = await refreshAccessToken()
-    if (newToken) {
-      res = await fetch(url, {
-        headers: { Authorization: `Bearer ${newToken}` },
-        credentials: 'include'
-      })
-    }
-  }
+  const res = await fetchWithAuth(url, {}, { auth: true, retry: true, timeoutMs: 120_000 })
   if (!res.ok) {
     const text = await res.text()
     throw new Error(text || `HTTP ${res.status}`)
@@ -898,6 +1204,7 @@ export type AuditEventDto = {
   durationMs: number | null
   resourceType: string | null
   resourceId: string | null
+  metaJson?: string | null
 }
 
 export async function getAuditEvents(companyId: number, limit = 50) {

@@ -1,6 +1,6 @@
 spring:
   datasource:
-    url: jdbc:h2:mem:enterpriseiq_test;MODE=PostgreSQL;NON_KEYWORDS=YEAR;DB_CLOSE_DELAY=-1
+    url: jdbc:h2:mem:enterpriseiq_test;MODE=PostgreSQL;NON_KEYWORDS=YEAR,VALUE;DB_CLOSE_DELAY=-1
     username: sa
     password:
   jpa:
@@ -15,11 +15,18 @@ spring:
       enabled: false
 
 app:
+  upload:
+    xlsx:
+      max-rows: 120000
+      max-seconds: 25
   jwt:
     secret: "test-secret-test-secret-test-secret-1234"
     access-expiration-minutes: 60
     refresh-expiration-days: 30
     issuer: "enterpriseiq"
+  universal:
+    max-analyze-rows: 50000
+    max-seconds: 25
   storage:
     imports: ./target/test-storage/imports
     reports: ./target/test-storage/reports
@@ -32,3 +39,7 @@ app:
 
 cors:
   allowed-origins: "http://localhost:5173"
+
+management:
+  server:
+    port: 0

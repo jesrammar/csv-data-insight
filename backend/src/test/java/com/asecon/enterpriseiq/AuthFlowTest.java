@@ -11,6 +11,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import jakarta.servlet.http.Cookie;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -42,7 +43,7 @@ class AuthFlowTest {
         assertThat(refreshed.body.get("refreshToken")).isNull();
 
         mockMvc.perform(post("/api/auth/refresh")
-                .header(HttpHeaders.COOKIE, login.refreshCookiePair)
+                .cookie(cookieFromPair(login.refreshCookiePair, "enterpriseiq_refresh"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{}"))
             .andExpect(status().isUnauthorized());
@@ -55,7 +56,7 @@ class AuthFlowTest {
 
         mockMvc.perform(post("/api/auth/logout")
                 .header("Authorization", "Bearer " + accessToken)
-                .header(HttpHeaders.COOKIE, login.refreshCookiePair))
+                .cookie(cookieFromPair(login.refreshCookiePair, "enterpriseiq_refresh")))
             .andExpect(status().isNoContent());
 
         mockMvc.perform(get("/api/companies/mine")
@@ -82,7 +83,7 @@ class AuthFlowTest {
 
     private RefreshResult refreshWithCookie(String refreshCookiePair) throws Exception {
         MvcResult result = mockMvc.perform(post("/api/auth/refresh")
-                .header(HttpHeaders.COOKIE, refreshCookiePair)
+                .cookie(cookieFromPair(refreshCookiePair, "enterpriseiq_refresh"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{}"))
             .andExpect(status().isOk())
@@ -106,5 +107,14 @@ class AuthFlowTest {
         String value = setCookie.substring(valueStart, end);
         assertThat(value).isNotBlank();
         return cookieName + "=" + value;
+    }
+
+    private static Cookie cookieFromPair(String cookiePair, String cookieName) {
+        String prefix = cookieName + "=";
+        int start = cookiePair.indexOf(prefix);
+        assertThat(start).isGreaterThanOrEqualTo(0);
+        String value = cookiePair.substring(start + prefix.length());
+        assertThat(value).isNotBlank();
+        return new Cookie(cookieName, value);
     }
 }

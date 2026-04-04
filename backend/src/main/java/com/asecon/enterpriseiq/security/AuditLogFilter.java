@@ -17,6 +17,8 @@ import org.springframework.web.filter.OncePerRequestFilter;
 public class AuditLogFilter extends OncePerRequestFilter {
     private static final Pattern COMPANY = Pattern.compile("^/api/companies/(\\d+)(/.*)?$");
     private static final Pattern REPORT = Pattern.compile("^/api/companies/(\\d+)/reports/(\\d+)/");
+    private static final Pattern UNIVERSAL_VIEW = Pattern.compile("^/api/companies/(\\d+)/universal/views/(\\d+)(/.*)?$");
+    private static final Pattern UNIVERSAL_IMPORT = Pattern.compile("^/api/companies/(\\d+)/universal/imports/(\\d+)(/.*)?$");
 
     private final AuditEventRepository auditEventRepository;
     private final AccessService accessService;
@@ -86,15 +88,16 @@ public class AuditLogFilter extends OncePerRequestFilter {
         }
     }
 
-    private record ResolvedAction(String action, Long companyId, String resourceType, String resourceId) {}
+    record ResolvedAction(String action, Long companyId, String resourceType, String resourceId) {}
 
-    private static ResolvedAction resolveAction(String method, String path) {
+    static ResolvedAction resolveAction(String method, String path) {
         if (path == null) return null;
 
         // Auth
         if ("POST".equals(method) && "/api/auth/login".equals(path)) return new ResolvedAction("AUTH_LOGIN", null, "AUTH", null);
         if ("POST".equals(method) && "/api/auth/refresh".equals(path)) return new ResolvedAction("AUTH_REFRESH", null, "AUTH", null);
         if ("POST".equals(method) && "/api/auth/logout".equals(path)) return new ResolvedAction("AUTH_LOGOUT", null, "AUTH", null);
+        if ("POST".equals(method) && "/api/auth/password/change".equals(path)) return new ResolvedAction("AUTH_PASSWORD_CHANGE", null, "AUTH", null);
 
         // Admin storage cleanup
         if ("POST".equals(method) && "/api/admin/storage/cleanup/run".equals(path)) {
@@ -111,6 +114,34 @@ public class AuditLogFilter extends OncePerRequestFilter {
         if ("GET".equals(method) && path.endsWith("/transactions/export.csv")) return new ResolvedAction("TRANSACTIONS_EXPORT_CSV", companyId, "TRANSACTIONS", null);
         if ("GET".equals(method) && path.endsWith("/powerbi/export.zip")) return new ResolvedAction("POWERBI_EXPORT_ZIP", companyId, "POWERBI", null);
         if ("POST".equals(method) && path.endsWith("/reports")) return new ResolvedAction("REPORT_GENERATE", companyId, "REPORT", null);
+
+        // Tribunal
+        if ("POST".equals(method) && path.endsWith("/tribunal/imports")) return new ResolvedAction("TRIBUNAL_UPLOAD", companyId, "TRIBUNAL", null);
+        if ("GET".equals(method) && path.endsWith("/tribunal/exports.csv")) return new ResolvedAction("TRIBUNAL_EXPORT_CSV", companyId, "TRIBUNAL", null);
+
+        // Universal imports
+        if ("POST".equals(method) && path.endsWith("/universal/imports")) return new ResolvedAction("UNIVERSAL_UPLOAD", companyId, "UNIVERSAL_IMPORT", null);
+        if ("POST".equals(method) && path.endsWith("/universal/xlsx/preview")) return new ResolvedAction("UNIVERSAL_XLSX_PREVIEW", companyId, "UNIVERSAL", null);
+        if ("GET".equals(method) && path.endsWith("/universal/imports/latest/normalized.csv")) return new ResolvedAction("UNIVERSAL_DOWNLOAD_NORMALIZED_CSV", companyId, "UNIVERSAL_IMPORT", "latest");
+        if ("GET".equals(method) && path.endsWith("/universal/imports/latest/rows")) return new ResolvedAction("UNIVERSAL_ROWS_PREVIEW", companyId, "UNIVERSAL_IMPORT", "latest");
+
+        Matcher ui = UNIVERSAL_IMPORT.matcher(path);
+        if (ui.matches()) {
+            String importId = ui.group(2);
+            if ("GET".equals(method) && path.endsWith("/normalized.csv")) return new ResolvedAction("UNIVERSAL_DOWNLOAD_NORMALIZED_CSV", companyId, "UNIVERSAL_IMPORT", importId);
+            if ("GET".equals(method) && path.endsWith("/rows")) return new ResolvedAction("UNIVERSAL_ROWS_PREVIEW", companyId, "UNIVERSAL_IMPORT", importId);
+        }
+
+        // Universal dashboards
+        if ("POST".equals(method) && path.endsWith("/universal/builder/preview")) return new ResolvedAction("UNIVERSAL_BUILDER_PREVIEW", companyId, "UNIVERSAL", null);
+        if ("POST".equals(method) && path.endsWith("/universal/builder/problems.csv")) return new ResolvedAction("UNIVERSAL_BUILDER_PROBLEMS_CSV", companyId, "UNIVERSAL", null);
+        if ("POST".equals(method) && path.endsWith("/universal/views")) return new ResolvedAction("UNIVERSAL_VIEW_CREATE", companyId, "UNIVERSAL_VIEW", null);
+
+        Matcher uv = UNIVERSAL_VIEW.matcher(path);
+        if (uv.matches()) {
+            String viewId = uv.group(2);
+            if ("POST".equals(method) && path.endsWith("/data")) return new ResolvedAction("UNIVERSAL_VIEW_QUERY", companyId, "UNIVERSAL_VIEW", viewId);
+        }
 
         Matcher r = REPORT.matcher(path);
         if (r.find()) {
