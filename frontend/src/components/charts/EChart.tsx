@@ -6,10 +6,25 @@ type Props = {
   option: EChartsCoreOption
   className?: string
   style?: CSSProperties
+  onClick?: (params: any) => void
 }
 
 function mergeOptions(base: EChartsCoreOption, extra: EChartsCoreOption): EChartsCoreOption {
-  return { ...base, ...extra }
+  const merged: any = { ...base, ...extra }
+
+  const isPlainObject = (value: unknown): value is Record<string, any> => {
+    return !!value && typeof value === 'object' && !Array.isArray(value)
+  }
+
+  for (const key of ['grid', 'tooltip', 'textStyle', 'legend', 'xAxis', 'yAxis'] as const) {
+    const b = (base as any)[key]
+    const e = (extra as any)[key]
+    if (isPlainObject(b) && isPlainObject(e)) {
+      merged[key] = { ...b, ...e }
+    }
+  }
+
+  return merged as EChartsCoreOption
 }
 
 const BASE_OPTION: EChartsCoreOption = {
@@ -26,7 +41,7 @@ const BASE_OPTION: EChartsCoreOption = {
   }
 }
 
-export default function EChart({ option, className, style }: Props) {
+export default function EChart({ option, className, style, onClick }: Props) {
   const elRef = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<EChartsType | null>(null)
   const [ready, setReady] = useState(false)
@@ -67,6 +82,23 @@ export default function EChart({ option, className, style }: Props) {
       }
     }
   }, [])
+
+  useEffect(() => {
+    if (!ready) return
+    const chart = chartRef.current
+    if (!chart) return
+    if (!onClick) return
+
+    const handler = (params: any) => onClick(params)
+    chart.on('click', handler)
+    return () => {
+      try {
+        chart.off('click', handler)
+      } catch (e) {
+        // ignore
+      }
+    }
+  }, [ready, onClick])
 
   useEffect(() => {
     if (!ready) return

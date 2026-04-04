@@ -1,0 +1,131 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "id": 1,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(ingestion_import_process_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "import p95",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(ingestion_universal_analyze_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "universal p95",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(ingestion_xlsx_convert_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "xlsx convert p95",
+          "refId": "C"
+        }
+      ],
+      "title": "p95 Duración (s)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "id": 2,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } },
+      "targets": [
+        {
+          "expr": "sum(rate(ingestion_import_process_count_total[5m]))",
+          "legendFormat": "import jobs/s",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(ingestion_universal_analyze_count_total[5m]))",
+          "legendFormat": "universal jobs/s",
+          "refId": "B"
+        }
+      ],
+      "title": "Throughput (jobs/s)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "id": 3,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } },
+      "targets": [
+        {
+          "expr": "sum(rate(ingestion_import_process_count_total{result=\"failed\"}[5m]))",
+          "legendFormat": "import failed/s",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(ingestion_universal_analyze_count_total{result=\"failed\"}[5m]))",
+          "legendFormat": "universal failed/s",
+          "refId": "B"
+        },
+        {
+          "expr": "sum(rate(ingestion_xlsx_timeout_count_total[5m]))",
+          "legendFormat": "xlsx timeouts/s",
+          "refId": "C"
+        }
+      ],
+      "title": "Errores / Timeouts",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "id": 4,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } },
+      "targets": [
+        {
+          "expr": "sum(rate(ingestion_import_process_bytes_sum[5m]))",
+          "legendFormat": "import bytes/s (sum)",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(ingestion_universal_analyze_bytes_sum[5m]))",
+          "legendFormat": "universal bytes/s (sum)",
+          "refId": "B"
+        }
+      ],
+      "title": "Volumen (bytes/s)",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["enterpriseiq", "ingestion"],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "EnterpriseIQ · Ingestion Overview",
+  "uid": "enterpriseiq-ingestion-overview",
+  "version": 1
+}
+

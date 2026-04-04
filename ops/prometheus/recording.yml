@@ -1,0 +1,28 @@
+groups:
+  - name: enterpriseiq.recording
+    rules:
+      - record: enterpriseiq:import_process_p95_seconds
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(rate(ingestion_import_process_duration_seconds_bucket[10m])) by (le)
+          )
+      - record: enterpriseiq:universal_analyze_p95_seconds
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(rate(ingestion_universal_analyze_duration_seconds_bucket[10m])) by (le)
+          )
+      - record: enterpriseiq:api_latency_p95_seconds
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(rate(http_server_requests_seconds_bucket{uri!~"/actuator.*"}[10m])) by (le)
+          )
+      - record: enterpriseiq:universal_error_series
+        expr: |
+          count(count by (error) (ingestion_universal_analyze_count_total{result="failed"}))
+      - record: enterpriseiq:import_error_series
+        expr: |
+          count(count by (error) (ingestion_import_process_count_total{result="failed"}))
+

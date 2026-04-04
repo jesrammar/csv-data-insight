@@ -1,5 +1,9 @@
 server:
   port: 8080
+  servlet:
+    encoding:
+      charset: UTF-8
+      force: true
 
 spring:
   datasource:
@@ -21,11 +25,29 @@ spring:
 app:
   upload:
     max-bytes: 20971520
+    max-bytes-by-plan:
+      bronze: 10485760
+      gold: 31457280
+      platinum: 62914560
+    xlsx:
+      max-rows: 120000
+      max-seconds: 25
   jwt:
     secret: "change-this-in-prod-please-change-this-in-prod"
     access-expiration-minutes: 60
     refresh-expiration-days: 30
     issuer: "enterpriseiq"
+  universal:
+    max-analyze-rows: 50000
+    max-analyze-rows-by-plan:
+      bronze: 15000
+      gold: 50000
+      platinum: 100000
+    max-seconds: 25
+    max-seconds-by-plan:
+      bronze: 15
+      gold: 25
+      platinum: 45
   storage:
     imports: ./storage/imports
     reports: ./storage/reports
@@ -50,6 +72,15 @@ app:
     macro-daily-cron: "0 5 2 * * *"
     kpi-weekly-cron: "0 30 3 * * 0"
     report-monthly-cron: "0 0 6 1 * *"
+  password:
+    min-length: 10
+    require-upper: true
+    require-lower: true
+    require-digit: true
+  metrics:
+    error-tag:
+      max-unique: 40
+      other-label: "other"
   macro:
     ine:
       ipc-table-id: 24077
@@ -62,5 +93,28 @@ logging:
   level:
     com.asecon.enterpriseiq: INFO
 
+management:
+  server:
+    port: 8082
+    address: ${MANAGEMENT_SERVER_ADDRESS:127.0.0.1}
+  endpoints:
+    web:
+      exposure:
+        include: "health,info,prometheus"
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: "never"
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+        ingestion.import.process.duration: true
+        ingestion.universal.analyze.duration: true
+        ingestion.xlsx.convert.duration: true
+    tags:
+      application: "enterpriseiq"
+
 cors:
-  allowed-origins: "http://localhost:5173"
+  allowed-origins: "http://localhost:5173,http://localhost:5174,http://127.0.0.1:5173,http://127.0.0.1:5174"

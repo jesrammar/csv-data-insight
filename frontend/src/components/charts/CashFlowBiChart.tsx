@@ -1,4 +1,5 @@
 import EChart from './EChart'
+import { formatChartValue, formatCompactNumber } from '../../utils/chartFormat'
 
 type Kpi = {
   period: string
@@ -9,13 +10,10 @@ type Kpi = {
 }
 
 function fmt(n: number) {
-  const abs = Math.abs(n)
-  if (abs >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
-  if (abs >= 1_000) return `${(n / 1_000).toFixed(1)}k`
-  return Number.isInteger(n) ? String(n) : n.toFixed(2)
+  return formatCompactNumber(n)
 }
 
-export default function CashFlowBiChart({ kpis }: { kpis: Kpi[] }) {
+export default function CashFlowBiChart({ kpis, onSelectPeriod }: { kpis: Kpi[]; onSelectPeriod?: (period: string) => void }) {
   const periods = kpis.map((k) => k.period)
   const inflows = kpis.map((k) => Number(k.inflows || 0))
   const outflows = kpis.map((k) => Number(k.outflows || 0))
@@ -25,6 +23,11 @@ export default function CashFlowBiChart({ kpis }: { kpis: Kpi[] }) {
   return (
     <EChart
       style={{ height: 320 }}
+      onClick={(params) => {
+        if (!onSelectPeriod) return
+        const p = String(params?.name || '')
+        if (p && p.length >= 7) onSelectPeriod(p.slice(0, 7))
+      }}
       option={{
         legend: {
           top: 0,
@@ -42,6 +45,21 @@ export default function CashFlowBiChart({ kpis }: { kpis: Kpi[] }) {
           axisLine: { show: false },
           splitLine: { lineStyle: { color: 'rgba(148, 163, 184, 0.12)' } },
           axisLabel: { color: 'rgba(226, 232, 240, 0.65)', formatter: (v: any) => fmt(Number(v)) }
+        },
+        tooltip: {
+          trigger: 'axis',
+          formatter: (params: any) => {
+            const items = Array.isArray(params) ? params : [params]
+            const label = String(items[0]?.axisValue ?? '')
+            const lines = items
+              .map((it: any) => {
+                const name = String(it?.seriesName ?? '')
+                const val = Array.isArray(it?.data) ? Number(it.data[1]) : Number(it?.data)
+                return `<div>${name}: <strong>${formatChartValue(val, '€')}</strong></div>`
+              })
+              .join('')
+            return `<div style="font-weight:700;margin-bottom:4px">${label}</div>${lines}`
+          }
         },
         series: [
           {

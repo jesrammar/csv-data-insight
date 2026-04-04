@@ -1,0 +1,147 @@
+groups:
+  - name: enterpriseiq.ingestion
+    rules:
+      - alert: ImportProcessingP95High
+        expr: |
+          enterpriseiq:import_process_p95_seconds > enterpriseiq:threshold_import_p95_warn_seconds
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Import p95 alto"
+          description: "El p95 del procesamiento de import supera 8s durante 10m."
+
+      - alert: ImportProcessingP95VeryHigh
+        expr: |
+          enterpriseiq:import_process_p95_seconds > enterpriseiq:threshold_import_p95_crit_seconds
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Import p95 muy alto"
+          description: "El p95 del procesamiento de import supera 15s durante 10m."
+
+      - alert: UniversalAnalyzeP95High
+        expr: |
+          enterpriseiq:universal_analyze_p95_seconds > enterpriseiq:threshold_universal_p95_warn_seconds
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Universal p95 alto"
+          description: "El p95 del análisis universal supera 12s durante 10m."
+
+      - alert: UniversalAnalyzeP95VeryHigh
+        expr: |
+          enterpriseiq:universal_analyze_p95_seconds > enterpriseiq:threshold_universal_p95_crit_seconds
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Universal p95 muy alto"
+          description: "El p95 del análisis universal supera 20s durante 10m."
+
+      - alert: IngestionFailuresSpike
+        expr: |
+          (
+            sum(increase(ingestion_import_process_count_total{result="failed"}[10m])) +
+            sum(increase(ingestion_universal_analyze_count_total{result="failed"}[10m])) +
+            sum(increase(ingestion_xlsx_timeout_count_total[10m]))
+          ) >= 3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Spike de fallos/timeouts en ingestión"
+          description: ">=3 fallos/timeouts acumulados en los últimos 10m."
+
+      - alert: IngestionFailuresAny
+        expr: |
+          (
+            sum(increase(ingestion_import_process_count_total{result="failed"}[30m])) +
+            sum(increase(ingestion_universal_analyze_count_total{result="failed"}[30m])) +
+            sum(increase(ingestion_xlsx_timeout_count_total[30m]))
+          ) >= 1
+        labels:
+          severity: info
+        annotations:
+          summary: "Fallos/timeouts detectados"
+          description: "Se detecta al menos 1 fallo/timeout en los últimos 30m."
+
+      - alert: IngestionErrorTagCardinalityHigh
+        expr: |
+          (enterpriseiq:import_error_series > enterpriseiq:threshold_error_tag_cardinality)
+          OR
+          (enterpriseiq:universal_error_series > enterpriseiq:threshold_error_tag_cardinality)
+        for: 30m
+        labels:
+          severity: info
+        annotations:
+          summary: "Cardinalidad alta en tag error"
+          description: "Demasiadas etiquetas distintas en el tag error (posible explosión de cardinalidad)."
+
+  - name: enterpriseiq.api
+    rules:
+      - alert: Api5xxRateHigh
+        expr: |
+          (
+            sum(rate(http_server_requests_seconds_count{status=~"5..",uri!~"/actuator.*"}[10m]))
+            /
+            clamp_min(sum(rate(http_server_requests_seconds_count{uri!~"/actuator.*"}[10m])), 1)
+          ) > 0.02
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "API 5xx ratio alto"
+          description: "La API supera 2% de respuestas 5xx (10m)."
+
+      - alert: Api5xxRateVeryHigh
+        expr: |
+          (
+            sum(rate(http_server_requests_seconds_count{status=~"5..",uri!~"/actuator.*"}[10m]))
+            /
+            clamp_min(sum(rate(http_server_requests_seconds_count{uri!~"/actuator.*"}[10m])), 1)
+          ) > 0.05
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "API 5xx ratio muy alto"
+          description: "La API supera 5% de respuestas 5xx (10m)."
+
+      - alert: ApiLatencyP95High
+        expr: |
+          enterpriseiq:api_latency_p95_seconds > enterpriseiq:threshold_api_latency_p95_warn_seconds
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "API p95 alto"
+          description: "La latencia p95 global supera 1.5s (10m)."
+
+      - alert: TomcatThreadsSaturated
+        expr: |
+          (max(tomcat_threads_busy_threads) / clamp_min(max(tomcat_threads_current_threads), 1)) > 0.9
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Tomcat saturado"
+          description: "busy/current threads > 90% (10m)."
+
+      - alert: HikariPoolSaturated
+        expr: |
+          (
+            (max(hikaricp_connections_active) / clamp_min(max(hikaricp_connections_max), 1)) > 0.9
+          )
+          OR
+          (
+            max(hikaricp_connections_pending) > 0
+          )
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Pool DB saturado"
+          description: "Hikari cerca del máximo o con conexiones pendientes (10m)."

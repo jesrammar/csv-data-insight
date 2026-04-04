@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { downloadPowerBiExportZip, downloadTransactionsCsv, getDashboard, getTransactionAnalytics, getTransactions, getUserRole } from '../api'
 import KpiChart from '../components/KpiChart'
@@ -107,11 +107,25 @@ export default function DashboardPage() {
   const [txExportError, setTxExportError] = useState<string | null>(null)
   const [pbiExporting, setPbiExporting] = useState(false)
   const [pbiExportError, setPbiExportError] = useState<string | null>(null)
+  const txSectionRef = useRef<HTMLDivElement | null>(null)
 
   const dashboardPeriods = useMemo<string[]>(() => {
     const periods = (data?.kpis || []).map((k: any) => String(k.period)).filter(Boolean) as string[]
     return Array.from(new Set<string>(periods))
   }, [data?.kpis])
+
+  function drillToPeriod(period: string) {
+    if (!hasPlatinum || isClient) return
+    const p = String(period || '').trim()
+    if (p.length < 7) return
+    setTxMode('period')
+    setTxPeriod(p.slice(0, 7))
+    const r = monthRange(p.slice(0, 7))
+    setTxFromDate(r.fromDate)
+    setTxToDate(r.toDate)
+    setTxPage(0)
+    setTimeout(() => txSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0)
+  }
 
   useEffect(() => {
     setTxPeriod(to)
@@ -145,7 +159,7 @@ export default function DashboardPage() {
   const { data: txData, error: txError, isFetching: txLoading } = useQuery({
     queryKey: ['transactions', companyId, plan, txParams],
     queryFn: () => getTransactions(companyId as number, txParams),
-    enabled: !!companyId && hasGold && !isClient
+    enabled: !!companyId && hasPlatinum && !isClient
   })
 
   const analyticsParams = useMemo(() => {
@@ -156,7 +170,7 @@ export default function DashboardPage() {
   const { data: txAnalytics, error: txAnalyticsError, isFetching: txAnalyticsLoading } = useQuery({
     queryKey: ['transactions-analytics', companyId, plan, analyticsParams],
     queryFn: () => getTransactionAnalytics(companyId as number, analyticsParams),
-    enabled: !!companyId && hasGold && !isClient
+    enabled: !!companyId && hasPlatinum && !isClient
   })
 
   async function handleExportTransactions() {
@@ -227,6 +241,16 @@ export default function DashboardPage() {
                 {latest ? `Neto del mes: ${formatMoney(latest.netFlow)}` : 'Sin datos'}
               </div>
             </div>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              {!isClient ? (
+                <Link className="badge" to="/imports">
+                  Subir datos
+                </Link>
+              ) : null}
+              <Link className="badge" to="/reports">
+                Generar informe (PDF)
+              </Link>
+            </div>
             {!isClient && hasPlatinum ? (
               <div style={{ display: 'grid', gap: 6, width: '100%', maxWidth: 260 }}>
                 <Button onClick={handleExportPowerBi} disabled={pbiExporting || !companyId}>
@@ -236,90 +260,113 @@ export default function DashboardPage() {
               </div>
             ) : !isClient ? (
               <div className="upload-hint" style={{ maxWidth: 260, textAlign: 'right' }}>
-                Export Power BI disponible en <Link to="/pricing" className="badge">PLATINUM</Link>.
+                Exportación Power BI disponible en <Link to="/pricing" className="badge">PLATINUM</Link>.
               </div>
             ) : null}
           </div>
         }
       />
 
-      {isLoading && <div className="empty">Cargando dashboard…</div>}
-      {error && <p className="error">{String((error as any).message)}</p>}
+      {!companyId ? (
+        <div className="empty" style={{ marginBottom: 14 }}>
+          Selecciona una empresa arriba para ver caja y KPIs.
+        </div>
+      ) : (
+        <>
+          {isLoading && <div className="empty">Cargando dashboard…</div>}
+          {error && <p className="error">{String((error as any).message)}</p>}
 
-      <div className="grid section">
-        <div className="card">
-          <h3 style={{ marginTop: 0 }}>KPIs clave</h3>
-          <div className="grid">
-            <div className="kpi">
-              <h4>Entradas</h4>
-              <strong>{formatMoney(latest?.inflows)}</strong>
+          <div className="grid section">
+            <div className="card">
+              <h3 style={{ marginTop: 0 }}>KPIs clave</h3>
+              <div className="grid">
+                <div className="kpi">
+                  <h4>Entradas</h4>
+                  <strong>{formatMoney(latest?.inflows)}</strong>
+                </div>
+                <div className="kpi">
+                  <h4>Salidas</h4>
+                  <strong>{formatMoney(latest?.outflows)}</strong>
+                </div>
+                <div className="kpi">
+                  <h4>Neto</h4>
+                  <strong>{formatMoney(latest?.netFlow)}</strong>
+                </div>
+                <div className="kpi">
+                  <h4>Saldo fin</h4>
+                  <strong>{formatMoney(latest?.endingBalance)}</strong>
+                </div>
+              </div>
+              {cashCoach ? (
+                <div style={{ marginTop: 12 }}>
+                  <Alert tone={cashCoach.tone} title={cashCoach.title}>
+                    {cashCoach.message}
+                  </Alert>
+                </div>
+              ) : null}
             </div>
-            <div className="kpi">
-              <h4>Salidas</h4>
-              <strong>{formatMoney(latest?.outflows)}</strong>
-            </div>
-            <div className="kpi">
-              <h4>Neto</h4>
-              <strong>{formatMoney(latest?.netFlow)}</strong>
-            </div>
-            <div className="kpi">
-              <h4>Saldo fin</h4>
-              <strong>{formatMoney(latest?.endingBalance)}</strong>
+            <div className="card">
+              <h3 style={{ marginTop: 0 }}>Evolución mensual</h3>
+              {!data?.kpis?.length ? (
+                <div>
+                  <div className="empty">
+                    {isClient ? 'Sin datos todavía. Tu consultora debe importar el CSV/XLSX.' : 'Sin datos todavía. Importa un CSV/XLSX para calcular caja.'}
+                  </div>
+                  {isClient ? null : (
+                    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 12 }}>
+                      <Link className="badge" to="/imports">
+                        Cargar datos
+                      </Link>
+                      <Link className="badge" to="/overview">
+                        Ver guía
+                      </Link>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div style={{ marginBottom: 16 }}>
+                  <CashFlowBiChart
+                    kpis={(data?.kpis || []).map((k: any) => ({
+                      period: String(k.period),
+                      inflows: Number(k.inflows || 0),
+                      outflows: Number(k.outflows || 0),
+                      netFlow: Number(k.netFlow || 0),
+                      endingBalance: Number(k.endingBalance || 0)
+                    }))}
+                    onSelectPeriod={hasPlatinum && !isClient ? drillToPeriod : undefined}
+                  />
+                </div>
+              )}
+              {!data?.kpis?.length || isClient ? null : (
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Periodo</th>
+                      <th>Entradas</th>
+                      <th>Salidas</th>
+                      <th>Neto</th>
+                      <th>Saldo fin</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(data?.kpis || []).map((k: any) => (
+                      <tr key={k.period}>
+                        <td>{k.period}</td>
+                        <td>{formatMoney(k.inflows)}</td>
+                        <td>{formatMoney(k.outflows)}</td>
+                        <td>{formatMoney(k.netFlow)}</td>
+                        <td>{formatMoney(k.endingBalance)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
             </div>
           </div>
-          {cashCoach ? (
-            <div style={{ marginTop: 12 }}>
-              <Alert tone={cashCoach.tone} title={cashCoach.title}>
-                {cashCoach.message}
-              </Alert>
-            </div>
-          ) : null}
-        </div>
-        <div className="card">
-          <h3 style={{ marginTop: 0 }}>Evolución mensual</h3>
-          {!data?.kpis?.length ? (
-            <div className="empty">{isClient ? 'Sin datos todavía. Tu consultora debe importar el CSV/XLSX.' : 'Sin datos todavía. Importa un CSV.'}</div>
-          ) : (
-            <div style={{ marginBottom: 16 }}>
-              <CashFlowBiChart
-                kpis={(data?.kpis || []).map((k: any) => ({
-                  period: String(k.period),
-                  inflows: Number(k.inflows || 0),
-                  outflows: Number(k.outflows || 0),
-                  netFlow: Number(k.netFlow || 0),
-                  endingBalance: Number(k.endingBalance || 0)
-                }))}
-              />
-            </div>
-          )}
-          {!data?.kpis?.length || isClient ? null : (
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Periodo</th>
-                  <th>Inflows</th>
-                  <th>Outflows</th>
-                  <th>Net Flow</th>
-                  <th>Ending Balance</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(data?.kpis || []).map((k: any) => (
-                  <tr key={k.period}>
-                    <td>{k.period}</td>
-                    <td>{formatMoney(k.inflows)}</td>
-                    <td>{formatMoney(k.outflows)}</td>
-                    <td>{formatMoney(k.netFlow)}</td>
-                    <td>{formatMoney(k.endingBalance)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      </div>
+        </>
+      )}
 
-      {isClient ? (
+      {!companyId ? null : isClient ? (
         <div className="card section">
           <h3 style={{ marginTop: 0 }}>Qué significa esto</h3>
           <div className="hero-sub">
@@ -375,14 +422,14 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {isClient ? null : (
+      {!companyId || isClient ? null : (
         <div className="grid section">
           <div className="card">
             <h3 style={{ marginTop: 0 }}>Detalle de transacciones</h3>
-            {!hasGold ? (
-              <div className="empty">Disponible en GOLD/PLATINUM (drill-down y export).</div>
+            {!hasPlatinum ? (
+              <div className="empty">Disponible en PLATINUM (drill-down, analítica y export).</div>
             ) : (
-              <div>
+              <div ref={txSectionRef}>
               <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
                 <label style={{ display: 'grid', gap: 6 }}>
                   <span className="upload-hint">Modo</span>
@@ -490,8 +537,17 @@ export default function DashboardPage() {
                   <div style={{ marginTop: 14 }}>
                     <KpiChart
                       title="Serie diaria (neto)"
-                      points={(txAnalytics.daily || []).map((d) => ({ label: d.date.slice(5), value: Number(d.net) }))}
+                      points={(txAnalytics.daily || []).map((d) => ({ label: d.date, value: Number(d.net) }))}
                       variant="area"
+                      valueSuffix="€"
+                      onPointClick={(label) => {
+                        if (!hasPlatinum || isClient) return
+                        if (!label || label.length < 10) return
+                        setTxMode('dates')
+                        setTxFromDate(label)
+                        setTxToDate(label)
+                        setTxPage(0)
+                      }}
                     />
                     <div className="upload-hint" style={{ marginTop: 6 }}>
                       Nota: salidas se almacenan como importes negativos.

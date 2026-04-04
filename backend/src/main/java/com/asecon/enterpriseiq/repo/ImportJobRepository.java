@@ -4,6 +4,7 @@ import com.asecon.enterpriseiq.model.ImportJob;
 import com.asecon.enterpriseiq.model.ImportStatus;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -11,6 +12,12 @@ import org.springframework.data.repository.query.Param;
 
 public interface ImportJobRepository extends JpaRepository<ImportJob, Long> {
     List<ImportJob> findByCompanyIdOrderByCreatedAtDesc(Long companyId);
+
+    Optional<ImportJob> findFirstByCompanyIdOrderByCreatedAtDesc(Long companyId);
+
+    Optional<ImportJob> findFirstByCompanyIdAndProcessedAtNotNullOrderByProcessedAtDesc(Long companyId);
+
+    Optional<ImportJob> findFirstByCompanyIdAndStatusInOrderByRunAfterAscIdAsc(Long companyId, List<ImportStatus> status);
 
     List<ImportJob> findTop25ByStatusInAndRunAfterBeforeOrderByRunAfterAscIdAsc(List<ImportStatus> status, Instant now);
 

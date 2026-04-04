@@ -1,20 +1,26 @@
 import { useQuery } from '@tanstack/react-query'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
+import { useEffect, useMemo, useState } from 'react'
 import {
   getDashboard,
   getLatestRecommendations,
+  getIngestionStatus,
   getMacroContext,
   getReports,
+  retryImport,
   getTribunalSummary,
   getUniversalSummary,
+  getUserId,
   getUserRole
 } from '../api'
 import KpiChart from '../components/KpiChart'
 import PageHeader from '../components/ui/PageHeader'
 import Alert from '../components/ui/Alert'
+import Button from '../components/ui/Button'
 import Skeleton from '../components/ui/Skeleton'
 import { useCompanySelection } from '../hooks/useCompany'
 import { formatMoney } from '../utils/format'
+import { useToast } from '../components/ui/ToastProvider'
 
 function formatPeriod(date: Date) {
   const y = date.getFullYear()
@@ -34,8 +40,12 @@ function lastMonths(count: number) {
 
 export default function OverviewPage() {
   const { id: companyId, plan } = useCompanySelection()
+  const toast = useToast()
+  const navigate = useNavigate()
   const hasGold = plan === 'GOLD' || plan === 'PLATINUM'
-  const isClient = getUserRole() === 'CLIENTE'
+  const role = getUserRole()
+  const isClient = role === 'CLIENTE'
+  const isConsultor = role === 'CONSULTOR'
   const monthsCount = plan === 'PLATINUM' ? 12 : plan === 'GOLD' ? 9 : 6
   const months = lastMonths(monthsCount)
   const from = months[0]
@@ -77,6 +87,113 @@ export default function OverviewPage() {
     enabled: !!companyId
   })
 
+  const { data: ingestion, isLoading: ingestionLoading } = useQuery({
+    queryKey: ['overview-ingestion', companyId],
+    queryFn: () => getIngestionStatus(companyId as number),
+    enabled: !!companyId
+  })
+
+  const wizardKey = useMemo(() => {
+    if (!companyId) return ''
+    const userId = getUserId() ?? 'anon'
+    return `onboarding_wizard_dismissed:${userId}:${companyId}`
+  }, [companyId])
+
+  const wizardProgressKey = useMemo(() => {
+    if (!companyId) return ''
+    const userId = getUserId() ?? 'anon'
+    return `onboarding_wizard_progress:${userId}:${companyId}`
+  }, [companyId])
+
+  const [wizardDismissed, setWizardDismissed] = useState(false)
+  const [wizardModule, setWizardModule] = useState<'caja' | 'universal' | 'tribunal' | 'presupuesto'>('caja')
+  const [wizardProgress, setWizardProgress] = useState<{ step1: boolean; step2: boolean; step3: boolean }>({
+    step1: false,
+    step2: false,
+    step3: false
+  })
+
+  useEffect(() => {
+    if (!wizardKey) return
+    try {
+      setWizardDismissed(localStorage.getItem(wizardKey) === '1')
+    } catch {
+      setWizardDismissed(false)
+    }
+  }, [wizardKey])
+
+  useEffect(() => {
+    if (!wizardProgressKey) return
+    try {
+      const raw = localStorage.getItem(wizardProgressKey)
+      if (!raw) return
+      const parsed = JSON.parse(raw || '{}')
+      setWizardProgress({
+        step1: !!parsed.step1,
+        step2: !!parsed.step2,
+        step3: !!parsed.step3
+      })
+    } catch {
+      // ignore
+    }
+  }, [wizardProgressKey])
+
+  const markWizardStep = (step: 1 | 2 | 3) => {
+    setWizardProgress((prev) => {
+      const next = { ...prev, [`step${step}`]: true } as { step1: boolean; step2: boolean; step3: boolean }
+      if (wizardProgressKey) {
+        try {
+          localStorage.setItem(wizardProgressKey, JSON.stringify(next))
+        } catch {
+          // ignore
+        }
+      }
+      return next
+    })
+  }
+
+  const showWizard = isConsultor && !!companyId && !wizardDismissed && !ingestionLoading && !ingestion?.lastImport
+
+  const wizardMeta = useMemo(() => {
+    return {
+      caja: {
+        label: 'Caja',
+        desc: 'Movimientos de banco/caja por periodo (fecha + importe).',
+        sampleHref: '/samples/plantilla-caja-transacciones.csv',
+        guideModule: 'caja',
+        importsHref: '/imports?mode=transactions',
+        dashboardHref: '/dashboard'
+      },
+      universal: {
+        label: 'Universal',
+        desc: 'Cualquier CSV/XLSX: presupuesto, ventas, inventario, nóminas…',
+        sampleHref: '/samples/plantilla-universal.csv',
+        guideModule: 'universal',
+        importsHref: '/imports?mode=universal',
+        dashboardHref: '/universal'
+      },
+      tribunal: {
+        label: 'Tribunal',
+        desc: 'Cartera/cumplimiento (CSV de clientes + flags).',
+        sampleHref: '/samples/plantilla-tribunal.csv',
+        guideModule: 'tribunal',
+        importsHref: '/imports?mode=auto',
+        dashboardHref: '/tribunal'
+      },
+      presupuesto: {
+        label: 'Presupuesto',
+        desc: 'XLSX anual con meses (ENERO…DICIEMBRE) → insights + PDF.',
+        sampleHref: '/samples/presupuesto-ejemplo.xlsx',
+        guideModule: 'presupuesto',
+        importsHref: '/imports?mode=universal',
+        dashboardHref: '/budget'
+      }
+    } as const
+  }, [])
+
+  const selectedMeta = wizardMeta[wizardModule]
+  const wizardDoneCount = Number(wizardProgress.step1) + Number(wizardProgress.step2) + Number(wizardProgress.step3)
+
   const latest = dashboard?.kpis?.[dashboard?.kpis.length - 1]
   const chartPoints = (dashboard?.kpis || []).map((k: any) => ({ label: k.period, value: Number(k.netFlow) }))
   const hasCashData = (dashboard?.kpis || []).length > 0
@@ -100,6 +217,18 @@ export default function OverviewPage() {
     return text
   }
 
+  function fmtTime(iso?: string | null) {
+    if (!iso) return '—'
+    try {
+      return new Date(iso).toLocaleString()
+    } catch {
+      return iso
+    }
+  }
+
+  const lastImport = ingestion?.lastImport || null
+  const canRetry = !isClient && !!companyId && !!lastImport?.id && (lastImport.status === 'DEAD' || lastImport.status === 'ERROR')
+
   return (
     <div>
       <PageHeader
@@ -113,7 +242,30 @@ export default function OverviewPage() {
               {latest ? `Neto del mes: ${formatMoney(latest.netFlow)}` : 'Sin datos'}
             </div>
             <div className="upload-hint" style={{ marginTop: 10 }}>
-              IPC (YoY): {fmt(macro?.inflationYoyPct?.value, '%')}
+              Última ingesta: {fmtTime(ingestion?.lastProcessedImport?.processedAt || ingestion?.lastImport?.createdAt)}
+            </div>
+            <div className="upload-hint" style={{ marginTop: 4 }}>
+              Estado: {String(ingestion?.lastImport?.status || '—')}
+            </div>
+            {canRetry ? (
+              <div style={{ marginTop: 10 }}>
+                <Button
+                  size="sm"
+                  onClick={async () => {
+                    try {
+                      await retryImport(companyId as number, lastImport!.id)
+                      toast.push({ tone: 'success', title: 'Import', message: 'Reintento encolado. Revisa Caja en 1–2 minutos.' })
+                    } catch (e: any) {
+                      toast.push({ tone: 'danger', title: 'Error', message: e?.message || 'No se pudo reintentar.' })
+                    }
+                  }}
+                >
+                  Reintentar último import
+                </Button>
+              </div>
+            ) : null}
+            <div className="upload-hint" style={{ marginTop: 10 }}>
+              IPC (interanual): {fmt(macro?.inflationYoyPct?.value, '%')}
             </div>
             <div className="upload-hint" style={{ marginTop: 4 }}>
               Euribor 1a: {fmt(macro?.euribor1yPct?.value, '%')}
@@ -131,13 +283,192 @@ export default function OverviewPage() {
         </div>
       ) : null}
 
-      {companyId && !dashboardError && !overviewLoading && !hasCashData ? (
+      {showWizard ? (
         <div className="section">
-          <Alert tone="warning" title="Siguiente paso: cargar datos">
-            No hay datos del periodo. Carga el CSV/XLSX y vuelve a esta vista.
-            <div style={{ marginTop: 10 }}>
+          <div className="card wizard">
+            <div className="wizard-head">
+              <div>
+                <div className="wizard-title">Arranque rápido</div>
+                <div className="wizard-sub">
+                  Esta empresa aún no tiene datos. Elige un módulo y sigue estos 3 pasos (2–5 min).
+                </div>
+                <div className="wizard-progress">{wizardDoneCount}/3 completado</div>
+              </div>
+              <div className="wizard-actions">
+                <Button size="sm" variant="ghost" onClick={() => setWizardDismissed(true)}>
+                  Ocultar
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    if (!wizardKey) return
+                    try {
+                      localStorage.setItem(wizardKey, '1')
+                    } catch {
+                      // ignore
+                    }
+                    setWizardDismissed(true)
+                  }}
+                >
+                  No volver a mostrar
+                </Button>
+              </div>
+            </div>
+
+            <div className="segmented wizard-tabs" role="tablist" aria-label="Módulo (wizard)">
+              <Button type="button" size="sm" variant={wizardModule === 'caja' ? 'secondary' : 'ghost'} onClick={() => setWizardModule('caja')}>
+                Caja
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={wizardModule === 'universal' ? 'secondary' : 'ghost'}
+                onClick={() => setWizardModule('universal')}
+              >
+                Universal
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={wizardModule === 'tribunal' ? 'secondary' : 'ghost'}
+                onClick={() => setWizardModule('tribunal')}
+                disabled={!hasGold}
+                title={!hasGold ? 'Disponible en GOLD/PLATINUM' : undefined}
+              >
+                Tribunal {!hasGold ? '(GOLD)' : ''}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={wizardModule === 'presupuesto' ? 'secondary' : 'ghost'}
+                onClick={() => setWizardModule('presupuesto')}
+              >
+                Presupuesto
+              </Button>
+            </div>
+
+            <div className="wizard-module-desc">{selectedMeta.desc}</div>
+
+            <div className="wizard-steps">
+              <div className="wizard-step">
+                <div className="wizard-step-head">
+                  <span className={`wizard-step-num ${wizardProgress.step1 ? 'done' : ''}`}>{wizardProgress.step1 ? '✓' : '1'}</span>
+                  <div>
+                    <div className="wizard-step-title">Descarga un ejemplo</div>
+                    <div className="wizard-step-sub">Te sirve como plantilla y para validar el formato.</div>
+                  </div>
+                </div>
+                <div className="wizard-step-actions">
+                  <a
+                    className="btn btn-secondary btn-sm"
+                    href={selectedMeta.sampleHref}
+                    download
+                    onClick={() => markWizardStep(1)}
+                  >
+                    Descargar {selectedMeta.label}
+                  </a>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      markWizardStep(1)
+                      navigate(`/guides?module=${selectedMeta.guideModule}`)
+                    }}
+                  >
+                    Ver guía
+                  </Button>
+                </div>
+                <div className="wizard-note">Si es XLSX “raro”: usa modo guiado (hoja + fila de cabecera).</div>
+              </div>
+
+              <div className="wizard-step">
+                <div className="wizard-step-head">
+                  <span className={`wizard-step-num ${wizardProgress.step2 ? 'done' : ''}`}>{wizardProgress.step2 ? '✓' : '2'}</span>
+                  <div>
+                    <div className="wizard-step-title">Sube el fichero</div>
+                    <div className="wizard-step-sub">Siempre desde “Cargar datos”.</div>
+                  </div>
+                </div>
+                <div className="wizard-step-actions">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => {
+                      markWizardStep(2)
+                      navigate(selectedMeta.importsHref)
+                    }}
+                  >
+                    Ir a Cargar datos
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      markWizardStep(2)
+                      navigate('/imports')
+                    }}
+                  >
+                    Abrir AUTO
+                  </Button>
+                </div>
+              </div>
+
+              <div className="wizard-step">
+                <div className="wizard-step-head">
+                  <span className={`wizard-step-num ${wizardProgress.step3 ? 'done' : ''}`}>{wizardProgress.step3 ? '✓' : '3'}</span>
+                  <div>
+                    <div className="wizard-step-title">Revisa el dashboard</div>
+                    <div className="wizard-step-sub">Confirma KPIs/insights antes de enseñarlo al cliente.</div>
+                  </div>
+                </div>
+                <div className="wizard-step-actions">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      markWizardStep(3)
+                      navigate(selectedMeta.dashboardHref)
+                    }}
+                    disabled={wizardModule === 'tribunal' && !hasGold}
+                  >
+                    Abrir {selectedMeta.label}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {companyId && !dashboardError && !overviewLoading && !hasCashData && !showWizard ? (
+        <div className="section">
+          <Alert tone="warning" title="Empezar aquí (2 minutos)">
+            <div className="hero-sub">
+              <ol style={{ margin: 0, paddingLeft: 18, display: 'grid', gap: 8 }}>
+                <li>
+                  Ve a <strong>Cargar datos</strong> y sube un CSV/XLSX de transacciones (fecha + importe).
+                </li>
+                <li>
+                  Entra en <strong>Caja</strong> para ver KPIs y gráficos.
+                </li>
+                <li>
+                  Genera un <strong>Informe</strong> en Entregables (PDF).
+                </li>
+              </ol>
+            </div>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 12 }}>
+              <Link className="badge" to="/guides">
+                Guías de carga
+              </Link>
               <Link className="badge" to="/imports">
-                Cargar datos
+                1) Cargar datos
+              </Link>
+              <Link className="badge" to="/dashboard">
+                2) Ir a Caja
+              </Link>
+              <Link className="badge" to="/reports">
+                3) Entregables
               </Link>
             </div>
           </Alert>
