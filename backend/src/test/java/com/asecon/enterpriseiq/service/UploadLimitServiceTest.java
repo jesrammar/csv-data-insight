@@ -12,12 +12,12 @@ public class UploadLimitServiceTest {
 
     @Test
     void requireAllowed_returnsHelpfulMessage() {
-        UploadLimitService svc = new UploadLimitService(5);
+        UploadLimitService svc = new UploadLimitService(5, 0, 0, 0);
         MockMultipartFile file = new MockMultipartFile("file", "big.csv", "text/csv", "0123456789".getBytes());
 
         ResponseStatusException ex = assertThrows(ResponseStatusException.class, () -> svc.requireAllowed(file));
         assertEquals(413, ex.getStatusCode().value());
-        assertTrue(String.valueOf(ex.getReason()).toLowerCase().contains("límite"));
+        assertTrue(String.valueOf(ex.getReason()).toLowerCase().contains("archivo demasiado grande"));
     }
 }
 
