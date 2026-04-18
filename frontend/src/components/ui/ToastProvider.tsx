@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useMemo, useState } from 'react'
+import Icon from './Icon'
 
 export type ToastTone = 'info' | 'success' | 'warning' | 'danger'
 
@@ -45,8 +46,16 @@ export default function ToastProvider({ children }: { children: React.ReactNode 
       <div className="toast-stack" aria-live="polite" aria-relevant="additions">
         {items.map((t) => (
           <div key={t.id} className={`toast toast-${t.tone}`}>
-            {t.title ? <div className="toast-title">{t.title}</div> : null}
-            <div className="toast-body">{t.message}</div>
+            <div className={`toast-icon toast-icon-${t.tone}`.trim()} aria-hidden="true">
+              <Icon
+                name={t.tone === 'success' ? 'check' : t.tone === 'warning' ? 'warning' : t.tone === 'danger' ? 'danger' : 'info'}
+                size={18}
+              />
+            </div>
+            <div className="toast-content">
+              {t.title ? <div className="toast-title">{t.title}</div> : null}
+              <div className="toast-body">{t.message}</div>
+            </div>
           </div>
         ))}
       </div>

@@ -8,5 +8,6 @@ import org.springframework.data.jpa.repository.JpaRepository;
 public interface TribunalImportRepository extends JpaRepository<TribunalImport, Long> {
     List<TribunalImport> findByCompanyIdOrderByCreatedAtDesc(Long companyId);
     Optional<TribunalImport> findFirstByCompanyIdOrderByCreatedAtDesc(Long companyId);
+    boolean existsByCompanyId(Long companyId);
     void deleteByCompanyId(Long companyId);
 }

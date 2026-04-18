@@ -33,8 +33,8 @@ export default function RoleCapabilitiesTable({
   return (
     <section className={`card section ${compact ? 'soft' : ''}`.trim()}>
       <div className="pricing-matrix-head">
-        <h3 style={{ marginTop: 0 }}>{title}</h3>
-        {subtitle ? <p style={{ marginTop: 6 }}>{subtitle}</p> : null}
+        <h3 className="h3-reset">{title}</h3>
+        {subtitle ? <p className="m-0 mt-6">{subtitle}</p> : null}
       </div>
       <div className="pricing-table-wrap">
         <table className="table pricing-table">

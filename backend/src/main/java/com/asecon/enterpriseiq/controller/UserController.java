@@ -58,7 +58,7 @@ public class UserController {
     public UserActionLinkDto inviteLink(@PathVariable Long id) {
         var actor = accessService.currentUser();
         var issued = userService.issueInviteLinkForActor(actor, id);
-        return new UserActionLinkDto("/?action=invite&token=" + issued.token(), issued.token(), issued.expiresAt());
+        return new UserActionLinkDto("/#action=invite&token=" + issued.token(), issued.expiresAt());
     }
 
     @PostMapping("/{id}/password-reset-link")
@@ -66,7 +66,7 @@ public class UserController {
     public UserActionLinkDto passwordResetLink(@PathVariable Long id) {
         var actor = accessService.currentUser();
         var issued = userService.issuePasswordResetLinkForActor(actor, id);
-        return new UserActionLinkDto("/?action=reset&token=" + issued.token(), issued.token(), issued.expiresAt());
+        return new UserActionLinkDto("/#action=reset&token=" + issued.token(), issued.expiresAt());
     }
 
     private UserDto toDto(User user) {

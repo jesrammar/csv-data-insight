@@ -12,6 +12,7 @@ import org.springframework.data.repository.query.Param;
 public interface TransactionRepository extends JpaRepository<Transaction, Long>, JpaSpecificationExecutor<Transaction> {
     List<Transaction> findByCompanyIdAndPeriodBetween(Long companyId, String from, String to);
     List<Transaction> findByCompanyIdAndPeriod(Long companyId, String period);
+    boolean existsByCompanyIdAndPeriod(Long companyId, String period);
 
     List<Transaction> findByCompanyIdAndPeriodOrderByTxnDateAsc(Long companyId, String period);
     List<Transaction> findByCompanyIdAndPeriodBetweenOrderByPeriodAscTxnDateAsc(Long companyId, String from, String to);

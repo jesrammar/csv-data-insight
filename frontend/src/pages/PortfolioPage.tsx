@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useMemo, useState } from 'react'
 import {
   createInviteLink,
   createPasswordResetLink,
@@ -183,16 +182,16 @@ export default function PortfolioPage() {
 
       {isConsultor ? (
         <div className="card section">
-          <h3 style={{ marginTop: 0 }}>Crear cliente</h3>
-          <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
-            <label style={{ display: 'grid', gap: 6 }}>
+          <h3 className="h3-reset">Crear cliente</h3>
+          <div className="grid">
+            <label className="stack">
               <span className="upload-hint">Email</span>
               <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="cliente@empresa.com" inputMode="email" />
             </label>
-            <label style={{ display: 'grid', gap: 6 }}>
+            <label className="stack">
               <span className="upload-hint">Contraseña</span>
               <input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" type="password" />
-              <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+              <div className="row row-center row-wrap gap-10">
                 <Button
                   type="button"
                   size="sm"
@@ -210,20 +209,20 @@ export default function PortfolioPage() {
             </label>
           </div>
 
-          <div style={{ marginTop: 14 }}>
-            <div className="upload-hint" style={{ marginBottom: 8 }}>
+          <div className="mt-3">
+            <div className="upload-hint mb-8">
               Empresas asignadas (mínimo 1)
             </div>
-            <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+            <div className="grid">
               {companiesList.map((c) => (
-                <label key={c.id} className="card soft" style={{ padding: 12, display: 'flex', gap: 10, alignItems: 'center' }}>
+                <label key={c.id} className="card soft card-pad-sm row row-center gap-10">
                   <input
                     type="checkbox"
                     checked={newCompanyIds.includes(c.id)}
                     onChange={() => setNewCompanyIds((prev) => toggleCompany(prev, c.id))}
                   />
-                  <span style={{ fontWeight: 700 }}>{c.name}</span>
-                  <span className="badge" style={{ marginLeft: 'auto' }}>
+                  <span className="fw-700">{c.name}</span>
+                  <span className="badge ml-auto">
                     {String(c.plan || '').toUpperCase()}
                   </span>
                 </label>
@@ -231,7 +230,7 @@ export default function PortfolioPage() {
             </div>
           </div>
 
-          <div style={{ marginTop: 14 }}>
+          <div className="mt-3">
             <Button onClick={handleCreate} disabled={creating}>
               {creating ? 'Creando…' : 'Crear cliente'}
             </Button>
@@ -241,11 +240,11 @@ export default function PortfolioPage() {
 
       {isConsultor ? (
         <div className="card section">
-          <h3 style={{ marginTop: 0 }}>Clientes</h3>
+          <h3 className="h3-reset">Clientes</h3>
           {!clients.length ? (
             <div className="empty">No hay clientes en tu cartera.</div>
           ) : (
-            <div style={{ overflow: 'auto' }}>
+            <div className="overflow-auto">
               <table className="table">
                 <thead>
                   <tr>
@@ -263,10 +262,10 @@ export default function PortfolioPage() {
                       .join(', ')
                     return (
                       <tr key={u.id}>
-                        <td style={{ fontWeight: 700 }}>{u.email}</td>
+                        <td className="fw-700">{u.email}</td>
                         <td>{u.enabled ? 'Sí' : 'No'}</td>
                         <td className="upload-hint">{companyNames || '—'}</td>
-                        <td style={{ textAlign: 'right' }}>
+                        <td className="text-right">
                           <Button variant="ghost" size="sm" onClick={() => startEdit(u)}>
                             Editar
                           </Button>
@@ -283,37 +282,37 @@ export default function PortfolioPage() {
 
       {isConsultor && editingUserId != null ? (
         <div className="card section">
-          <h3 style={{ marginTop: 0 }}>Editar cliente</h3>
+          <h3 className="h3-reset">Editar cliente</h3>
           <div className="upload-hint">Usuario id: {editingUserId}</div>
 
-          <div className="grid" style={{ marginTop: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
-            <label style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 22 }}>
+          <div className="grid mt-12">
+            <label className="row row-center gap-10 mt-4">
               <input type="checkbox" checked={editingEnabled} onChange={(e) => setEditingEnabled(e.target.checked)} />
-              <span style={{ fontWeight: 700 }}>Enabled</span>
+              <span className="fw-700">Enabled</span>
               <span className="upload-hint">{editingEnabled ? 'Sí' : 'No'}</span>
             </label>
           </div>
 
-          <div className="upload-hint" style={{ marginTop: 14, marginBottom: 8 }}>
+          <div className="upload-hint mt-3 mb-8">
             Empresas asignadas
           </div>
-          <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+          <div className="grid">
             {companiesList.map((c) => (
-              <label key={c.id} className="card soft" style={{ padding: 12, display: 'flex', gap: 10, alignItems: 'center' }}>
+              <label key={c.id} className="card soft card-pad-sm row row-center gap-10">
                 <input
                   type="checkbox"
                   checked={editingCompanyIds.includes(c.id)}
                   onChange={() => setEditingCompanyIds((prev) => toggleCompany(prev, c.id))}
                 />
-                <span style={{ fontWeight: 700 }}>{c.name}</span>
-                <span className="badge" style={{ marginLeft: 'auto' }}>
+                <span className="fw-700">{c.name}</span>
+                <span className="badge ml-auto">
                   {String(c.plan || '').toUpperCase()}
                 </span>
               </label>
             ))}
           </div>
 
-          <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
+          <div className="row gap-10 mt-3">
             <Button variant="ghost" onClick={() => setEditingUserId(null)} disabled={saving}>
               Cancelar
             </Button>
@@ -322,11 +321,11 @@ export default function PortfolioPage() {
             </Button>
           </div>
 
-          <div style={{ marginTop: 16 }}>
-            <div className="upload-hint" style={{ marginBottom: 8 }}>
+          <div className="mt-4">
+            <div className="upload-hint mb-8">
               Enlaces de acceso (envíalo al cliente)
             </div>
-            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            <div className="row row-wrap gap-10">
               <Button
                 size="sm"
                 variant="secondary"
@@ -368,15 +367,15 @@ export default function PortfolioPage() {
             </div>
 
             {actionLink ? (
-              <div className="card soft" style={{ padding: 12, marginTop: 10 }}>
+              <div className="card soft card-pad-sm mt-2">
                 <div className="upload-hint">Enlace</div>
-                <div style={{ marginTop: 6, fontWeight: 800, wordBreak: 'break-all' }}>
+                <div className="mt-1 fw-800 break-all">
                   {`${window.location.origin}${actionLink.path}`}
                 </div>
-                <div className="upload-hint" style={{ marginTop: 6 }}>
+                <div className="upload-hint mt-1">
                   Caduca: {actionLink.expiresAt ? new Date(actionLink.expiresAt).toLocaleString() : '—'}
                 </div>
-                <div style={{ marginTop: 10 }}>
+                <div className="mt-2">
                   <Button size="sm" variant="ghost" onClick={() => copyLink(`${window.location.origin}${actionLink.path}`)}>
                     Copiar enlace
                   </Button>

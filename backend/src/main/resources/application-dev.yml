@@ -1,0 +1,5 @@
+spring:
+  flyway:
+    # Dev-only seed data (default users/companies) lives in db/migration-dev.
+    locations: classpath:db/migration,classpath:db/migration-dev
+

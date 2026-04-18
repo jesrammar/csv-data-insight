@@ -6,6 +6,8 @@ public record AssistantChatResponseDto(
     String reply,
     List<String> questions,
     List<AdvisorActionDto> actions,
-    List<String> suggestedPrompts
+    List<String> suggestedPrompts,
+    String engine,
+    String disclosure
 ) {}
 

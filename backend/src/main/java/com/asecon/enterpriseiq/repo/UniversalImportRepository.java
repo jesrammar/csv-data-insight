@@ -9,4 +9,5 @@ public interface UniversalImportRepository extends JpaRepository<UniversalImport
     Optional<UniversalImport> findFirstByCompanyIdOrderByCreatedAtDesc(Long companyId);
     List<UniversalImport> findByCompanyIdOrderByCreatedAtDesc(Long companyId);
     Optional<UniversalImport> findByIdAndCompanyId(Long id, Long companyId);
+    boolean existsByCompanyId(Long companyId);
 }

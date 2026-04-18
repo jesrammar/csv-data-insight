@@ -78,12 +78,8 @@ export default function ClientHomePage() {
     }
   })()
 
-  function cashBadgeStyle() {
-    if (cashStatus.tone === 'danger') return { borderColor: 'rgba(248, 113, 113, 0.45)', color: 'rgba(254, 202, 202, 0.95)' }
-    if (cashStatus.tone === 'warning') return { borderColor: 'rgba(250, 204, 21, 0.45)', color: 'rgba(254, 240, 138, 0.95)' }
-    if (cashStatus.tone === 'success') return { borderColor: 'rgba(34, 197, 94, 0.45)', color: 'rgba(187, 247, 208, 0.95)' }
-    return { borderColor: 'rgba(148, 163, 184, 0.25)', color: 'rgba(226, 232, 240, 0.78)' }
-  }
+  const cashBadgeCls =
+    cashStatus.tone === 'danger' ? 'err' : cashStatus.tone === 'warning' ? 'warn' : cashStatus.tone === 'success' ? 'ok' : ''
 
   return (
     <div>
@@ -91,14 +87,14 @@ export default function ClientHomePage() {
         title="Resumen"
         subtitle="Lo importante hoy: caja, alertas e informes (sin entrar en detalles técnicos)."
         actions={
-          <div style={{ display: 'grid', gap: 8, justifyItems: 'end' }}>
-            <div className="mini-row" style={{ justifyContent: 'flex-end' }}>
+          <div className="stack gap-8 justify-items-end">
+            <div className="row row-end row-center gap-8">
               <span className="badge">{(plan || 'BRONZE').toUpperCase()}</span>
-              <span className="badge" style={cashBadgeStyle()}>
+              <span className={`badge ${cashBadgeCls}`.trim()}>
                 {cashStatus.label}
               </span>
             </div>
-            <div style={{ display: 'grid', gap: 6, width: '100%', maxWidth: 240 }}>
+            <div className="stack gap-1 w-full maxw-240">
               <Button size="sm" onClick={() => navigate(todayAction.route)}>
                 Qué hago hoy
               </Button>
@@ -125,18 +121,18 @@ export default function ClientHomePage() {
 
       <div className="grid section">
         <div className="card">
-          <div className="mini-row" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
-            <h3 style={{ margin: 0 }}>Caja</h3>
+          <div className="row row-between row-baseline">
+            <h3 className="m-0">Caja</h3>
             <Link className="badge" to="/cash">
               Abrir
             </Link>
           </div>
           {!hasData ? (
-            <div className="empty" style={{ marginTop: 12 }}>
+            <div className="empty mt-12">
               Aún no hay datos. Tu consultora debe cargar el CSV/XLSX del periodo para calcular la caja.
             </div>
           ) : (
-            <div style={{ marginTop: 12 }} className="grid">
+            <div className="grid mt-12">
               <div className="kpi">
                 <h4>Entradas</h4>
                 <strong>{formatMoney(latest?.inflows)}</strong>
@@ -158,20 +154,20 @@ export default function ClientHomePage() {
         </div>
 
         <div className="card">
-          <div className="mini-row" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
-            <h3 style={{ margin: 0 }}>Alertas</h3>
+          <div className="row row-between row-baseline">
+            <h3 className="m-0">Alertas</h3>
             <Link className="badge" to="/alerts">
               Ver
             </Link>
           </div>
-          <div style={{ marginTop: 12 }}>
+          <div className="mt-12">
             {!alertsCount ? (
               <div className="empty">Sin alertas por ahora.</div>
             ) : (
               <div className="kpi">
                 <h4>Activas</h4>
                 <strong>{alertsCount}</strong>
-                <div className="upload-hint" style={{ marginTop: 8 }}>
+                <div className="upload-hint mt-8">
                   Revisa primero las alertas de caja y anomalías.
                 </div>
               </div>
@@ -180,20 +176,20 @@ export default function ClientHomePage() {
         </div>
 
         <div className="card">
-          <div className="mini-row" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
-            <h3 style={{ margin: 0 }}>Informes</h3>
+          <div className="row row-between row-baseline">
+            <h3 className="m-0">Informes</h3>
             <Link className="badge" to="/reports">
               Abrir
             </Link>
           </div>
-          <div style={{ marginTop: 12 }}>
+          <div className="mt-12">
             {!reportsCount ? (
               <div className="empty">No hay informes todavía.</div>
             ) : (
               <div className="kpi">
                 <h4>Disponibles</h4>
                 <strong>{reportsCount}</strong>
-                <div className="upload-hint" style={{ marginTop: 8 }}>
+                <div className="upload-hint mt-8">
                   Lista de informes mensuales listos para compartir.
                 </div>
               </div>
@@ -201,27 +197,27 @@ export default function ClientHomePage() {
           </div>
         </div>
 
-        <details className="card" style={{ alignSelf: 'start' }}>
-          <summary className="mini-row" style={{ cursor: 'pointer', justifyContent: 'space-between', alignItems: 'baseline' }}>
+        <details className="card self-start">
+          <summary className="row row-between row-baseline cursor-pointer">
             <strong>Qué hago ahora</strong>
             <span className="badge">ver</span>
           </summary>
-          <div style={{ marginTop: 12 }} className="bar-stack">
-            <div className="kpi" style={{ padding: 12 }}>
+          <div className="bar-stack mt-12">
+            <div className="kpi">
               <div className="upload-hint">Prioridad 1</div>
               <strong>Evitar sustos de caja</strong>
-              <div className="upload-hint" style={{ marginTop: 6 }}>
+              <div className="upload-hint mt-1">
                 Revisa neto del mes y alertas. Si el neto baja, actúa en gastos fijos y cobros.
               </div>
             </div>
-            <div className="kpi" style={{ padding: 12 }}>
+            <div className="kpi">
               <div className="upload-hint">Prioridad 2</div>
               <strong>Preparar el informe</strong>
-              <div className="upload-hint" style={{ marginTop: 6 }}>
+              <div className="upload-hint mt-1">
                 Asegura que el periodo está importado y el informe mensual generado.
               </div>
             </div>
-            <div className="mini-row" style={{ marginTop: 8 }}>
+            <div className="mini-row mt-8">
               <Link className="badge" to="/cash">
                 Abrir caja
               </Link>

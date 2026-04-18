@@ -32,7 +32,7 @@ export default function CompanySelector({ companies }: { companies: Company[] })
   const planTone = plan === 'PLATINUM' ? 'ok' : plan === 'GOLD' ? 'warn' : ''
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+    <div className="company-selector">
       <span className={`badge ${planTone}`}>{plan}</span>
       <select
         aria-label="Seleccionar empresa"

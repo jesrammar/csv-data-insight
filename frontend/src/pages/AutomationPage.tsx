@@ -1,11 +1,12 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import PageHeader from '../components/ui/PageHeader'
 import Alert from '../components/ui/Alert'
 import Button from '../components/ui/Button'
 import { useCompanySelection } from '../hooks/useCompany'
 import { listAutomationJobs, runMonthlyReport, runRecomputeKpis, runSnapshotRecommendations } from '../api'
 import { useToast } from '../components/ui/ToastProvider'
+import { getWorkPeriod, nowYm } from '../utils/workPeriod'
 
 function nowYmMinus(months: number) {
   const d = new Date()
@@ -19,9 +20,16 @@ export default function AutomationPage() {
   const { id: companyId, plan } = useCompanySelection()
   const toast = useToast()
   const [monthsBack, setMonthsBack] = useState(2)
-  const [reportPeriod, setReportPeriod] = useState(() => nowYmMinus(1))
-  const [recPeriod, setRecPeriod] = useState(() => nowYmMinus(0))
+  const [reportPeriod, setReportPeriod] = useState(() => getWorkPeriod(companyId) || nowYmMinus(1))
+  const [recPeriod, setRecPeriod] = useState(() => getWorkPeriod(companyId) || nowYm())
   const [recObjective, setRecObjective] = useState<'GENERAL' | 'CASH' | 'COST' | 'MARGIN' | 'GROWTH' | 'RISK'>('GENERAL')
+
+  useEffect(() => {
+    if (!companyId) return
+    const p = getWorkPeriod(companyId) || nowYmMinus(1)
+    setReportPeriod(p)
+    setRecPeriod(getWorkPeriod(companyId) || nowYm())
+  }, [companyId])
 
   const { data: jobs, error, refetch, isFetching } = useQuery({
     queryKey: ['automation-jobs', companyId],
@@ -97,7 +105,7 @@ export default function AutomationPage() {
       {error ? <Alert tone="danger">No se pudieron cargar los jobs: {String((error as any).message)}</Alert> : null}
 
       <Alert tone="info" title="¿Cuándo usar esto?">
-        <div className="upload-hint" style={{ marginTop: 8 }}>
+        <div className="upload-hint mt-8">
           Solo si acabas de subir datos y quieres resultados ya, o si un job se quedó en RETRY/DEAD. Si no sabes qué es, probablemente no lo
           necesitas.
         </div>
@@ -105,20 +113,20 @@ export default function AutomationPage() {
 
       <div className="grid section">
         <div className="card">
-          <h3 style={{ marginTop: 0 }}>Ejecutar ahora</h3>
-          <div className="upload-hint" style={{ marginTop: 8 }}>
+          <h3 className="h3-reset">Ejecutar ahora</h3>
+          <div className="upload-hint mt-8">
             Úsalo si acabas de subir datos y quieres forzar cálculo/entregables sin esperar al scheduler.
           </div>
-          <div className="upload-row" style={{ marginTop: 10 }}>
-            <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <span style={{ width: 140 }}>Recalcular KPIs</span>
+          <div className="upload-row tight">
+            <label className="row row-center gap-8">
+              <span className="w-140">Recalcular KPIs</span>
               <input
                 type="number"
                 min={1}
                 max={24}
                 value={monthsBack}
                 onChange={(e) => setMonthsBack(Number(e.target.value))}
-                style={{ width: 90 }}
+                className="w-90"
               />
               <small className="upload-hint">meses</small>
             </label>
@@ -128,8 +136,8 @@ export default function AutomationPage() {
           </div>
 
           <div className="upload-row">
-            <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <span style={{ width: 140 }}>Informe mensual</span>
+            <label className="row row-center gap-8">
+              <span className="w-140">Informe mensual</span>
               <input value={reportPeriod} onChange={(e) => setReportPeriod(e.target.value)} placeholder="YYYY-MM" />
             </label>
             <Button onClick={() => monthly.mutate()} disabled={!companyId} loading={monthly.isPending}>
@@ -138,8 +146,8 @@ export default function AutomationPage() {
           </div>
 
           <div className="upload-row">
-            <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <span style={{ width: 140 }}>Recomendaciones</span>
+            <label className="row row-center gap-8">
+              <span className="w-140">Recomendaciones</span>
               <select value={recObjective} onChange={(e) => setRecObjective(e.target.value as any)}>
                 <option value="GENERAL">General</option>
                 <option value="CASH">Caja</option>
@@ -155,35 +163,35 @@ export default function AutomationPage() {
             </Button>
           </div>
 
-          <div className="upload-hint" style={{ marginTop: 10 }}>
+          <div className="upload-hint mt-2">
             Tip: los jobs programados también se encolan solos por cron (configurable en `application.yml`).
           </div>
         </div>
 
         <div className="card">
-          <div className="mini-row" style={{ marginTop: 0 }}>
-            <h3 style={{ margin: 0 }}>Estado</h3>
+          <div className="mini-row mt-0 row-center">
+            <h3 className="m-0">Estado</h3>
             <Button variant="ghost" size="sm" onClick={() => refetch()} loading={isFetching}>
               Refrescar
             </Button>
           </div>
           {!rows.length ? (
-            <div className="empty" style={{ marginTop: 12 }}>
+            <div className="empty mt-12">
               No hay jobs todavía.
             </div>
           ) : (
-            <div style={{ marginTop: 12 }}>
+            <div className="mt-12">
               <div className="table-wrap">
                 <table className="table table-fixed">
                   <thead>
                     <tr>
-                      <th style={{ width: 56 }}>ID</th>
-                      <th style={{ width: 220 }}>Tipo</th>
-                      <th style={{ width: 110 }}>Estado</th>
-                      <th style={{ width: 110 }}>Intentos</th>
-                      <th style={{ width: 160 }}>Run after</th>
-                      <th style={{ width: 180 }}>Trace</th>
-                      <th style={{ width: 120 }} />
+                      <th className="w-56">ID</th>
+                      <th className="w-220">Tipo</th>
+                      <th className="w-110">Estado</th>
+                      <th className="w-110">Intentos</th>
+                      <th className="w-160">Run after</th>
+                      <th className="w-180">Trace</th>
+                      <th className="w-120" />
                     </tr>
                   </thead>
                   <tbody>
@@ -206,7 +214,7 @@ export default function AutomationPage() {
                           <td className="upload-hint mono" title={trace}>
                             {trace ? trace.slice(0, 12) : '—'}
                           </td>
-                          <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                          <td className="text-right nowrap">
                             {trace ? (
                               <Button size="sm" variant="ghost" onClick={() => copyText('Trace', trace)}>
                                 Copiar
@@ -221,21 +229,21 @@ export default function AutomationPage() {
               </div>
 
               {rows.some((j: any) => j.lastError) ? (
-                <details style={{ marginTop: 12 }}>
-                  <summary className="upload-hint" style={{ cursor: 'pointer' }}>
+                <details className="mt-12">
+                  <summary className="upload-hint cursor-pointer">
                     Ver errores recientes
                   </summary>
-                  <div className="card soft" style={{ padding: 12, marginTop: 10 }}>
+                  <div className="card soft card-pad-sm mt-2">
                     {(rows as any[])
                       .filter((j) => j.lastError)
                       .slice(0, 3)
                       .map((j) => (
-                        <div key={`err-${j.id}`} style={{ marginBottom: 10 }}>
-                          <div className="mini-row" style={{ marginTop: 0 }}>
+                        <div key={`err-${j.id}`} className="mb-2">
+                          <div className="mini-row mt-0">
                             <span className="badge err">JOB {j.id}</span>
                             <span className="upload-hint">{typeLabel(j.type)}</span>
                           </div>
-                          <div className="upload-hint mono" style={{ marginTop: 6, whiteSpace: 'pre-wrap' }}>
+                          <div className="upload-hint mono mt-1 pre-wrap">
                             {String(j.lastError || '').slice(0, 600)}
                           </div>
                         </div>

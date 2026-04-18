@@ -15,6 +15,10 @@ import {
 import PageHeader from '../components/ui/PageHeader'
 import Alert from '../components/ui/Alert'
 import Button from '../components/ui/Button'
+import Card from '../components/ui/Card'
+import Field from '../components/ui/Field'
+import Grid from '../components/ui/Grid'
+import Table from '../components/ui/Table'
 import { useToast } from '../components/ui/ToastProvider'
 
 type Company = { id: number; name: string; plan: string }
@@ -155,63 +159,55 @@ export default function AdminUsersPage() {
       ) : null}
 
       {isAdmin ? (
-        <div className="card section">
-          <h3 style={{ marginTop: 0 }}>Crear usuario</h3>
-          <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
-            <label style={{ display: 'grid', gap: 6 }}>
-              <span className="upload-hint">Email</span>
+        <Card className="section">
+          <h3 className="h3-reset">Crear usuario</h3>
+          <Grid>
+            <Field label="Email">
               <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="consultor@cliente.com" />
-            </label>
-            <label style={{ display: 'grid', gap: 6 }}>
-              <span className="upload-hint">Contraseña</span>
-              <input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="password" />
-            </label>
-            <label style={{ display: 'grid', gap: 6 }}>
-              <span className="upload-hint">Rol</span>
+            </Field>
+            <Field label="Contraseña">
+              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="password" />
+            </Field>
+            <Field label="Rol">
               <select value={newRole} onChange={(e) => setNewRole(e.target.value as any)}>
                 <option value="CONSULTOR">CONSULTOR</option>
                 <option value="CLIENTE">CLIENTE</option>
               </select>
-            </label>
-          </div>
+            </Field>
+          </Grid>
 
-          <div style={{ marginTop: 14 }}>
-            <div className="upload-hint" style={{ marginBottom: 8 }}>
-              Empresas asignadas (si está vacío, no verá ninguna)
-            </div>
-            <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+          <div className="mt-3">
+            <div className="upload-hint mb-2">Empresas asignadas (si está vacío, no verá ninguna)</div>
+            <Grid>
               {companiesList.map((c) => (
-                <label key={c.id} className="card soft" style={{ padding: 12, display: 'flex', gap: 10, alignItems: 'center' }}>
+                <label key={c.id} className="card soft card-pad-sm row row-center gap-2">
                   <input
                     type="checkbox"
                     checked={newCompanyIds.includes(c.id)}
                     onChange={() => setNewCompanyIds((prev) => toggleCompany(prev, c.id))}
                   />
-                  <span style={{ fontWeight: 700 }}>{c.name}</span>
-                  <span className="badge" style={{ marginLeft: 'auto' }}>
-                    {String(c.plan || '').toUpperCase()}
-                  </span>
+                  <span className="fw-700">{c.name}</span>
+                  <span className="badge ml-auto">{String(c.plan || '').toUpperCase()}</span>
                 </label>
               ))}
-            </div>
+            </Grid>
           </div>
 
-          <div style={{ marginTop: 14 }}>
+          <div className="mt-3">
             <Button onClick={handleCreate} disabled={creating}>
               {creating ? 'Creando…' : 'Crear usuario'}
             </Button>
           </div>
-        </div>
+        </Card>
       ) : null}
 
       {isAdmin ? (
-        <div className="card section">
-          <h3 style={{ marginTop: 0 }}>Usuarios</h3>
+        <Card className="section">
+          <h3 className="h3-reset">Usuarios</h3>
           {!usersList.length ? (
             <div className="empty">No hay usuarios.</div>
           ) : (
-            <div style={{ overflow: 'auto' }}>
-              <table className="table">
+            <Table>
                 <thead>
                   <tr>
                     <th>Email</th>
@@ -229,11 +225,11 @@ export default function AdminUsersPage() {
                       .join(', ')
                     return (
                       <tr key={u.id}>
-                        <td style={{ fontWeight: 700 }}>{u.email}</td>
+                        <td className="fw-700">{u.email}</td>
                         <td>{String(u.role || '').toUpperCase()}</td>
                         <td>{u.enabled ? 'Sí' : 'No'}</td>
                         <td className="upload-hint">{companyNames || '—'}</td>
-                        <td style={{ textAlign: 'right' }}>
+                        <td className="text-right">
                           {String(u.role || '').toUpperCase() === 'ADMIN' ? (
                             <span className="upload-hint">ADMIN (interno)</span>
                           ) : (
@@ -246,52 +242,49 @@ export default function AdminUsersPage() {
                     )
                   })}
                 </tbody>
-              </table>
-            </div>
+            </Table>
           )}
-        </div>
+        </Card>
       ) : null}
 
       {isAdmin && editingUserId != null ? (
-        <div className="card section">
-          <h3 style={{ marginTop: 0 }}>Editar usuario</h3>
+        <Card className="section">
+          <h3 className="h3-reset">Editar usuario</h3>
           <div className="upload-hint">Usuario id: {editingUserId}</div>
 
-          <div className="grid" style={{ marginTop: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
-            <label style={{ display: 'grid', gap: 6 }}>
-              <span className="upload-hint">Rol</span>
-              <select value={editingRole} onChange={(e) => setEditingRole(e.target.value as any)}>
-                <option value="CONSULTOR">CONSULTOR</option>
-                <option value="CLIENTE">CLIENTE</option>
-              </select>
-            </label>
-            <label style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 22 }}>
-              <input type="checkbox" checked={editingEnabled} onChange={(e) => setEditingEnabled(e.target.checked)} />
-              <span style={{ fontWeight: 700 }}>Enabled</span>
-              <span className="upload-hint">{editingEnabled ? 'Sí' : 'No'}</span>
-            </label>
+          <div className="mt-2">
+            <Grid>
+              <Field label="Rol">
+                <select value={editingRole} onChange={(e) => setEditingRole(e.target.value as any)}>
+                  <option value="CONSULTOR">CONSULTOR</option>
+                  <option value="CLIENTE">CLIENTE</option>
+                </select>
+              </Field>
+              <Field label="Enabled">
+                <div className="row row-center gap-2">
+                  <input type="checkbox" checked={editingEnabled} onChange={(e) => setEditingEnabled(e.target.checked)} />
+                  <span className="upload-hint">{editingEnabled ? 'Sí' : 'No'}</span>
+                </div>
+              </Field>
+            </Grid>
           </div>
 
-          <div className="upload-hint" style={{ marginTop: 14, marginBottom: 8 }}>
-            Empresas asignadas
-          </div>
-          <div className="grid" style={{ marginTop: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+          <div className="upload-hint mt-3 mb-2">Empresas asignadas</div>
+          <Grid>
             {companiesList.map((c) => (
-              <label key={c.id} className="card soft" style={{ padding: 12, display: 'flex', gap: 10, alignItems: 'center' }}>
+              <label key={c.id} className="card soft card-pad-sm row row-center gap-2">
                 <input
                   type="checkbox"
                   checked={editingCompanyIds.includes(c.id)}
                   onChange={() => setEditingCompanyIds((prev) => toggleCompany(prev, c.id))}
                 />
-                <span style={{ fontWeight: 700 }}>{c.name}</span>
-                <span className="badge" style={{ marginLeft: 'auto' }}>
-                  {String(c.plan || '').toUpperCase()}
-                </span>
+                <span className="fw-700">{c.name}</span>
+                <span className="badge ml-auto">{String(c.plan || '').toUpperCase()}</span>
               </label>
             ))}
-          </div>
+          </Grid>
 
-          <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
+          <div className="row gap-2 mt-3">
             <Button variant="ghost" onClick={() => setEditingUserId(null)} disabled={saving}>
               Cancelar
             </Button>
@@ -300,11 +293,9 @@ export default function AdminUsersPage() {
             </Button>
           </div>
 
-          <div style={{ marginTop: 16 }}>
-            <div className="upload-hint" style={{ marginBottom: 8 }}>
-              Enlaces de acceso (envíalo al usuario)
-            </div>
-            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          <div className="mt-3">
+            <div className="upload-hint mb-2">Enlaces de acceso (envíalo al usuario)</div>
+            <div className="row row-wrap row-center gap-2">
               <Button
                 size="sm"
                 variant="secondary"
@@ -348,23 +339,21 @@ export default function AdminUsersPage() {
             </div>
 
             {actionLink ? (
-              <div className="card soft" style={{ padding: 12, marginTop: 10 }}>
+              <Card variant="soft" className="card-pad-sm mt-2">
                 <div className="upload-hint">Enlace</div>
-                <div style={{ marginTop: 6, fontWeight: 800, wordBreak: 'break-all' }}>
-                  {`${window.location.origin}${actionLink.path}`}
-                </div>
-                <div className="upload-hint" style={{ marginTop: 6 }}>
+                <div className="mt-1 fw-800 break-all">{`${window.location.origin}${actionLink.path}`}</div>
+                <div className="upload-hint mt-1">
                   Caduca: {actionLink.expiresAt ? new Date(actionLink.expiresAt).toLocaleString() : '—'}
                 </div>
-                <div style={{ marginTop: 10 }}>
+                <div className="mt-2">
                   <Button size="sm" variant="ghost" onClick={() => copyLink(`${window.location.origin}${actionLink.path}`)}>
                     Copiar enlace
                   </Button>
                 </div>
-              </div>
+              </Card>
             ) : null}
           </div>
-        </div>
+        </Card>
       ) : null}
     </div>
   )
