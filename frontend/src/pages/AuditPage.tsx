@@ -46,7 +46,7 @@ export default function AuditPage() {
       ) : null}
 
       <div className="card section">
-        <h3 style={{ marginTop: 0 }}>Eventos</h3>
+        <h3 className="h3-reset">Eventos</h3>
         {!data?.length ? (
           <div className="empty">No hay eventos todavía.</div>
         ) : (
@@ -63,7 +63,7 @@ export default function AuditPage() {
             <tbody>
               {(data || []).map((e) => (
                 <tr key={e.id}>
-                  <td style={{ whiteSpace: 'nowrap' }}>{fmtTime(e.at)}</td>
+                  <td className="nowrap">{fmtTime(e.at)}</td>
                   <td>
                     <strong>{e.action}</strong>
                     {e.path ? <div className="upload-hint">{e.path}</div> : null}

@@ -23,6 +23,7 @@ import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.annotation.Order;
+import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter;
 
 @Configuration
 @EnableMethodSecurity
@@ -46,6 +47,12 @@ public class SecurityConfig {
             .securityMatcher(EndpointRequest.toAnyEndpoint())
             .csrf(csrf -> csrf.disable())
             .cors(cors -> cors.disable())
+            .headers(headers -> headers
+                .contentTypeOptions(cto -> {})
+                .frameOptions(fo -> fo.deny())
+                .referrerPolicy(rp -> rp.policy(ReferrerPolicyHeaderWriter.ReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN))
+                .permissionsPolicy(pp -> pp.policy("camera=(), microphone=(), geolocation=()"))
+            )
             .httpBasic(basic -> basic.disable())
             .formLogin(form -> form.disable())
             .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
@@ -62,6 +69,12 @@ public class SecurityConfig {
         http
             .cors(cors -> {})
             .csrf(csrf -> csrf.disable())
+            .headers(headers -> headers
+                .contentTypeOptions(cto -> {})
+                .frameOptions(fo -> fo.deny())
+                .referrerPolicy(rp -> rp.policy(ReferrerPolicyHeaderWriter.ReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN))
+                .permissionsPolicy(pp -> pp.policy("camera=(), microphone=(), geolocation=()"))
+            )
             .httpBasic(basic -> basic.disable())
             .formLogin(form -> form.disable())
             .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
@@ -109,9 +122,6 @@ public class SecurityConfig {
             .map(String::trim)
             .filter(s -> !s.isEmpty())
             .toList();
-        if (origins.isEmpty()) {
-            origins = List.of("http://localhost:5173", "http://127.0.0.1:5173");
-        }
         boolean hasWildcard = origins.stream().anyMatch(o -> o.contains("*"));
         if (hasWildcard) {
             config.setAllowedOriginPatterns(origins);

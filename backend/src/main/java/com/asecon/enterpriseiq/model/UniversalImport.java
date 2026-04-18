@@ -29,6 +29,9 @@ public class UniversalImport {
     @Column(name = "summary_json", nullable = false, columnDefinition = "TEXT")
     private String summaryJson;
 
+    @Column(name = "analysis_json", columnDefinition = "TEXT")
+    private String analysisJson;
+
     @Column(name = "storage_ref")
     private String storageRef;
 
@@ -45,6 +48,8 @@ public class UniversalImport {
     public void setColumnCount(Integer columnCount) { this.columnCount = columnCount; }
     public String getSummaryJson() { return summaryJson; }
     public void setSummaryJson(String summaryJson) { this.summaryJson = summaryJson; }
+    public String getAnalysisJson() { return analysisJson; }
+    public void setAnalysisJson(String analysisJson) { this.analysisJson = analysisJson; }
     public String getStorageRef() { return storageRef; }
     public void setStorageRef(String storageRef) { this.storageRef = storageRef; }
 }

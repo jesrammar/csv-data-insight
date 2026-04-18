@@ -35,9 +35,12 @@ Columnas opcionales:
 - **Entregables**: reportes HTML + descarga PDF.
 
 ## Credenciales seed
-- ADMIN: `admin@asecon.local` / `password`
-- CONSULTOR: `consultor@asecon.local` / `password`
-- CLIENTE: `cliente@acme.local` / `password`
+- Solo **desarrollo** (perfil `dev`, `docker-compose.yml`): 
+  - ADMIN: `admin@asecon.local` / `password`
+  - CONSULTOR: `consultor@asecon.local` / `password`
+  - CLIENTE: `cliente@acme.local` / `password`
+
+En producción (`docker-compose.prod.yml`) no se cargan seeds: crea el primer ADMIN de forma controlada (p. ej. con una migración privada, un script de bootstrap o desde la DB).
 
 ## Levantar en local
 1. `docker compose up --build`

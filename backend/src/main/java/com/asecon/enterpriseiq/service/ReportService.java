@@ -7,6 +7,7 @@ import com.asecon.enterpriseiq.model.ReportFormat;
 import com.asecon.enterpriseiq.model.ReportStatus;
 import com.asecon.enterpriseiq.dto.UniversalSummaryDto;
 import com.asecon.enterpriseiq.repo.AlertRepository;
+import com.asecon.enterpriseiq.repo.CompanySettingsRepository;
 import com.asecon.enterpriseiq.repo.KpiMonthlyRepository;
 import com.asecon.enterpriseiq.repo.ReportRepository;
 import com.openhtmltopdf.pdfboxout.PdfRendererBuilder;
@@ -38,16 +39,19 @@ public class ReportService {
     private final KpiMonthlyRepository kpiMonthlyRepository;
     private final AlertRepository alertRepository;
     private final UniversalCsvService universalCsvService;
+    private final CompanySettingsRepository companySettingsRepository;
 
     public ReportService(ReportRepository reportRepository,
                          KpiMonthlyRepository kpiMonthlyRepository,
                          AlertRepository alertRepository,
                          UniversalCsvService universalCsvService,
+                         CompanySettingsRepository companySettingsRepository,
                          @Value("${app.storage.reports}") String reportsRoot) {
         this.reportRepository = reportRepository;
         this.kpiMonthlyRepository = kpiMonthlyRepository;
         this.alertRepository = alertRepository;
         this.universalCsvService = universalCsvService;
+        this.companySettingsRepository = companySettingsRepository;
         this.reportsRoot = Path.of(reportsRoot);
     }
 
@@ -109,6 +113,30 @@ public class ReportService {
     }
 
     public String buildHtmlTemplate(Company company, String period, String summary) {
+        var settings = company == null || company.getId() == null ? null : companySettingsRepository.findById(company.getId()).orElse(null);
+        String consultancyName = settings == null ? null : settings.getReportConsultancyName();
+        if (consultancyName == null || consultancyName.isBlank()) consultancyName = "EnterpriseIQ";
+
+        String primaryColor = settings == null ? null : settings.getReportPrimaryColor();
+        if (primaryColor == null || primaryColor.isBlank()) primaryColor = "#14b8a6";
+
+        String logoUrl = settings == null ? null : settings.getReportLogoUrl();
+        String footerText = settings == null ? null : settings.getReportFooterText();
+        if (footerText == null || footerText.isBlank()) {
+            footerText = "Documento generado automáticamente. Requiere revisión profesional antes de su envío.";
+        }
+
+        String logoInner;
+        if (isAllowedInlineLogo(logoUrl)) {
+            String safe = logoUrl.trim()
+                .replace("\"", "%22")
+                .replace("<", "")
+                .replace(">", "");
+            logoInner = "<img alt='logo' src=\"" + safe + "\" />";
+        } else {
+            logoInner = escape(consultancyName);
+        }
+
         var kpi = (company == null || period == null) ? null : kpiMonthlyRepository.findByCompanyIdAndPeriod(company.getId(), period).orElse(null);
         List<Alert> alerts = (company == null || period == null)
             ? List.of()
@@ -135,7 +163,7 @@ public class ReportService {
         }).toList();
         String monthLabels = monthTicks.stream().reduce((a, b) -> a + " · " + b).orElse("");
 
-        String netSvg = svgLine(monthTicks, netSeries, "#14b8a6");
+        String netSvg = svgLine(monthTicks, netSeries, primaryColor);
         String balSvg = svgLine(monthTicks, balSeries, "#60a5fa");
         String inOutSvg = svgBars(monthTicks, inSeries, outSeries, "#22c55e", "#fb7185");
 
@@ -270,7 +298,7 @@ public class ReportService {
               --border: #e2e8f0;
               --navy: #0b1220;
               --navy2: #0f1b33;
-              --accent: #14b8a6;
+              --accent: %s;
               --accent2: #60a5fa;
               --danger: #fb7185;
               --warn: #f59e0b;
@@ -312,6 +340,7 @@ public class ReportService {
               letter-spacing: .16em;
               text-transform: uppercase;
             }
+            .logo img { height: 18px; width: auto; vertical-align: middle; display: block; }
             .title { margin-top: 24px; font-size: 34px; }
             .subtitle { margin-top: 10px; color: rgba(248,250,252,0.78); line-height: 1.5; }
             .meta { margin-top: 20px; display: table; }
@@ -373,10 +402,10 @@ public class ReportService {
           <div class='cover page-break'>
             <div class='brand-row'>
               <div class='brand-left'>
-                <div class='brand'>EnterpriseIQ · Asecon Advisory Suite</div>
+                <div class='brand'>%s</div>
               </div>
               <div class='brand-right'>
-                <div class='logo'>ASECON</div>
+                <div class='logo'>%s</div>
               </div>
             </div>
             <div class='title'>Informe mensual</div>
@@ -454,10 +483,13 @@ public class ReportService {
 
           %s
 
-          <div class='footer'>EnterpriseIQ · Documento generado automáticamente. Requiere revisión profesional antes de su envío.</div>
+          <div class='footer'>%s</div>
         </body>
         </html>
         """.formatted(
+            escape(primaryColor),
+            escape(consultancyName),
+            logoInner,
             escape(company == null ? "—" : company.getName()),
             escape(period == null ? "—" : period),
             escape(genAt),
@@ -476,7 +508,8 @@ public class ReportService {
             "#22c55e",
             "#fb7185",
             alertsHtml,
-            budgetHtml
+            budgetHtml,
+            escape(footerText)
         );
     }
 
@@ -851,6 +884,18 @@ public class ReportService {
     }
 
     private record ActionableInsight(String title, String impact, String why, String action) {}
+
+    private static boolean isAllowedInlineLogo(String raw) {
+        if (raw == null) return false;
+        String v = raw.trim();
+        if (v.isEmpty() || v.length() > 500) return false;
+        String lower = v.toLowerCase(Locale.ROOT);
+        return lower.startsWith("data:image/png;base64,")
+            || lower.startsWith("data:image/jpeg;base64,")
+            || lower.startsWith("data:image/jpg;base64,")
+            || lower.startsWith("data:image/webp;base64,")
+            || lower.startsWith("data:image/gif;base64,");
+    }
 
     private static String buildStoryHtml(Company company,
                                         String period,

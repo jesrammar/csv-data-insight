@@ -7,6 +7,7 @@ type IconName =
   | 'tribunal'
   | 'universal'
   | 'advisor'
+  | 'settings'
   | 'reports'
   | 'pricing'
   | 'automation'
@@ -14,6 +15,10 @@ type IconName =
   | 'admin'
   | 'help'
   | 'logout'
+  | 'info'
+  | 'check'
+  | 'warning'
+  | 'danger'
 
 export default function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
   const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', xmlns: 'http://www.w3.org/2000/svg' as const }
@@ -77,6 +82,19 @@ export default function Icon({ name, size = 18 }: { name: IconName; size?: numbe
           <path {...stroke} d="M7 8h10M7 12h7" />
         </svg>
       )
+    case 'settings':
+      return (
+        <svg {...common}>
+          <path
+            {...stroke}
+            d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"
+          />
+          <path
+            {...stroke}
+            d="M19.4 15a7.8 7.8 0 0 0 .1-1l2-1.2-2-3.4-2.3.7a7.6 7.6 0 0 0-1.7-1L15 6h-6l-.5 2.1a7.6 7.6 0 0 0-1.7 1L4 8.4 2 11.8l2 1.2a7.8 7.8 0 0 0 0 2L2 16.2l2 3.4 2.3-.7a7.6 7.6 0 0 0 1.7 1L9 22h6l.5-2.1a7.6 7.6 0 0 0 1.7-1l2.3.7 2-3.4-2.1-1.2z"
+          />
+        </svg>
+      )
     case 'reports':
       return (
         <svg {...common}>
@@ -131,6 +149,36 @@ export default function Icon({ name, size = 18 }: { name: IconName; size?: numbe
           <path {...stroke} d="M10 16l-4-4 4-4" />
           <path {...stroke} d="M6 12h10" />
           <path {...stroke} d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4" />
+        </svg>
+      )
+    case 'info':
+      return (
+        <svg {...common}>
+          <path {...stroke} d="M12 18h.01" />
+          <path {...stroke} d="M12 11v5" />
+          <path {...stroke} d="M12 22A10 10 0 1 0 12 2a10 10 0 0 0 0 20z" />
+        </svg>
+      )
+    case 'check':
+      return (
+        <svg {...common}>
+          <path {...stroke} d="M20 6L9 17l-5-5" />
+        </svg>
+      )
+    case 'warning':
+      return (
+        <svg {...common}>
+          <path {...stroke} d="M12 9v4" />
+          <path {...stroke} d="M12 17h.01" />
+          <path {...stroke} d="M10.3 4.6L2.3 19a2 2 0 0 0 1.7 3h16a2 2 0 0 0 1.7-3l-8-14.4a2 2 0 0 0-3.4 0z" />
+        </svg>
+      )
+    case 'danger':
+      return (
+        <svg {...common}>
+          <path {...stroke} d="M12 9v4" />
+          <path {...stroke} d="M12 17h.01" />
+          <path {...stroke} d="M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" />
         </svg>
       )
     default:

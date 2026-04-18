@@ -6,6 +6,7 @@ import com.asecon.enterpriseiq.model.Company;
 import com.asecon.enterpriseiq.model.KpiMonthly;
 import com.asecon.enterpriseiq.model.Plan;
 import com.asecon.enterpriseiq.repo.AlertRepository;
+import com.asecon.enterpriseiq.repo.CompanySettingsRepository;
 import com.asecon.enterpriseiq.repo.KpiMonthlyRepository;
 import com.asecon.enterpriseiq.repo.ReportRepository;
 import java.math.BigDecimal;
@@ -29,12 +30,14 @@ public class ReportServiceStoryTest {
         KpiMonthlyRepository kpiMonthlyRepository = mock(KpiMonthlyRepository.class);
         AlertRepository alertRepository = mock(AlertRepository.class);
         UniversalCsvService universalCsvService = mock(UniversalCsvService.class);
+        CompanySettingsRepository companySettingsRepository = mock(CompanySettingsRepository.class);
 
         ReportService svc = new ReportService(
             reportRepository,
             kpiMonthlyRepository,
             alertRepository,
             universalCsvService,
+            companySettingsRepository,
             "target/test-reports"
         );
 
@@ -71,6 +74,7 @@ public class ReportServiceStoryTest {
             .thenReturn(List.of(prev, kpi));
         when(alertRepository.findByCompanyIdAndPeriod(1L, "2026-03")).thenReturn(List.of(a));
         when(universalCsvService.latest(1L)).thenReturn(Optional.empty());
+        when(companySettingsRepository.findById(1L)).thenReturn(Optional.empty());
 
         String html = svc.buildHtmlTemplate(company, "2026-03", "Resumen del periodo.");
 

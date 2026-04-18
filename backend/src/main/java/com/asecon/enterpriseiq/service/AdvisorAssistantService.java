@@ -27,6 +27,9 @@ import org.springframework.stereotype.Service;
 
 @Service
 public class AdvisorAssistantService {
+    private static final String ENGINE = "RULES";
+    private static final String DISCLOSURE =
+        "Nota: este Assistant es un motor de reglas/heurísticas (no IA generativa) y no envía tus datos a terceros.";
     private final UniversalCsvService universalCsvService;
     private final KpiMonthlyRepository kpiMonthlyRepository;
     private final DashboardMetricsService dashboardMetricsService;
@@ -60,7 +63,9 @@ public class AdvisorAssistantService {
                 "Aún no tengo datos suficientes para asesorarte. Sube un CSV/XLSX en “Análisis universal” o carga movimientos para el dashboard (caja) y vuelvo con un plan 30/60/90 días.",
                 List.of("¿Cuál es tu objetivo principal (margen, costes, caja, crecimiento)?"),
                 List.of(),
-                List.of("Quiero mejorar margen", "Quiero reducir costes", "Quiero mejorar caja", "Detecta riesgos y quick wins")
+                List.of("Quiero mejorar margen", "Quiero reducir costes", "Quiero mejorar caja", "Detecta riesgos y quick wins"),
+                ENGINE,
+                DISCLOSURE
             );
         }
 
@@ -75,7 +80,7 @@ public class AdvisorAssistantService {
         List<String> questions = buildQuestions(intent);
         List<String> prompts = buildSuggestedPrompts(intent);
 
-        return new AssistantChatResponseDto(reply, questions, actions, prompts);
+        return new AssistantChatResponseDto(reply, questions, actions, prompts, ENGINE, DISCLOSURE);
     }
 
     public AdvisorRecommendationsDto recommendations(Long companyId, String period) {

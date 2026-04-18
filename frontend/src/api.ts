@@ -32,7 +32,6 @@ export type UpdateUserRequest = {
 
 export type UserActionLink = {
   path: string
-  token: string
   expiresAt: string
 }
 
@@ -117,7 +116,11 @@ export function onAuthChange(handler: () => void) {
 
 export async function bootstrapAuth() {
   if (getAccessToken()) return
-  await refreshAccessToken()
+  try {
+    await refreshAccessToken()
+  } catch {
+    clearAuthSession()
+  }
 }
 
 type RequestConfig = { auth?: boolean; retry?: boolean }
@@ -125,6 +128,35 @@ type RequestConfig = { auth?: boolean; retry?: boolean }
 let refreshPromise: Promise<string | null> | null = null
 
 const DEFAULT_TIMEOUT_MS = 30_000
+
+function backendUnavailableMessage() {
+  const api = API_URL || '(sin configurar)'
+  if (!import.meta.env.DEV) return `No se pudo conectar con el servidor (${api}).`
+
+  return (
+    `No se pudo conectar con el backend (${api}). ` +
+    `¿Está levantado? Con Docker: http://localhost:8081. ` +
+    `Con Maven suele ser http://localhost:8080 (configura VITE_API_URL).`
+  )
+}
+
+function normalizeFetchError(err: any, timeoutMs: number) {
+  const msg = String(err?.message || err || '')
+  if (err?.name === 'AbortError') {
+    return new Error(
+      `Tiempo de espera agotado (${Math.round(timeoutMs / 1000)}s). Si el fichero es grande, súbelo por periodos o usa Universal.`
+    )
+  }
+
+  const isNetwork =
+    err instanceof TypeError ||
+    err?.name === 'TypeError' ||
+    msg.toLowerCase().includes('failed to fetch') ||
+    msg.toLowerCase().includes('err_connection_refused')
+
+  if (isNetwork) return new Error(backendUnavailableMessage())
+  return err
+}
 
 function toHeaderRecord(headers?: HeadersInit): Record<string, string> {
   if (!headers) return {}
@@ -173,10 +205,7 @@ async function fetchWithAuth(
     }
     return res
   } catch (e: any) {
-    if (e?.name === 'AbortError') {
-      throw new Error(`Tiempo de espera agotado (${Math.round(timeoutMs / 1000)}s). Si el fichero es grande, súbelo por periodos o usa Universal.`)
-    }
-    throw e
+    throw normalizeFetchError(e, timeoutMs)
   } finally {
     if (timer != null) window.clearTimeout(timer)
   }
@@ -186,19 +215,23 @@ async function refreshAccessToken(): Promise<string | null> {
   if (refreshPromise) return refreshPromise
 
   refreshPromise = (async () => {
-    const res = await fetch(`${API_URL}/api/auth/refresh`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: '{}'
-    })
-    if (!res.ok) {
-      clearAuthSession()
+    try {
+      const res = await fetch(`${API_URL}/api/auth/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: '{}'
+      })
+      if (!res.ok) {
+        clearAuthSession()
+        return null
+      }
+      const data = (await res.json()) as LoginResponse
+      applyLogin(data)
+      return data.accessToken
+    } catch {
       return null
     }
-    const data = (await res.json()) as LoginResponse
-    applyLogin(data)
-    return data.accessToken
   })()
 
   const token = await refreshPromise
@@ -389,6 +422,51 @@ export async function uploadImportSmart(
 
 export async function getReports(companyId: number) {
   return request(`/api/companies/${companyId}/reports`)
+}
+
+export type CompanySettingsDto = {
+  companyId: number
+  workingPeriod?: string | null
+  autoMonthlyReport?: boolean | null
+  reportConsultancyName?: string | null
+  reportLogoUrl?: string | null
+  reportPrimaryColor?: string | null
+  reportFooterText?: string | null
+}
+
+export async function getCompanySettings(companyId: number) {
+  return request<CompanySettingsDto>(`/api/companies/${companyId}/settings`)
+}
+
+export async function updateCompanySettings(companyId: number, patch: Partial<CompanySettingsDto>) {
+  return request<CompanySettingsDto>(`/api/companies/${companyId}/settings`, { method: 'PUT', body: JSON.stringify(patch) })
+}
+
+export async function getCompanyMapping(companyId: number, key: string) {
+  return request<any>(`/api/companies/${companyId}/mappings/${encodeURIComponent(key)}`)
+}
+
+export async function saveCompanyMapping(companyId: number, key: string, payload: any) {
+  return request<void>(`/api/companies/${companyId}/mappings/${encodeURIComponent(key)}`, { method: 'PUT', body: JSON.stringify(payload) })
+}
+
+export type ChecklistItemDto = {
+  id: string
+  label: string
+  done: boolean
+  hint?: string
+  actionHref?: string
+}
+
+export type ChecklistDto = {
+  companyId: number
+  period: string
+  items: ChecklistItemDto[]
+}
+
+export async function getChecklist(companyId: number, period?: string) {
+  const q = period ? `?period=${encodeURIComponent(period)}` : ''
+  return request<ChecklistDto>(`/api/companies/${companyId}/checklist${q}`)
 }
 
 export type AlertDto = {
@@ -723,6 +801,26 @@ export type ImportJob = {
   originalFilename?: string | null
 }
 
+export type ImportQualityIssue = { severity: 'HIGH' | 'MEDIUM' | 'LOW' | string; code: string; title: string; detail: string }
+export type ImportQualityDto = {
+  period: string
+  rowsNonEmpty: number
+  rowsEmpty: number
+  rowsParsed: number
+  missingTxnDate: number
+  missingAmount: number
+  dateParseErrors: number
+  amountParseErrors: number
+  minDate?: string | null
+  maxDate?: string | null
+  outsidePeriodRows: number
+  duplicateRows: number
+  missingCounterpartyRows: number
+  balanceEndMismatchRows: number
+  issues: ImportQualityIssue[]
+  examples: string[]
+}
+
 export type IngestionStatus = {
   now: string
   lastImport?: ImportJob | null
@@ -736,6 +834,10 @@ export async function getIngestionStatus(companyId: number) {
 
 export async function retryImport(companyId: number, importId: number) {
   return request<ImportJob>(`/api/companies/${companyId}/imports/${importId}/retry`, { method: 'POST' })
+}
+
+export async function getImportQuality(companyId: number, importId: number) {
+  return request<ImportQualityDto>(`/api/companies/${companyId}/imports/${importId}/quality`)
 }
 
 export async function uploadTribunalImportWithProgress(
@@ -885,6 +987,8 @@ export type AssistantChatResponse = {
   questions: string[]
   actions: AdvisorAction[]
   suggestedPrompts: string[]
+  engine?: 'RULES' | 'AI' | string
+  disclosure?: string
 }
 
 export type AdvisorRecommendationSnapshot = {
@@ -1106,6 +1210,58 @@ export type UniversalChartData = {
   meta?: Record<string, any>
 }
 
+export type UniversalEvidenceDto = {
+  filename?: string | null
+  headers: string[]
+  rows: string[][]
+  rowNumbers: number[]
+  meta?: Record<string, any>
+}
+
+export type UniversalImportQualityDto = {
+  importId: number
+  filename: string
+  rowsScanned: number
+  columns: number
+  irregularRows: number
+  nullCells: number
+  totalCells: number
+  dateParseErrors: number
+  numberParseErrors: number
+  minDate?: string | null
+  maxDate?: string | null
+  score: number
+  level: 'GREEN' | 'YELLOW' | 'RED' | string
+  issues?: Array<{ severity: string; code: string; title: string; detail: string }>
+  examples?: string[]
+}
+
+export type UniversalXlsxOptionsDto = { sheetIndex?: number | null; headerRow1Based?: number | null }
+
+export type UniversalImportAnalysisDto = {
+  bytes?: number | null
+  durationMs?: number | null
+  charsetName?: string | null
+  delimiter?: string | null
+  sampled?: boolean | null
+  totalRowsRead?: number | null
+  goodRows?: number | null
+  badRows?: number | null
+  observedRows?: number | null
+  removedEmptyColumns?: number | null
+  convertedFromXlsx?: boolean | null
+  xlsx?: UniversalXlsxOptionsDto | null
+}
+
+export type UniversalImportLineageDto = {
+  importId: number
+  filename: string
+  createdAt: string
+  rowCount?: number | null
+  columnCount?: number | null
+  analysis?: UniversalImportAnalysisDto | null
+}
+
 export async function previewUniversalView(companyId: number, body: UniversalViewRequest) {
   return request<UniversalChartData>(`/api/companies/${companyId}/universal/builder/preview`, {
     method: 'POST',
@@ -1121,8 +1277,36 @@ export async function previewUniversalViewForImport(companyId: number, body: Uni
   })
 }
 
+export async function getUniversalEvidenceForImport(
+  companyId: number,
+  body: UniversalViewRequest,
+  focusLabel: string,
+  limit = 40,
+  importId?: number | null
+) {
+  const qs = new URLSearchParams()
+  if (importId) qs.set('importId', String(importId))
+  if (focusLabel) qs.set('focusLabel', focusLabel)
+  qs.set('limit', String(limit))
+  const suffix = qs.toString() ? `?${qs.toString()}` : ''
+  return request<UniversalEvidenceDto>(`/api/companies/${companyId}/universal/builder/evidence${suffix}`, {
+    method: 'POST',
+    body: JSON.stringify(body)
+  })
+}
+
 export async function listUniversalViews(companyId: number) {
   return request<UniversalViewDto[]>(`/api/companies/${companyId}/universal/views`)
+}
+
+export async function getUniversalQuality(companyId: number, importId?: number | null) {
+  const qs = importId ? `?importId=${encodeURIComponent(String(importId))}` : ''
+  return request<UniversalImportQualityDto>(`/api/companies/${companyId}/universal/quality${qs}`)
+}
+
+export async function getUniversalLineage(companyId: number, importId?: number | null) {
+  const qs = importId ? `?importId=${encodeURIComponent(String(importId))}` : ''
+  return request<UniversalImportLineageDto | null>(`/api/companies/${companyId}/universal/lineage${qs}`)
 }
 
 export async function createUniversalView(companyId: number, body: UniversalViewRequest) {
@@ -1156,6 +1340,21 @@ export async function getUniversalViewDataForImport(companyId: number, viewId: n
     throw new Error('Respuesta vacía al cargar el dashboard. Sube/re-sube un dataset en Universal y reintenta.')
   }
   return data as UniversalChartData
+}
+
+export async function getUniversalViewEvidenceForImport(
+  companyId: number,
+  viewId: number,
+  focusLabel: string,
+  limit = 40,
+  importId?: number | null
+) {
+  const qs = new URLSearchParams()
+  if (importId) qs.set('importId', String(importId))
+  if (focusLabel) qs.set('focusLabel', focusLabel)
+  qs.set('limit', String(limit))
+  const suffix = qs.toString() ? `?${qs.toString()}` : ''
+  return request<UniversalEvidenceDto>(`/api/companies/${companyId}/universal/views/${viewId}/evidence${suffix}`, { method: 'POST' })
 }
 
 export async function generateReport(companyId: number, period: string) {

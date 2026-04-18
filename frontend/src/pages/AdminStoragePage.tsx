@@ -3,6 +3,8 @@ import { getStorageCleanupLast, runStorageCleanupNow, getUserRole } from '../api
 import PageHeader from '../components/ui/PageHeader'
 import Alert from '../components/ui/Alert'
 import Button from '../components/ui/Button'
+import Card from '../components/ui/Card'
+import Grid from '../components/ui/Grid'
 import { useToast } from '../components/ui/ToastProvider'
 
 function fmtTime(iso?: string | null) {
@@ -42,7 +44,7 @@ export default function AdminStoragePage() {
         title="Storage cleanup"
         subtitle="Limpieza manual de ficheros antiguos en storage/ (solo ADMIN)."
         actions={
-          <div style={{ display: 'flex', gap: 10 }}>
+          <div className="row gap-2">
             <Button variant="ghost" size="sm" onClick={() => refetch()} disabled={!isAdmin || isFetching}>
               {isFetching ? 'Actualizando…' : 'Recargar'}
             </Button>
@@ -63,37 +65,37 @@ export default function AdminStoragePage() {
         </Alert>
       ) : null}
 
-      <div className="card section">
-        <h3 style={{ marginTop: 0 }}>Última ejecución</h3>
+      <Card className="section">
+        <h3 className="h3-reset">Última ejecución</h3>
         {!data ? (
           <div className="empty">Aún no se ha ejecutado la limpieza.</div>
         ) : (
-          <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
-            <div className="card soft">
+          <Grid>
+            <Card variant="soft" className="card-pad-sm">
               <div className="upload-hint">Inicio</div>
-              <strong style={{ display: 'block', marginTop: 8 }}>{fmtTime(data.startedAt)}</strong>
-              <div className="upload-hint" style={{ marginTop: 10 }}>
+              <strong className="block mt-2">{fmtTime(data.startedAt)}</strong>
+              <div className="upload-hint mt-2">
                 Fin: {fmtTime(data.finishedAt)}
               </div>
-            </div>
-            <div className="card soft">
+            </Card>
+            <Card variant="soft" className="card-pad-sm">
               <div className="upload-hint">Imports (refs limpiadas)</div>
-              <strong style={{ display: 'block', marginTop: 8 }}>{data.imports?.refsCleared ?? 0}</strong>
-            </div>
-            <div className="card soft">
+              <strong className="block mt-2">{data.imports?.refsCleared ?? 0}</strong>
+            </Card>
+            <Card variant="soft" className="card-pad-sm">
               <div className="upload-hint">Reportes (refs limpiadas)</div>
-              <strong style={{ display: 'block', marginTop: 8 }}>{data.reports?.refsCleared ?? 0}</strong>
-            </div>
-            <div className="card soft">
+              <strong className="block mt-2">{data.reports?.refsCleared ?? 0}</strong>
+            </Card>
+            <Card variant="soft" className="card-pad-sm">
               <div className="upload-hint">Universal (refs limpiadas)</div>
-              <strong style={{ display: 'block', marginTop: 8 }}>{data.universal?.refsCleared ?? 0}</strong>
-              <div className="upload-hint" style={{ marginTop: 10 }}>
+              <strong className="block mt-2">{data.universal?.refsCleared ?? 0}</strong>
+              <div className="upload-hint mt-2">
                 Errores: {data.errors ?? 0}
               </div>
-            </div>
-          </div>
+            </Card>
+          </Grid>
         )}
-      </div>
+      </Card>
     </div>
   )
 }

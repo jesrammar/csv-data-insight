@@ -1,27 +1,27 @@
 type MatrixRow = { item: string; bronze: string; gold: string; platinum: string }
 
-const CHECK = '‚úÖ'
-const CROSS = '‚ùå'
+const CHECK = '?'
+const CROSS = '?'
 
 export const CAPABILITY_MATRIX: MatrixRow[] = [
   { item: 'KPIs de caja (in/out/net/saldo)', bronze: CHECK, gold: CHECK, platinum: CHECK },
-  { item: 'Hist√≥rico recomendado', bronze: '6 meses', gold: '12 meses', platinum: '24 meses' },
+  { item: 'HistÛrico recomendado', bronze: '6 meses', gold: '12 meses', platinum: '24 meses' },
   { item: 'Alertas', bronze: CHECK, gold: CHECK, platinum: CHECK },
-  { item: 'Informes mensuales (HTML)', bronze: CHECK, gold: CHECK, platinum: '‚úÖ + consultivo' },
+  { item: 'Informes mensuales (HTML)', bronze: CHECK, gold: CHECK, platinum: '? + consultivo' },
   { item: 'Tribunal (cumplimiento)', bronze: CROSS, gold: CHECK, platinum: CHECK },
-  { item: 'Drill-down transacciones + anal√≠tica', bronze: CROSS, gold: CHECK, platinum: CHECK },
+  { item: 'Drill-down transacciones + analÌtica', bronze: CROSS, gold: CROSS, platinum: CHECK },
   { item: 'Export transacciones (CSV)', bronze: CROSS, gold: CROSS, platinum: CHECK },
   { item: 'Export Power BI (ZIP) con detalle', bronze: CROSS, gold: CROSS, platinum: CHECK },
-  { item: 'Universal: an√°lisis + preview XLSX', bronze: CHECK, gold: CHECK, platinum: CHECK },
+  { item: 'Universal: an·lisis + preview XLSX', bronze: CHECK, gold: CHECK, platinum: CHECK },
   { item: 'Universal: correlaciones', bronze: CROSS, gold: CHECK, platinum: CHECK },
   { item: 'Universal: CSV normalizado + preview filas', bronze: CROSS, gold: CROSS, platinum: CHECK },
-  { item: 'Asistente (chat)', bronze: CROSS, gold: CROSS, platinum: CHECK },
+  { item: 'Assistant (reglas ∑ chat)', bronze: CROSS, gold: CROSS, platinum: CHECK },
   { item: 'Soporte objetivo', bronze: '48h', gold: '12h', platinum: '4h' }
 ]
 
 export default function PlanCapabilitiesTable({
   title = 'Comparativa por plan',
-  subtitle = 'Diferencias visibles y medibles en an√°lisis y asesoramiento.',
+  subtitle = 'Diferencias visibles y medibles en an·lisis y asesoramiento.',
   compact = false
 }: {
   title?: string
@@ -31,8 +31,8 @@ export default function PlanCapabilitiesTable({
   return (
     <section className={`card section ${compact ? 'soft' : ''}`.trim()}>
       <div className="pricing-matrix-head">
-        <h3 style={{ marginTop: 0 }}>{title}</h3>
-        {subtitle ? <p style={{ marginTop: 6 }}>{subtitle}</p> : null}
+        <h3 className="h3-reset">{title}</h3>
+        {subtitle ? <p className="m-0 mt-6">{subtitle}</p> : null}
       </div>
       <div className="pricing-table-wrap">
         <table className="table pricing-table">

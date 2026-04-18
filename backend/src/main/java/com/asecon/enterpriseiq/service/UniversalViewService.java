@@ -1,6 +1,7 @@
 package com.asecon.enterpriseiq.service;
 
 import com.asecon.enterpriseiq.dto.UniversalChartDataDto;
+import com.asecon.enterpriseiq.dto.UniversalEvidenceDto;
 import com.asecon.enterpriseiq.dto.UniversalFilter;
 import com.asecon.enterpriseiq.dto.UniversalViewRequest;
 import com.asecon.enterpriseiq.model.UniversalImport;
@@ -13,6 +14,7 @@ import java.io.OutputStreamWriter;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
+import java.text.Normalizer;
 import java.time.LocalDate;
 import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
@@ -24,7 +26,11 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.SplittableRandom;
+import java.util.TreeSet;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.apache.commons.csv.CSVPrinter;
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVParser;
@@ -47,6 +53,10 @@ public class UniversalViewService {
         DateTimeFormatter.ofPattern("d-M-uuuu"),
         DateTimeFormatter.ofPattern("dd-MM-uuuu")
     );
+    private static final Pattern YEAR_MONTH_NUMERIC = Pattern.compile("^(\\d{4})[-/.](\\d{1,2})$");
+    private static final Pattern YEAR_MONTH_NUMERIC_REVERSED = Pattern.compile("^(\\d{1,2})[-/.](\\d{4})$");
+    private static final Pattern YEAR_MONTH_TEXT = Pattern.compile("^(?<a>[\\p{L}.]+)[\\s\\-_/]+(?<b>\\d{4})$|^(?<c>\\d{4})[\\s\\-_/]+(?<d>[\\p{L}.]+)$");
+    private static final Map<String, Integer> MONTH_ALIASES = buildMonthAliases();
 
     private final UniversalImportFileService universalImportFileService;
     private final ObjectMapper objectMapper;
@@ -125,6 +135,7 @@ public class UniversalViewService {
             }
 
             Map<String, Object> meta = out.meta() == null ? new LinkedHashMap<>() : new LinkedHashMap<>(out.meta());
+            meta.putIfAbsent("request", requestLineage(request));
             if (latestImp != null) {
                 meta.putIfAbsent("sourceFilename", latestImp.getFilename());
                 meta.putIfAbsent("sourceImportedAt", latestImp.getCreatedAt() == null ? null : latestImp.getCreatedAt().toString());
@@ -162,6 +173,7 @@ public class UniversalViewService {
 
         UniversalChartDataDto out = previewBytes(bytes, request);
         Map<String, Object> meta = out.meta() == null ? new LinkedHashMap<>() : new LinkedHashMap<>(out.meta());
+        meta.putIfAbsent("request", requestLineage(request));
 
         UniversalImport imp = null;
         if (!fellBackToLatest) {
@@ -249,6 +261,314 @@ public class UniversalViewService {
         } catch (Exception ex) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No se pudo generar CSV de problemas: " + safeMsg(ex));
         }
+    }
+
+    public UniversalEvidenceDto evidence(Long companyId, UniversalViewRequest request, String focusLabel, int limit, Long importId) {
+        if (request == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Config vacío.");
+        String type = normType(request.getType());
+        if (type == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Tipo de dashboard inválido.");
+        if (limit < 10) limit = 10;
+        if (limit > 200) limit = 200;
+
+        UniversalImport imp = null;
+        try {
+            Optional<UniversalImport> found = universalImportFileService.find(companyId, importId);
+            imp = found.orElseGet(() -> universalImportFileService.latest(companyId).orElse(null));
+        } catch (Exception ignored) {
+            imp = null;
+        }
+
+        byte[] bytes = universalImportFileService.normalizedCsv(companyId, importId);
+        if (bytes == null || bytes.length == 0) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No hay dataset Universal.");
+
+        String head = new String(bytes, 0, Math.min(bytes.length, 4096), StandardCharsets.UTF_8);
+        int eol = head.indexOf('\n');
+        if (eol >= 0) head = head.substring(0, eol);
+        char delimiter = detectDelimiter(head);
+
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(new ByteArrayInputStream(bytes), StandardCharsets.UTF_8))) {
+            CSVParser parser = CSVFormat.DEFAULT.builder()
+                .setDelimiter(delimiter)
+                .setHeader()
+                .setSkipHeaderRecord(true)
+                .setAllowMissingColumnNames(true)
+                .setIgnoreEmptyLines(true)
+                .setIgnoreSurroundingSpaces(true)
+                .setTrim(true)
+                .build()
+                .parse(reader);
+
+            List<String> headers = new ArrayList<>(parser.getHeaderMap().keySet());
+            if (headers.isEmpty()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Dataset sin cabeceras.");
+            List<UniversalFilter> filters = normalizeFilters(parser, request);
+
+            EvidenceSpec spec = evidenceSpec(type, request, focusLabel);
+            if (spec == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Evidencia no soportada para este tipo.");
+            for (String h : spec.requiredColumns) requireMapped(parser, h);
+
+            List<String> viewHeaders = pickEvidenceHeaders(headers, spec.importantColumns, filters);
+            List<List<String>> rowsOut = new ArrayList<>();
+            List<Integer> rowNums = new ArrayList<>();
+
+            int scanned = 0;
+            int matched = 0;
+            int badInFocus = 0;
+            for (CSVRecord r : parser) {
+                scanned++;
+                if (scanned > MAX_ROWS) break;
+                if (!matchesFilters(r, filters)) continue;
+                if (!spec.matchesFocus().test(r)) continue;
+                matched++;
+
+                if (spec.requiresValidValue) {
+                    BigDecimal v = parseDecimal(clean(get(r, spec.valueColumn)));
+                    if (v == null) {
+                        badInFocus++;
+                        continue;
+                    }
+                }
+
+                rowsOut.add(projectRow(r, viewHeaders));
+                rowNums.add(scanned);
+                if (rowsOut.size() >= limit) break;
+            }
+
+            Map<String, Object> meta = new LinkedHashMap<>();
+            meta.put("type", type);
+            meta.put("request", requestLineage(request));
+            meta.put("filters", filtersToLineage(filters));
+            meta.put("focusLabel", focusLabel == null ? "" : focusLabel);
+            meta.put("rowsScanned", scanned);
+            meta.put("rowsMatched", matched);
+            meta.put("rowsReturned", rowsOut.size());
+            meta.put("truncated", scanned > MAX_ROWS);
+            meta.put("badRowsInFocus", badInFocus);
+            meta.putAll(spec.meta());
+            if (imp != null) {
+                meta.putIfAbsent("sourceFilename", imp.getFilename());
+                meta.putIfAbsent("sourceImportedAt", imp.getCreatedAt() == null ? null : imp.getCreatedAt().toString());
+                meta.putIfAbsent("sourceImportId", imp.getId());
+            }
+            if (rowsOut.isEmpty()) {
+                meta.put("warning", "Sin filas de evidencia para ese punto/segmento (revisa filtros, columna o formato).");
+            }
+
+            return new UniversalEvidenceDto(
+                imp == null ? null : imp.getFilename(),
+                viewHeaders,
+                rowsOut,
+                rowNums,
+                meta
+            );
+        } catch (ResponseStatusException ex) {
+            throw ex;
+        } catch (Exception ex) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No se pudo calcular evidencia: " + safeMsg(ex));
+        }
+    }
+
+    private record EvidenceSpec(
+        List<String> requiredColumns,
+        List<String> importantColumns,
+        boolean requiresValidValue,
+        String valueColumn,
+        java.util.function.Predicate<CSVRecord> matchesFocus,
+        Map<String, Object> meta
+    ) {}
+
+    private EvidenceSpec evidenceSpec(String type, UniversalViewRequest req, String focusLabel) {
+        String t = normType(type);
+        if (t == null) return null;
+
+        if ("TIME_SERIES".equals(t)) {
+            String dateCol = clean(req.getDateColumn());
+            String valCol = clean(req.getValueColumn());
+            if (isBlank(dateCol) || isBlank(valCol)) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Selecciona columna fecha y valor.");
+            }
+            if (isBlank(focusLabel)) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Falta focusLabel (YYYY-MM).");
+            }
+            YearMonth ym = parseYearMonth(String.valueOf(focusLabel).trim());
+            if (ym == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "focusLabel inválido. Usa YYYY-MM.");
+            String ymKey = ym.toString();
+            return new EvidenceSpec(
+                List.of(dateCol, valCol),
+                List.of(dateCol, valCol),
+                true,
+                valCol,
+                (r) -> {
+                    YearMonth k = parseYearMonth(clean(get(r, dateCol)));
+                    return k != null && ymKey.equals(k.toString());
+                },
+                Map.of("dateColumn", dateCol, "valueColumn", valCol, "bucket", ymKey)
+            );
+        }
+
+        if ("CATEGORY_BAR".equals(t)) {
+            String catCol = clean(req.getCategoryColumn());
+            String valCol = clean(req.getValueColumn());
+            if (isBlank(catCol) || isBlank(valCol)) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Selecciona columna categoría y valor.");
+            }
+            if (isBlank(focusLabel)) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Falta focusLabel (categoría).");
+            }
+            String key = String.valueOf(focusLabel).trim();
+            return new EvidenceSpec(
+                List.of(catCol, valCol),
+                List.of(catCol, valCol),
+                true,
+                valCol,
+                (r) -> Objects.equals(clean(get(r, catCol)), key),
+                Map.of("categoryColumn", catCol, "valueColumn", valCol, "category", key)
+            );
+        }
+
+        if ("KPI_CARDS".equals(t)) {
+            String valCol = clean(req.getValueColumn());
+            List<String> reqCols = new ArrayList<>();
+            List<String> important = new ArrayList<>();
+            if (!isBlank(valCol)) {
+                reqCols.add(valCol);
+                important.add(valCol);
+            }
+            return new EvidenceSpec(
+                reqCols,
+                important,
+                false,
+                valCol,
+                (r) -> true,
+                Map.of("valueColumn", valCol == null ? "" : valCol)
+            );
+        }
+
+        if ("SCATTER".equals(t)) {
+            String xCol = clean(req.getXColumn());
+            String yCol = clean(req.getYColumn());
+            if (isBlank(xCol) || isBlank(yCol)) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Selecciona columnas X e Y.");
+            }
+            if (isBlank(focusLabel)) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Falta focusLabel (x,y). Haz click en un punto.");
+            }
+            String[] parts = String.valueOf(focusLabel).split(",", 3);
+            if (parts.length < 2) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "focusLabel inválido para scatter. Usa 'x,y'.");
+            }
+            BigDecimal x0 = parseDecimal(clean(parts[0]));
+            BigDecimal y0 = parseDecimal(clean(parts[1]));
+            if (x0 == null || y0 == null) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "focusLabel inválido para scatter. Usa números (x,y).");
+            }
+            BigDecimal epsX = x0.abs().multiply(new BigDecimal("0.0005")).max(new BigDecimal("0.000001"));
+            BigDecimal epsY = y0.abs().multiply(new BigDecimal("0.0005")).max(new BigDecimal("0.000001"));
+            return new EvidenceSpec(
+                List.of(xCol, yCol),
+                List.of(xCol, yCol),
+                false,
+                null,
+                (r) -> {
+                    BigDecimal x = parseDecimal(clean(get(r, xCol)));
+                    BigDecimal y = parseDecimal(clean(get(r, yCol)));
+                    if (x == null || y == null) return false;
+                    return x.subtract(x0).abs().compareTo(epsX) <= 0 && y.subtract(y0).abs().compareTo(epsY) <= 0;
+                },
+                Map.of("xColumn", xCol, "yColumn", yCol, "x", x0, "y", y0, "epsX", epsX, "epsY", epsY)
+            );
+        }
+
+        if ("HEATMAP".equals(t)) {
+            String xCol = clean(req.getXColumn());
+            String yCol = clean(req.getYColumn());
+            String valCol = clean(req.getValueColumn());
+            if (isBlank(xCol) || isBlank(yCol) || isBlank(valCol)) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Selecciona columnas X, Y y Valor.");
+            }
+            if (isBlank(focusLabel)) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Falta focusLabel (xLabel||yLabel). Haz click en una celda.");
+            }
+            String raw = String.valueOf(focusLabel);
+            int sep = raw.indexOf("||");
+            if (sep < 0) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "focusLabel inválido para heatmap. Usa 'xLabel||yLabel'.");
+            String xLabel = raw.substring(0, sep).trim();
+            String yLabel = raw.substring(sep + 2).trim();
+            if (isBlank(xLabel) || isBlank(yLabel)) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "focusLabel inválido para heatmap.");
+            return new EvidenceSpec(
+                List.of(xCol, yCol, valCol),
+                List.of(xCol, yCol, valCol),
+                true,
+                valCol,
+                (r) -> Objects.equals(clean(get(r, xCol)), xLabel) && Objects.equals(clean(get(r, yCol)), yLabel),
+                Map.of("xColumn", xCol, "yColumn", yCol, "valueColumn", valCol, "xLabel", xLabel, "yLabel", yLabel)
+            );
+        }
+
+        if ("PIVOT_MONTHLY".equals(t)) {
+            String dateCol = clean(req.getDateColumn());
+            String catCol = clean(req.getCategoryColumn());
+            String valCol = clean(req.getValueColumn());
+            if (isBlank(dateCol) || isBlank(catCol) || isBlank(valCol)) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Selecciona columna fecha, categoría y valor.");
+            }
+            if (isBlank(focusLabel)) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Falta focusLabel (categoria||YYYY-MM). Haz click en una barra.");
+            }
+            String raw = String.valueOf(focusLabel);
+            int sep = raw.indexOf("||");
+            if (sep < 0) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "focusLabel inválido para pivote. Usa 'categoria||YYYY-MM'.");
+            String cat = raw.substring(0, sep).trim();
+            String month = raw.substring(sep + 2).trim();
+            YearMonth ym = parseYearMonth(month);
+            if (isBlank(cat) || ym == null) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "focusLabel inválido para pivote. Usa 'categoria||YYYY-MM'.");
+            }
+            String ymKey = ym.toString();
+            return new EvidenceSpec(
+                List.of(dateCol, catCol, valCol),
+                List.of(dateCol, catCol, valCol),
+                true,
+                valCol,
+                (r) -> {
+                    YearMonth k = parseYearMonth(clean(get(r, dateCol)));
+                    return k != null && ymKey.equals(k.toString()) && Objects.equals(clean(get(r, catCol)), cat);
+                },
+                Map.of("dateColumn", dateCol, "categoryColumn", catCol, "valueColumn", valCol, "category", cat, "bucket", ymKey)
+            );
+        }
+
+        return null;
+    }
+
+    private static List<String> pickEvidenceHeaders(List<String> headers, List<String> importantColumns, List<UniversalFilter> filters) {
+        TreeSet<String> picked = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+        List<String> out = new ArrayList<>();
+
+        for (String h : importantColumns == null ? List.<String>of() : importantColumns) {
+            if (isBlank(h)) continue;
+            if (picked.add(h)) out.add(h);
+        }
+        for (UniversalFilter f : filters == null ? List.<UniversalFilter>of() : filters) {
+            String c = clean(f == null ? null : f.getColumn());
+            if (isBlank(c)) continue;
+            if (picked.add(c)) out.add(c);
+        }
+
+        int max = 22;
+        for (String h : headers) {
+            if (out.size() >= max) break;
+            if (isBlank(h)) continue;
+            if (picked.add(h)) out.add(h);
+        }
+        return out;
+    }
+
+    private static List<String> projectRow(CSVRecord record, List<String> headers) {
+        List<String> row = new ArrayList<>(headers.size());
+        for (String h : headers) {
+            row.add(record.isMapped(h) ? safeCell(record.get(h)) : "");
+        }
+        return row;
     }
 
     private record ProblemColumns(String dateCol, String valueCol, String xCol, String yCol) {}
@@ -417,6 +737,7 @@ public class UniversalViewService {
         meta.put("rowsUsed", used);
         meta.put("rowsScanned", rows);
         meta.put("truncated", rows > MAX_ROWS);
+        meta.put("filters", filtersToLineage(filters));
         meta.put("dateColumn", dateCol);
         meta.put("valueColumn", valCol);
         meta.put("badDateCount", badDates);
@@ -494,6 +815,7 @@ public class UniversalViewService {
         meta.put("rowsUsed", used);
         meta.put("rowsScanned", rows);
         meta.put("truncated", rows > MAX_ROWS);
+        meta.put("filters", filtersToLineage(filters));
         meta.put("categoryColumn", catCol);
         meta.put("valueColumn", valCol);
         meta.put("badNumberCount", badNums);
@@ -564,6 +886,7 @@ public class UniversalViewService {
         meta.put("rowsUsed", used);
         meta.put("rowsScanned", rows);
         meta.put("truncated", rows > MAX_ROWS);
+        meta.put("filters", filtersToLineage(filters));
         meta.put("valueColumn", valCol == null ? "" : valCol);
         meta.put("filterColumn", clean(req.getFilterColumn()));
         meta.put("filterValue", clean(req.getFilterValue()));
@@ -632,6 +955,7 @@ public class UniversalViewService {
         meta.put("rowsScanned", rows);
         meta.put("truncated", rows > MAX_ROWS);
         meta.put("sampled", sampled);
+        meta.put("filters", filtersToLineage(filters));
         meta.put("xColumn", xCol);
         meta.put("yColumn", yCol);
         meta.put("maxPoints", maxPoints);
@@ -719,6 +1043,7 @@ public class UniversalViewService {
         meta.put("rowsUsed", used);
         meta.put("rowsScanned", rows);
         meta.put("truncated", rows > MAX_ROWS);
+        meta.put("filters", filtersToLineage(filters));
         meta.put("xColumn", xCol);
         meta.put("yColumn", yCol);
         meta.put("valueColumn", valCol);
@@ -812,6 +1137,7 @@ public class UniversalViewService {
         meta.put("rowsUsed", used);
         meta.put("rowsScanned", rows);
         meta.put("truncated", rows > MAX_ROWS);
+        meta.put("filters", filtersToLineage(filters));
         meta.put("dateColumn", dateCol);
         meta.put("categoryColumn", catCol);
         meta.put("valueColumn", valCol);
@@ -868,6 +1194,65 @@ public class UniversalViewService {
         return out;
     }
 
+    private static List<Map<String, String>> filtersToLineage(List<UniversalFilter> filters) {
+        if (filters == null || filters.isEmpty()) return List.of();
+        List<Map<String, String>> out = new ArrayList<>();
+        for (UniversalFilter f : filters) {
+            if (f == null) continue;
+            String col = clean(f.getColumn());
+            String op = normFilterOp(f.getOp());
+            String val = clean(f.getValue());
+            if (col == null || op == null || val == null) continue;
+            Map<String, String> m = new LinkedHashMap<>();
+            m.put("column", col);
+            m.put("op", op);
+            m.put("value", val.length() > 120 ? val.substring(0, 120) + "…" : val);
+            out.add(m);
+        }
+        return out;
+    }
+
+    private static Map<String, Object> requestLineage(UniversalViewRequest req) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        if (req == null) return out;
+
+        String name = clean(req.getName());
+        String type = normType(req.getType());
+        if (name != null) out.put("name", name);
+        if (type != null) out.put("type", type);
+
+        String dateCol = clean(req.getDateColumn());
+        String valueCol = clean(req.getValueColumn());
+        String categoryCol = clean(req.getCategoryColumn());
+        String xCol = clean(req.getXColumn());
+        String yCol = clean(req.getYColumn());
+        String aggregation = clean(req.getAggregation());
+
+        if (dateCol != null) out.put("dateColumn", dateCol);
+        if (valueCol != null) out.put("valueColumn", valueCol);
+        if (categoryCol != null) out.put("categoryColumn", categoryCol);
+        if (xCol != null) out.put("xColumn", xCol);
+        if (yCol != null) out.put("yColumn", yCol);
+        if (aggregation != null) out.put("aggregation", aggregation);
+
+        if (req.getTopN() != null) out.put("topN", req.getTopN());
+        if (req.getMaxPoints() != null) out.put("maxPoints", req.getMaxPoints());
+
+        List<Map<String, String>> filters = filtersToLineage(req.getFilters());
+        if (!filters.isEmpty()) out.put("filters", filters);
+
+        String legacyCol = clean(req.getFilterColumn());
+        String legacyVal = clean(req.getFilterValue());
+        if (legacyCol != null || legacyVal != null) {
+            Map<String, String> legacy = new LinkedHashMap<>();
+            if (legacyCol != null) legacy.put("column", legacyCol);
+            legacy.put("op", "eq");
+            if (legacyVal != null) legacy.put("value", legacyVal.length() > 120 ? legacyVal.substring(0, 120) + "…" : legacyVal);
+            out.put("legacyFilter", legacy);
+        }
+        return out;
+    }
+
     private static boolean matchesFilters(CSVRecord record, List<UniversalFilter> filters) {
         if (filters == null || filters.isEmpty()) return true;
         for (UniversalFilter f : filters) {
@@ -883,6 +1268,13 @@ public class UniversalViewService {
         String wanted = clean(f.getValue());
         if (col == null || op == null || wanted == null) return true;
         String actual = clean(get(record, col));
+
+        if ("month_eq".equals(op)) {
+            YearMonth w = parseYearMonth(wanted);
+            if (w == null) return false;
+            YearMonth a = parseYearMonth(actual);
+            return a != null && a.equals(w);
+        }
 
         if ("year_eq".equals(op)) {
             Integer y = parseIntSafe(wanted);
@@ -923,6 +1315,7 @@ public class UniversalViewService {
         return switch (s) {
             case "eq", "equals" -> "eq";
             case "contains", "like" -> "contains";
+            case "month", "month_eq", "monthEquals" -> "month_eq";
             case "year", "year_eq", "yearEquals" -> "year_eq";
             case "gt" -> "gt";
             case "gte" -> "gte";
@@ -984,12 +1377,9 @@ public class UniversalViewService {
         if (raw == null) return null;
         String s = raw.trim();
         if (s.isBlank()) return null;
-        // If it's already YYYY-MM
-        try {
-            if (s.matches("\\d{4}-\\d{2}")) return YearMonth.parse(s);
-        } catch (Exception ignored) {}
+        YearMonth direct = parseLooseYearMonth(s);
+        if (direct != null) return direct;
 
-        // If it's a date, take month.
         LocalDate d = parseFlexibleDate(s);
         if (d != null) {
             return YearMonth.of(d.getYear(), d.getMonth());
@@ -1007,6 +1397,86 @@ public class UniversalViewService {
             } catch (DateTimeParseException ignored) {}
         }
         return null;
+    }
+
+    private static YearMonth parseLooseYearMonth(String raw) {
+        String s = cleanMonthText(raw);
+        if (s == null) return null;
+
+        try {
+            if (s.matches("\\d{4}-\\d{2}")) return YearMonth.parse(s);
+        } catch (Exception ignored) {}
+
+        Matcher numeric = YEAR_MONTH_NUMERIC.matcher(s);
+        if (numeric.matches()) {
+            return buildYearMonth(parseIntSafe(numeric.group(1)), parseIntSafe(numeric.group(2)));
+        }
+
+        Matcher reversed = YEAR_MONTH_NUMERIC_REVERSED.matcher(s);
+        if (reversed.matches()) {
+            return buildYearMonth(parseIntSafe(reversed.group(2)), parseIntSafe(reversed.group(1)));
+        }
+
+        Matcher textual = YEAR_MONTH_TEXT.matcher(s);
+        if (textual.matches()) {
+            String yearRaw = textual.group("b") != null ? textual.group("b") : textual.group("c");
+            String monthRaw = textual.group("a") != null ? textual.group("a") : textual.group("d");
+            Integer year = parseIntSafe(yearRaw);
+            Integer month = monthFromAlias(monthRaw);
+            return buildYearMonth(year, month);
+        }
+
+        return null;
+    }
+
+    private static YearMonth buildYearMonth(Integer year, Integer month) {
+        if (year == null || month == null) return null;
+        if (month < 1 || month > 12) return null;
+        try {
+            return YearMonth.of(year, month);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private static Integer monthFromAlias(String raw) {
+        String normalized = cleanMonthText(raw);
+        if (normalized == null) return null;
+        return MONTH_ALIASES.get(normalized);
+    }
+
+    private static String cleanMonthText(String raw) {
+        if (raw == null) return null;
+        String normalized = Normalizer.normalize(raw, Normalizer.Form.NFD)
+            .replaceAll("\\p{M}+", "")
+            .toLowerCase(Locale.ROOT)
+            .replace('.', ' ')
+            .trim()
+            .replaceAll("\\s+", " ");
+        return normalized.isBlank() ? null : normalized;
+    }
+
+    private static Map<String, Integer> buildMonthAliases() {
+        Map<String, Integer> out = new HashMap<>();
+        addMonthAlias(out, 1, "jan", "january", "ene", "enero");
+        addMonthAlias(out, 2, "feb", "february", "febrero");
+        addMonthAlias(out, 3, "mar", "march", "marzo");
+        addMonthAlias(out, 4, "apr", "april", "abr", "abril");
+        addMonthAlias(out, 5, "may", "mayo");
+        addMonthAlias(out, 6, "jun", "june", "junio");
+        addMonthAlias(out, 7, "jul", "july", "julio");
+        addMonthAlias(out, 8, "aug", "august", "ago", "agosto");
+        addMonthAlias(out, 9, "sep", "sept", "september", "set", "septiembre", "setiembre");
+        addMonthAlias(out, 10, "oct", "october", "octubre");
+        addMonthAlias(out, 11, "nov", "november", "noviembre");
+        addMonthAlias(out, 12, "dec", "december", "dic", "diciembre");
+        return out;
+    }
+
+    private static void addMonthAlias(Map<String, Integer> out, int month, String... aliases) {
+        for (String alias : aliases) {
+            out.put(alias, month);
+        }
     }
 
     private static String normAgg(String raw) {
