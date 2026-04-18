@@ -34,6 +34,9 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
+      - name: Check text encoding (mojibake)
+        run: node scripts/check-mojibake.mjs
+
       - name: Frontend install
         working-directory: frontend
         run: npm ci

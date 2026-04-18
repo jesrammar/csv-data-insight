@@ -1,4 +1,4 @@
-const eur = new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR', maximumFractionDigits: 2 })
+﻿const eur = new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR', maximumFractionDigits: 2 })
 
 export function formatCompactNumber(n: number) {
   const abs = Math.abs(n)
@@ -11,7 +11,6 @@ export function formatCompactNumber(n: number) {
 export function formatChartValue(n: number, unit?: string) {
   if (!Number.isFinite(n)) return '—'
   if (unit === '%') return `${n.toFixed(1)}%`
-  if (unit === '€') return eur.format(n)
+  if (unit === '€' || unit?.toUpperCase() === 'EUR') return eur.format(n)
   return `${formatCompactNumber(n)}${unit || ''}`
 }
-

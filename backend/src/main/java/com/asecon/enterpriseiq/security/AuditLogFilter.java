@@ -115,6 +115,17 @@ public class AuditLogFilter extends OncePerRequestFilter {
         if ("GET".equals(method) && path.endsWith("/powerbi/export.zip")) return new ResolvedAction("POWERBI_EXPORT_ZIP", companyId, "POWERBI", null);
         if ("POST".equals(method) && path.endsWith("/reports")) return new ResolvedAction("REPORT_GENERATE", companyId, "REPORT", null);
 
+        // Assistant (rules today; reserved for future AI)
+        if ("POST".equals(method) && path.endsWith("/assistant/chat")) return new ResolvedAction("ASSISTANT_CHAT", companyId, "ASSISTANT", null);
+        if ("POST".equals(method) && path.endsWith("/assistant/report")) return new ResolvedAction("ASSISTANT_REPORT", companyId, "ASSISTANT", null);
+
+        // Company product settings
+        if ("GET".equals(method) && path.endsWith("/settings")) return new ResolvedAction("COMPANY_SETTINGS_GET", companyId, "SETTINGS", null);
+        if ("PUT".equals(method) && path.endsWith("/settings")) return new ResolvedAction("COMPANY_SETTINGS_UPDATE", companyId, "SETTINGS", null);
+        if ("GET".equals(method) && path.contains("/mappings/")) return new ResolvedAction("COMPANY_MAPPING_GET", companyId, "MAPPING", null);
+        if ("PUT".equals(method) && path.contains("/mappings/")) return new ResolvedAction("COMPANY_MAPPING_UPSERT", companyId, "MAPPING", null);
+        if ("GET".equals(method) && path.endsWith("/checklist")) return new ResolvedAction("CHECKLIST_GET", companyId, "CHECKLIST", null);
+
         // Tribunal
         if ("POST".equals(method) && path.endsWith("/tribunal/imports")) return new ResolvedAction("TRIBUNAL_UPLOAD", companyId, "TRIBUNAL", null);
         if ("GET".equals(method) && path.endsWith("/tribunal/exports.csv")) return new ResolvedAction("TRIBUNAL_EXPORT_CSV", companyId, "TRIBUNAL", null);
@@ -135,6 +146,9 @@ public class AuditLogFilter extends OncePerRequestFilter {
         // Universal dashboards
         if ("POST".equals(method) && path.endsWith("/universal/builder/preview")) return new ResolvedAction("UNIVERSAL_BUILDER_PREVIEW", companyId, "UNIVERSAL", null);
         if ("POST".equals(method) && path.endsWith("/universal/builder/problems.csv")) return new ResolvedAction("UNIVERSAL_BUILDER_PROBLEMS_CSV", companyId, "UNIVERSAL", null);
+        if ("POST".equals(method) && path.endsWith("/universal/builder/evidence")) return new ResolvedAction("UNIVERSAL_BUILDER_EVIDENCE", companyId, "UNIVERSAL", null);
+        if ("POST".equals(method) && path.contains("/universal/views/") && path.endsWith("/evidence")) return new ResolvedAction("UNIVERSAL_VIEW_EVIDENCE", companyId, "UNIVERSAL_VIEW", null);
+        if ("GET".equals(method) && path.endsWith("/universal/quality")) return new ResolvedAction("UNIVERSAL_IMPORT_QUALITY", companyId, "UNIVERSAL_IMPORT", null);
         if ("POST".equals(method) && path.endsWith("/universal/views")) return new ResolvedAction("UNIVERSAL_VIEW_CREATE", companyId, "UNIVERSAL_VIEW", null);
 
         Matcher uv = UNIVERSAL_VIEW.matcher(path);

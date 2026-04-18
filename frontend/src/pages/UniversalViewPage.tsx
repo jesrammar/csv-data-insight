@@ -1,10 +1,16 @@
-import { useQuery } from '@tanstack/react-query'
+﻿import { useQuery } from '@tanstack/react-query'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
-import { getUniversalViewDataForImport, listUniversalImports, type UniversalChartData, type UniversalImportDto } from '../api'
+import { getUniversalLineage, getUniversalViewDataForImport, getUniversalViewEvidenceForImport, listUniversalImports, type UniversalChartData, type UniversalEvidenceDto, type UniversalImportDto } from '../api'
 import { useCompanySelection } from '../hooks/useCompany'
 import PageHeader from '../components/ui/PageHeader'
 import Alert from '../components/ui/Alert'
 import EChart from '../components/charts/EChart'
+import ChartNarrative from '../components/charts/ChartNarrative'
+import LineagePanel from '../components/charts/LineagePanel'
+import ExplainThisChart from '../components/charts/ExplainThisChart'
+import Reveal from '../components/ui/Reveal'
+import { buildUniversalChartNarrative } from '../utils/universalChartNarrative'
 
 function asNum(x: string | undefined) {
   const n = Number(x)
@@ -30,6 +36,12 @@ export default function UniversalViewPage() {
     enabled: !!companyId
   })
 
+  const { data: lineage } = useQuery({
+    queryKey: ['universal-lineage', companyId, overrideImportId ?? 'latest'],
+    queryFn: () => getUniversalLineage(companyId as number, overrideImportId),
+    enabled: !!companyId
+  })
+
   const importsList = (imports || []) as UniversalImportDto[]
 
   const chart = (data && typeof data === 'object' ? (data as UniversalChartData) : undefined) as UniversalChartData | undefined
@@ -38,6 +50,84 @@ export default function UniversalViewPage() {
   const values = series0?.data || []
   const t = String(chart?.type || '').toUpperCase()
   const isBar = t.includes('CATEGORY')
+  const isAdvancedType = t === 'SCATTER' || t === 'HEATMAP' || t === 'PIVOT_MONTHLY'
+  const canUseEvidence = plan === 'GOLD' || plan === 'PLATINUM'
+
+  const lastLabel = labels.length ? String(labels[labels.length - 1] || '') : ''
+  const [focusLabel, setFocusLabel] = useState(lastLabel)
+
+  useEffect(() => {
+    setFocusLabel(lastLabel)
+  }, [lastLabel])
+
+  const narrative = useMemo(() => buildUniversalChartNarrative(chart, focusLabel), [chart, focusLabel])
+
+  const [evidence, setEvidence] = useState<UniversalEvidenceDto | null>(null)
+  const [evidenceLoading, setEvidenceLoading] = useState(false)
+  const [evidenceError, setEvidenceError] = useState<string | null>(null)
+  const [autoEvidence, setAutoEvidence] = useState(true)
+  const evidenceRequestSeq = useRef(0)
+
+  useEffect(() => {
+    evidenceRequestSeq.current += 1
+    setEvidence(null)
+    setEvidenceError(null)
+  }, [id, overrideImportId, t])
+
+  useEffect(() => {
+    if (!canUseEvidence) return
+    if (!autoEvidence) return
+    const focus = String(focusLabel || '').trim()
+    if (!focus) return
+    const timer = window.setTimeout(() => {
+      loadEvidence(focus)
+    }, 350)
+    return () => window.clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canUseEvidence, autoEvidence, focusLabel, t, id, overrideImportId, companyId])
+
+  async function loadEvidence(explicitFocus?: string) {
+    if (!companyId || !id) return
+    if (!canUseEvidence) return
+    const focus = String(explicitFocus ?? focusLabel ?? '').trim()
+    if (!focus) return
+    const requestId = ++evidenceRequestSeq.current
+    setEvidenceLoading(true)
+    setEvidenceError(null)
+    try {
+      const res = await getUniversalViewEvidenceForImport(companyId as number, id as number, focus, 40, overrideImportId)
+      if (requestId !== evidenceRequestSeq.current) return
+      setEvidence(res)
+    } catch (e: any) {
+      if (requestId !== evidenceRequestSeq.current) return
+      setEvidence(null)
+      setEvidenceError(e?.message || 'No se pudo cargar evidencia.')
+    } finally {
+      if (requestId !== evidenceRequestSeq.current) return
+      setEvidenceLoading(false)
+    }
+  }
+
+  function downloadEvidenceCsv(ev: UniversalEvidenceDto) {
+    const headers = Array.isArray(ev.headers) ? ev.headers : []
+    const rows = Array.isArray(ev.rows) ? ev.rows : []
+    const esc = (s: any) => {
+      const v = String(s ?? '')
+      const needs = v.includes('"') || v.includes(',') || v.includes('\n') || v.includes('\r')
+      const q = v.replace(/"/g, '""')
+      return needs ? `"${q}"` : q
+    }
+    const csv = [headers.map(esc).join(','), ...rows.map((r) => (Array.isArray(r) ? r : []).map(esc).join(','))].join('\n')
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `universal-evidencia-${new Date().toISOString().slice(0, 10)}.csv`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  }
 
   return (
     <div>
@@ -45,7 +135,7 @@ export default function UniversalViewPage() {
         title="Dashboard Universal"
         subtitle="Vista compartible a partir de plantilla guardada."
         actions={
-          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          <div className="row row-center row-wrap gap-10">
             <span className="badge">{plan}</span>
             <Link className="badge" to="/universal/views">
               Mis dashboards
@@ -96,56 +186,60 @@ export default function UniversalViewPage() {
       ) : null}
 
       {!id ? (
-        <Alert tone="danger" title="ID inválido">
-          URL inválida.
+        <Alert tone="danger" title="ID invalido">
+          URL invalida.
         </Alert>
       ) : null}
 
       {error ? (
-        <div style={{ marginTop: 12 }}>
+        <div className="mt-12">
           <Alert tone="danger">{String((error as any)?.message || error)}</Alert>
         </div>
       ) : null}
 
       {isPending ? (
         <div className="card section" aria-busy="true">
-          <div className="empty">Cargando dashboard…</div>
+          <div className="empty">Cargando dashboard...</div>
         </div>
       ) : null}
 
       {!isPending && !error && companyId && id && !chart ? (
-        <div style={{ marginTop: 12 }}>
+        <div className="mt-12">
           <Alert tone="warning" title="Sin datos para este dashboard">
-            Este dashboard se calcula con el último dataset subido en Universal. Sube (o re‑sube) un fichero en Universal y vuelve a abrir este enlace.
+            Este dashboard se calcula con el ultimo dataset subido en Universal. Sube o vuelve a subir un fichero en Universal y abre este enlace de nuevo.
+          </Alert>
+        </div>
+      ) : null}
+
+      {chart && plan === 'BRONZE' && isAdvancedType ? (
+        <div className="mt-12">
+          <Alert tone="warning" title="Grafico avanzado">
+            Este dashboard usa un tipo de grafico avanzado (scatter, heatmap o pivote). En plan BRONZE se recomienda usar series temporales o rankings para que se entienda solo.
           </Alert>
         </div>
       ) : null}
 
       {chart && t === 'KPI_CARDS' ? (
-        <div className="card section">
-          <h3 style={{ marginTop: 0 }}>KPIs</h3>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(160px,1fr))', gap: 12 }}>
+        <Reveal className="card section">
+          <h3 className="h3-reset">KPIs</h3>
+          <div className="grid grid-min-160 grid-gap-12">
             {labels.map((k, idx) => (
               <div key={`${k}-${idx}`} className="card soft">
-                <div className="upload-hint" style={{ textTransform: 'uppercase' }}>
-                  {k}
-                </div>
-                <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6 }}>{String(values?.[idx] ?? '—')}</div>
+                <div className="upload-hint ttu">{k}</div>
+                <div className="fs-22 fw-700 mt-1">{String(values?.[idx] ?? '-')}</div>
               </div>
             ))}
           </div>
-          {chart.meta ? (
-            <div className="upload-hint" style={{ marginTop: 10 }}>
-              {Object.entries(chart.meta)
-                .slice(0, 6)
-                .map(([k, v]) => `${k}=${String(v)}`)
-                .join(' • ')}
-            </div>
-          ) : null}
+          <ExplainThisChart see={narrative.see} why={narrative.why} todo={narrative.todo} focusLabel={focusLabel} className="mt-2" />
+          <details className="mt-12">
+            <summary className="upload-hint cursor-pointer">Más contexto</summary>
+            <ChartNarrative title="Lectura rápida" see={narrative.see} why={narrative.why} todo={narrative.todo} className="mt-12" />
+          </details>
+
           {Array.isArray((chart.meta as any)?.warnings) && (chart.meta as any).warnings.length ? (
-            <div style={{ marginTop: 10 }}>
+            <div className="mt-2">
               <Alert tone="warning" title="Avisos">
-                <ul style={{ margin: 0, paddingLeft: 18 }}>
+                <ul className="list-steps">
                   {(chart.meta as any).warnings.slice(0, 8).map((w: any, idx: number) => (
                     <li key={`${idx}`}>{String(w)}</li>
                   ))}
@@ -153,12 +247,17 @@ export default function UniversalViewPage() {
               </Alert>
             </div>
           ) : null}
-        </div>
+        </Reveal>
       ) : chart && t === 'SCATTER' ? (
-        <div className="card section">
-          <h3 style={{ marginTop: 0 }}>{series0?.name || 'Scatter'}</h3>
+        <Reveal className="card section">
+          <h3 className="h3-reset">{series0?.name || 'Scatter'}</h3>
           <EChart
-            style={{ height: 360 }}
+            module="universal"
+            height={360}
+            onClick={(params) => {
+              const v = params?.value
+              if (Array.isArray(v) && v.length >= 2) setFocusLabel(`${v[0]},${v[1]}`)
+            }}
             option={
               {
                 tooltip: { trigger: 'item' },
@@ -168,18 +267,16 @@ export default function UniversalViewPage() {
               } as any
             }
           />
-          {chart.meta ? (
-            <div className="upload-hint" style={{ marginTop: 10 }}>
-              {Object.entries(chart.meta)
-                .slice(0, 6)
-                .map(([k, v]) => `${k}=${String(v)}`)
-                .join(' • ')}
-            </div>
-          ) : null}
+          <ExplainThisChart see={narrative.see} why={narrative.why} todo={narrative.todo} focusLabel={focusLabel} className="mt-2" />
+          <details className="mt-12">
+            <summary className="upload-hint cursor-pointer">Más contexto</summary>
+            <ChartNarrative title="Lectura rápida" see={narrative.see} why={narrative.why} todo={narrative.todo} className="mt-12" />
+          </details>
+
           {Array.isArray((chart.meta as any)?.warnings) && (chart.meta as any).warnings.length ? (
-            <div style={{ marginTop: 10 }}>
+            <div className="mt-2">
               <Alert tone="warning" title="Avisos">
-                <ul style={{ margin: 0, paddingLeft: 18 }}>
+                <ul className="list-steps">
                   {(chart.meta as any).warnings.slice(0, 8).map((w: any, idx: number) => (
                     <li key={`${idx}`}>{String(w)}</li>
                   ))}
@@ -187,12 +284,21 @@ export default function UniversalViewPage() {
               </Alert>
             </div>
           ) : null}
-        </div>
+        </Reveal>
       ) : chart && t === 'HEATMAP' ? (
-        <div className="card section">
-          <h3 style={{ marginTop: 0 }}>{series0?.name || 'Heatmap'}</h3>
+        <Reveal className="card section">
+          <h3 className="h3-reset">{series0?.name || 'Heatmap'}</h3>
           <EChart
-            style={{ height: 420 }}
+            module="universal"
+            height={420}
+            onClick={(params) => {
+              const v = params?.value
+              const ix = Array.isArray(v) ? v[0] : null
+              const iy = Array.isArray(v) ? v[1] : null
+              const xLabel = labels?.[Number(ix)] ?? ''
+              const yLabel = ((chart.meta as any)?.yLabels || [])?.[Number(iy)] ?? ''
+              if (xLabel && yLabel) setFocusLabel(`${xLabel}||${yLabel}`)
+            }}
             option={
               (() => {
                 const pts = (values || []) as any[]
@@ -208,18 +314,16 @@ export default function UniversalViewPage() {
               })()
             }
           />
-          {chart.meta ? (
-            <div className="upload-hint" style={{ marginTop: 10 }}>
-              {Object.entries(chart.meta)
-                .slice(0, 6)
-                .map(([k, v]) => `${k}=${String(v)}`)
-                .join(' • ')}
-            </div>
-          ) : null}
+          <ExplainThisChart see={narrative.see} why={narrative.why} todo={narrative.todo} focusLabel={focusLabel} className="mt-2" />
+          <details className="mt-12">
+            <summary className="upload-hint cursor-pointer">Más contexto</summary>
+            <ChartNarrative title="Lectura rápida" see={narrative.see} why={narrative.why} todo={narrative.todo} className="mt-12" />
+          </details>
+
           {Array.isArray((chart.meta as any)?.warnings) && (chart.meta as any).warnings.length ? (
-            <div style={{ marginTop: 10 }}>
+            <div className="mt-2">
               <Alert tone="warning" title="Avisos">
-                <ul style={{ margin: 0, paddingLeft: 18 }}>
+                <ul className="list-steps">
                   {(chart.meta as any).warnings.slice(0, 8).map((w: any, idx: number) => (
                     <li key={`${idx}`}>{String(w)}</li>
                   ))}
@@ -227,12 +331,18 @@ export default function UniversalViewPage() {
               </Alert>
             </div>
           ) : null}
-        </div>
+        </Reveal>
       ) : chart && t === 'PIVOT_MONTHLY' ? (
-        <div className="card section">
-          <h3 style={{ marginTop: 0 }}>Tabla pivote</h3>
+        <Reveal className="card section">
+          <h3 className="h3-reset">Tabla pivote</h3>
           <EChart
-            style={{ height: 360 }}
+            module="universal"
+            height={360}
+            onClick={(params) => {
+              const month = String(params?.name ?? params?.axisValue ?? '').trim()
+              const cat = String(params?.seriesName ?? '').trim()
+              if (cat && month) setFocusLabel(`${cat}||${month}`)
+            }}
             option={
               {
                 tooltip: { trigger: 'axis' },
@@ -243,11 +353,16 @@ export default function UniversalViewPage() {
               } as any
             }
           />
-          <div style={{ overflowX: 'auto', marginTop: 12 }}>
+          <ExplainThisChart see={narrative.see} why={narrative.why} todo={narrative.todo} focusLabel={focusLabel} className="mt-2" />
+          <details className="mt-12">
+            <summary className="upload-hint cursor-pointer">Más contexto</summary>
+            <ChartNarrative title="Lectura rápida" see={narrative.see} why={narrative.why} todo={narrative.todo} className="mt-12" />
+          </details>
+          <div className="overflow-auto mt-12">
             <table className="table">
               <thead>
                 <tr>
-                  <th>Categoría</th>
+                    <th>Categoria</th>
                   {labels.map((m) => (
                     <th key={m}>{m}</th>
                   ))}
@@ -265,18 +380,11 @@ export default function UniversalViewPage() {
               </tbody>
             </table>
           </div>
-          {chart.meta ? (
-            <div className="upload-hint" style={{ marginTop: 10 }}>
-              {Object.entries(chart.meta)
-                .slice(0, 6)
-                .map(([k, v]) => `${k}=${String(v)}`)
-                .join(' • ')}
-            </div>
-          ) : null}
+          
           {Array.isArray((chart.meta as any)?.warnings) && (chart.meta as any).warnings.length ? (
-            <div style={{ marginTop: 10 }}>
+            <div className="mt-2">
               <Alert tone="warning" title="Avisos">
-                <ul style={{ margin: 0, paddingLeft: 18 }}>
+                <ul className="list-steps">
                   {(chart.meta as any).warnings.slice(0, 8).map((w: any, idx: number) => (
                     <li key={`${idx}`}>{String(w)}</li>
                   ))}
@@ -284,12 +392,15 @@ export default function UniversalViewPage() {
               </Alert>
             </div>
           ) : null}
-        </div>
+        </Reveal>
       ) : chart && labels.length ? (
-        <div className="card section">
-          <h3 style={{ marginTop: 0 }}>{series0?.name || 'Gráfico'}</h3>
+        <Reveal className="card section">
+          <h3 className="h3-reset">{series0?.name || 'Grafico'}</h3>
           <EChart
-            style={{ height: 360 }}
+            module="universal"
+            height={360}
+            onAxisHover={(label) => setFocusLabel(String(label || ''))}
+            onLeave={() => setFocusLabel(lastLabel)}
             option={
               isBar
                 ? ({
@@ -306,18 +417,16 @@ export default function UniversalViewPage() {
                   } as any)
             }
           />
-          {chart.meta ? (
-            <div className="upload-hint" style={{ marginTop: 10 }}>
-              {Object.entries(chart.meta)
-                .slice(0, 6)
-                .map(([k, v]) => `${k}=${String(v)}`)
-                .join(' • ')}
-            </div>
-          ) : null}
+          <ExplainThisChart see={narrative.see} why={narrative.why} todo={narrative.todo} focusLabel={focusLabel} className="mt-2" />
+          <details className="mt-12">
+            <summary className="upload-hint cursor-pointer">Más contexto</summary>
+            <ChartNarrative title="Lectura rápida" see={narrative.see} why={narrative.why} todo={narrative.todo} className="mt-12" />
+          </details>
+
           {Array.isArray((chart.meta as any)?.warnings) && (chart.meta as any).warnings.length ? (
-            <div style={{ marginTop: 10 }}>
+            <div className="mt-2">
               <Alert tone="warning" title="Avisos">
-                <ul style={{ margin: 0, paddingLeft: 18 }}>
+                <ul className="list-steps">
                   {(chart.meta as any).warnings.slice(0, 8).map((w: any, idx: number) => (
                     <li key={`${idx}`}>{String(w)}</li>
                   ))}
@@ -325,12 +434,94 @@ export default function UniversalViewPage() {
               </Alert>
             </div>
           ) : null}
-        </div>
+        </Reveal>
       ) : chart && !labels.length ? (
-        <div className="card section">
+        <Reveal className="card section">
           <div className="empty">Sin datos para graficar.</div>
-        </div>
+        </Reveal>
+      ) : null}
+
+      {chart ? (
+        <Reveal delay={1}>
+          <LineagePanel lineage={lineage as any} chart={chart as any} />
+        </Reveal>
+      ) : null}
+
+      {chart && canUseEvidence ? (
+        <Reveal delay={2} className="card section soft">
+          <div className="row row-between row-center row-wrap gap-10">
+            <div>
+              <div className="fw-800">Evidencia (GOLD+)</div>
+              <div className="upload-hint">Filas detras del punto o etiqueta: {focusLabel || '-'}</div>
+            </div>
+            <div className="row row-wrap gap-2">
+              <label className="upload-hint row row-center gap-6">
+                <input
+                  type="checkbox"
+                  checked={autoEvidence}
+                  onChange={(e) => setAutoEvidence(Boolean((e.target as any)?.checked))}
+                />
+                Auto
+              </label>
+              <button className="badge" onClick={() => loadEvidence()} disabled={evidenceLoading || !focusLabel}>
+                {evidenceLoading ? 'Cargando...' : 'Ver evidencia'}
+              </button>
+              {evidence?.rows?.length ? (
+                <button className="badge" onClick={() => downloadEvidenceCsv(evidence)}>
+                  Descargar CSV
+                </button>
+              ) : null}
+            </div>
+          </div>
+          {evidenceError ? (
+            <div className="mt-12">
+              <Alert tone="danger" title="Evidencia">
+                {evidenceError}
+              </Alert>
+            </div>
+          ) : null}
+          {evidence?.rows?.length ? (
+            <details className="card soft mt-12">
+              <summary className="upload-hint cursor-pointer">
+                Ver tabla · {evidence.rows.length} filas
+              </summary>
+              <div className="overflow-auto mt-12">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>#</th>
+                      {(evidence.headers || []).map((h) => (
+                        <th key={h}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(evidence.rows || []).slice(0, 60).map((r, idx) => (
+                      <tr key={`${idx}`}>
+                        <td className="upload-hint">{String((evidence.rowNumbers || [])[idx] ?? '')}</td>
+                        {(r || []).map((cell, j) => (
+                          <td key={`${idx}-${j}`}>{String(cell ?? '')}</td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </details>
+          ) : null}
+        </Reveal>
+      ) : chart ? (
+        <Reveal delay={2} className="card section soft">
+          <div className="row row-between row-center row-wrap gap-10">
+            <div>
+              <div className="fw-800">Evidencia</div>
+              <div className="upload-hint">Disponible en planes GOLD y PLATINUM.</div>
+            </div>
+            <span className="badge">Upgrade requerido</span>
+          </div>
+        </Reveal>
       ) : null}
     </div>
   )
 }
+

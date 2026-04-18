@@ -9,11 +9,14 @@ import java.security.Key;
 import java.time.Instant;
 import java.util.Date;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 @Service
 public class JwtService {
+    private static final Logger log = LoggerFactory.getLogger(JwtService.class);
     private final Key key;
     private final long accessExpirationMinutes;
     private final long refreshExpirationDays;
@@ -23,6 +26,12 @@ public class JwtService {
                       @Value("${app.jwt.access-expiration-minutes}") long accessExpirationMinutes,
                       @Value("${app.jwt.refresh-expiration-days}") long refreshExpirationDays,
                       @Value("${app.jwt.issuer}") String issuer) {
+        if (secret == null || secret.trim().length() < 32) {
+            throw new IllegalArgumentException("app.jwt.secret must be at least 32 characters");
+        }
+        if (secret.toLowerCase().contains("change-this")) {
+            log.warn("JWT secret looks like a placeholder. Set APP_JWT_SECRET/JWT_SECRET for production.");
+        }
         this.key = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
         this.accessExpirationMinutes = accessExpirationMinutes;
         this.refreshExpirationDays = refreshExpirationDays;

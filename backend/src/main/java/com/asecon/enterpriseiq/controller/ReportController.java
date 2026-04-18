@@ -14,6 +14,7 @@ import java.util.stream.Collectors;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -41,6 +42,7 @@ public class ReportController {
     }
 
     @PostMapping
+    @PreAuthorize("hasAnyRole('ADMIN','CONSULTOR')")
     public ReportDto generate(@PathVariable Long companyId, @Valid @RequestBody ReportRequest request) throws IOException {
         var user = accessService.currentUser();
         accessService.requireCompanyAccess(user, companyId);

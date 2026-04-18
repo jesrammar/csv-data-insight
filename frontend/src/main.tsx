@@ -8,11 +8,15 @@ import './styles.css'
 
 const queryClient = new QueryClient()
 
+// UI density modes removed (always use default spacing).
+document.body.classList.remove('density-compact')
+localStorage.removeItem('uiDensity')
+
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
       <ToastProvider>
-        <BrowserRouter future={{ v7_relativeSplatPath: true }}>
+        <BrowserRouter future={{ v7_relativeSplatPath: true, v7_startTransition: true }}>
           <App />
         </BrowserRouter>
       </ToastProvider>

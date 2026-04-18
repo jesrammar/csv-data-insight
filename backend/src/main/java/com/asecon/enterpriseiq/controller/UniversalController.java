@@ -3,6 +3,8 @@ package com.asecon.enterpriseiq.controller;
 import com.asecon.enterpriseiq.dto.UniversalSummaryDto;
 import com.asecon.enterpriseiq.dto.UniversalAutoSuggestionDto;
 import com.asecon.enterpriseiq.dto.UniversalImportDto;
+import com.asecon.enterpriseiq.dto.UniversalImportLineageDto;
+import com.asecon.enterpriseiq.dto.UniversalImportQualityDto;
 import com.asecon.enterpriseiq.dto.UniversalRowsDto;
 import com.asecon.enterpriseiq.dto.UniversalXlsxPreviewDto;
 import com.asecon.enterpriseiq.model.Plan;
@@ -11,6 +13,7 @@ import com.asecon.enterpriseiq.service.TabularFileService;
 import com.asecon.enterpriseiq.service.UniversalAutoSuggestionService;
 import com.asecon.enterpriseiq.service.UniversalCsvService;
 import com.asecon.enterpriseiq.service.UniversalImportFileService;
+import com.asecon.enterpriseiq.service.UniversalImportQualityService;
 import com.asecon.enterpriseiq.service.UploadLimitService;
 import jakarta.validation.constraints.NotNull;
 import java.io.IOException;
@@ -40,6 +43,7 @@ public class UniversalController {
     private final UniversalImportFileService universalImportFileService;
     private final UniversalImportRepository universalImportRepository;
     private final UploadLimitService uploadLimitService;
+    private final UniversalImportQualityService universalImportQualityService;
 
     public UniversalController(UniversalCsvService universalCsvService,
                                UniversalAutoSuggestionService universalAutoSuggestionService,
@@ -47,7 +51,8 @@ public class UniversalController {
                                TabularFileService tabularFileService,
                                UniversalImportFileService universalImportFileService,
                                UniversalImportRepository universalImportRepository,
-                               UploadLimitService uploadLimitService) {
+                               UploadLimitService uploadLimitService,
+                               UniversalImportQualityService universalImportQualityService) {
         this.universalCsvService = universalCsvService;
         this.universalAutoSuggestionService = universalAutoSuggestionService;
         this.accessService = accessService;
@@ -55,9 +60,11 @@ public class UniversalController {
         this.universalImportFileService = universalImportFileService;
         this.universalImportRepository = universalImportRepository;
         this.uploadLimitService = uploadLimitService;
+        this.universalImportQualityService = universalImportQualityService;
     }
 
     @GetMapping("/summary")
+    @PreAuthorize("hasAnyRole('ADMIN','CONSULTOR')")
     public Optional<UniversalSummaryDto> summary(@PathVariable Long companyId,
                                                  @RequestParam(name = "importId", required = false) Long importId) {
         var user = accessService.currentUser();
@@ -67,12 +74,23 @@ public class UniversalController {
     }
 
     @GetMapping("/suggestions")
+    @PreAuthorize("hasAnyRole('ADMIN','CONSULTOR')")
     public List<UniversalAutoSuggestionDto> suggestions(@PathVariable Long companyId,
                                                         @RequestParam(name = "importId", required = false) Long importId) {
         var user = accessService.currentUser();
         accessService.requireCompanyAccess(user, companyId);
         accessService.requirePlanAtLeast(companyId, Plan.BRONZE);
         return universalAutoSuggestionService.suggest(companyId, importId);
+    }
+
+    @GetMapping("/lineage")
+    @PreAuthorize("hasAnyRole('ADMIN','CONSULTOR')")
+    public Optional<UniversalImportLineageDto> lineage(@PathVariable Long companyId,
+                                                       @RequestParam(name = "importId", required = false) Long importId) {
+        var user = accessService.currentUser();
+        accessService.requireCompanyAccess(user, companyId);
+        accessService.requirePlanAtLeast(companyId, Plan.BRONZE);
+        return universalCsvService.lineage(companyId, importId);
     }
 
     @GetMapping("/imports")
@@ -90,6 +108,16 @@ public class UniversalController {
                 imp.getColumnCount() == null ? 0 : imp.getColumnCount()
             ))
             .collect(Collectors.toList());
+    }
+
+    @GetMapping("/quality")
+    @PreAuthorize("hasAnyRole('ADMIN','CONSULTOR')")
+    public UniversalImportQualityDto quality(@PathVariable Long companyId,
+                                             @RequestParam(name = "importId", required = false) Long importId) {
+        var user = accessService.currentUser();
+        accessService.requireCompanyAccess(user, companyId);
+        accessService.requirePlanAtLeast(companyId, Plan.BRONZE);
+        return universalImportQualityService.compute(companyId, importId);
     }
 
     @GetMapping(value = "/imports/latest/normalized.csv", produces = "text/csv")

@@ -1,23 +1,27 @@
 ﻿import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   getImports,
+  getCompanyMapping,
+  getImportQuality,
   previewImport,
   previewUniversalXlsx,
   retryImport,
   type ImportJob,
   type ImportPreviewDto,
+  type ImportQualityDto,
   uploadImportSmart,
   uploadTribunalImport,
   uploadUniversalImport,
   type UniversalXlsxPreview
 } from '../api'
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useCompanySelection } from '../hooks/useCompany'
 import PageHeader from '../components/ui/PageHeader'
 import Alert from '../components/ui/Alert'
 import Button from '../components/ui/Button'
 import { useToast } from '../components/ui/ToastProvider'
 import { useNavigate, useSearchParams } from 'react-router-dom'
+import { getWorkPeriod, nowYm } from '../utils/workPeriod'
 
 export default function ImportsPage() {
   const { id: companyId, plan } = useCompanySelection()
@@ -41,17 +45,25 @@ export default function ImportsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const [period, setPeriod] = useState('2025-06')
+  useEffect(() => {
+    if (mode === 'transactions') setGuideModule('caja')
+    if (mode === 'universal') setGuideModule('universal')
+  }, [mode])
+
+  const [period, setPeriod] = useState(() => getWorkPeriod(companyId) || nowYm())
   const [file, setFile] = useState<File | null>(null)
+  const [batchFiles, setBatchFiles] = useState<File[]>([])
   const [message, setMessage] = useState('')
   const [tone, setTone] = useState<'info' | 'success' | 'danger'>('info')
 
   const [uploading, setUploading] = useState(false)
+  const [batchUploading, setBatchUploading] = useState(false)
   const [xlsxPreview, setXlsxPreview] = useState<UniversalXlsxPreview | null>(null)
   const [xlsxLoading, setXlsxLoading] = useState(false)
   const [sheetIndex, setSheetIndex] = useState<number | null>(null)
   const [headerRow, setHeaderRow] = useState<number | null>(null)
   const [showUniversalGuided, setShowUniversalGuided] = useState(false)
+  const [showXlsxSample, setShowXlsxSample] = useState(false)
 
   const [txPreview, setTxPreview] = useState<ImportPreviewDto | null>(null)
   const [txPreviewLoading, setTxPreviewLoading] = useState(false)
@@ -61,14 +73,125 @@ export default function ImportsPage() {
   const [counterpartyCol, setCounterpartyCol] = useState('')
   const [balanceEndCol, setBalanceEndCol] = useState('')
 
+  const { data: savedSmartMapping } = useQuery({
+    queryKey: ['company-mapping', companyId, 'imports.smart'],
+    queryFn: () => getCompanyMapping(companyId as number, 'imports.smart'),
+    enabled: !!companyId
+  })
+
   const [showAllImports, setShowAllImports] = useState(false)
   const [showDeadImports, setShowDeadImports] = useState(false)
   const [showOnlyFailedImports, setShowOnlyFailedImports] = useState(false)
+  const [guideModule, setGuideModule] = useState<'caja' | 'tribunal' | 'universal' | 'presupuesto'>('caja')
+  const [qualityOpenId, setQualityOpenId] = useState<number | null>(null)
 
   const isCsv = !file ? true : file.name.toLowerCase().endsWith('.csv')
   const isXlsx = !file ? false : file.name.toLowerCase().endsWith('.xlsx')
   const isAllowed = !file ? true : isCsv || isXlsx
   const canPreviewXlsx = !!companyId && (mode === 'universal' || mode === 'auto') && isXlsx && !!file
+  const isBatch = batchFiles.length > 1
+  const batchAbortRef = useRef<{ abort: boolean }>({ abort: false })
+
+  type BatchItem = {
+    file: File
+    period: string | null
+    status: 'pending' | 'uploading' | 'done' | 'error' | 'skipped'
+    target?: 'transactions' | 'universal' | 'tribunal' | null
+    message?: string
+  }
+
+  const [batchItems, setBatchItems] = useState<BatchItem[]>([])
+
+  function nowYmMinus(months: number) {
+    const d = new Date()
+    const ym = new Date(d.getFullYear(), d.getMonth() - months, 1)
+    const y = ym.getFullYear()
+    const m = String(ym.getMonth() + 1).padStart(2, '0')
+    return `${y}-${m}`
+  }
+
+  function inferPeriodFromFilename(name: string): string | null {
+    const n = String(name || '')
+    // Common patterns: 2026-03, 202603, 03-2026, 03_2026, 2026_03
+    const m1 = n.match(/(20\d{2})[-_.](0[1-9]|1[0-2])/)
+    if (m1) return `${m1[1]}-${m1[2]}`
+    const m2 = n.match(/(20\d{2})(0[1-9]|1[0-2])/)
+    if (m2) return `${m2[1]}-${m2[2]}`
+    const m3 = n.match(/(0[1-9]|1[0-2])[-_.](20\d{2})/)
+    if (m3) return `${m3[2]}-${m3[1]}`
+    return null
+  }
+
+  function tribunalHintFromHeaders(headers: any[] | undefined) {
+    const list = Array.isArray(headers) ? headers : []
+    if (!list.length) return { score: 0, isLikely: false }
+    const norm = list.map((h) => String(h || '').toLowerCase())
+    const hits = (k: string) => norm.some((h) => h.includes(k))
+    let score = 0
+    if (hits('cif')) score += 2
+    if (hits('gestor') || hits('manager')) score += 2
+    if (hits('minuta') || hits('minutas')) score += 2
+    if (hits('carga') || hits('carga_de_trabajo')) score += 2
+    if (hits('irpf') || hits('ddcc') || hits('libros')) score += 2
+    if (hits('cont_modelos') || hits('contabilidad')) score += 2
+    return { score, isLikely: score >= 4 }
+  }
+
+  useEffect(() => {
+    if (!companyId) return
+    setPeriod(getWorkPeriod(companyId) || nowYm())
+  }, [companyId])
+
+  const quickGuide = useMemo(() => {
+    switch (guideModule) {
+      case 'tribunal':
+        return {
+          title: 'Tribunal (cartera)',
+          href: '/samples/plantilla-tribunal.csv',
+          bullets: [
+            <>
+              Mínimo: <strong>cliente</strong> y <strong>cif</strong>.
+            </>,
+            <>Útil para seguimiento de cartera y cumplimiento.</>,
+            <>Tip: si no tienes esas columnas, usa Universal.</>
+          ]
+        }
+      case 'universal':
+        return {
+          title: 'Universal (cualquier tabla)',
+          href: '/samples/plantilla-universal.csv',
+          bullets: [
+            <>Ideal: una sola tabla con cabeceras claras.</>,
+            <>No exige columnas fijas: detecta tipos y genera insights.</>,
+            <>En XLSX con varias hojas/tablas, usa “modo guiado”.</>
+          ]
+        }
+      case 'presupuesto':
+        return {
+          title: 'Presupuesto (XLSX)',
+          href: '/samples/presupuesto-ejemplo.xlsx',
+          bullets: [
+            <>Sube el XLSX por Universal (si tiene varias hojas, usa modo guiado).</>,
+            <>
+              Luego ve al dashboard <strong>Presupuesto</strong> para validar “long” e insights.
+            </>,
+            <>Tip: si hay meses a cero, suele ser cabecera/fila incorrecta.</>
+          ]
+        }
+      default:
+        return {
+          title: 'Caja (transacciones)',
+          href: '/samples/plantilla-caja-transacciones.csv',
+          bullets: [
+            <>
+              Mínimo: <strong>txn_date</strong> y <strong>amount</strong>.
+            </>,
+            <>Un periodo por fichero (YYYY-MM). Fechas ISO (YYYY-MM-DD).</>,
+            <>Si viene “de Excel” con varias tablas/gráficas, sube el XLSX por Universal.</>
+          ]
+        }
+    }
+  }, [guideModule])
 
   const downloadTextAsFile = (filename: string, content: string, mime = 'text/csv;charset=utf-8') => {
     const blob = new Blob([content], { type: mime })
@@ -238,9 +361,40 @@ export default function ImportsPage() {
     let out = [...(data || [])]
     if (!showDeadImports) out = out.filter((i) => i.status !== 'DEAD')
     if (showOnlyFailedImports) out = out.filter((i) => i.status === 'ERROR' || i.status === 'DEAD' || i.status === 'WARNING')
-    if (!showAllImports) out = out.slice(0, 6)
+    out = out.slice(0, showAllImports ? 10 : 3)
     return out
   }, [data, showAllImports, showDeadImports, showOnlyFailedImports])
+
+  const latestImport = useMemo(() => {
+    const list = [...(data || [])]
+    list.sort((a, b) => {
+      const at = new Date(a.createdAt).getTime()
+      const bt = new Date(b.createdAt).getTime()
+      return bt - at
+    })
+    return list[0] as ImportJob | undefined
+  }, [data])
+
+  const {
+    data: quality,
+    isFetching: qualityLoading,
+    error: qualityError
+  } = useQuery({
+    queryKey: ['import-quality', companyId, qualityOpenId],
+    queryFn: () => getImportQuality(companyId as number, qualityOpenId as number),
+    enabled: !!companyId && !!qualityOpenId
+  })
+
+  const qualitySummary = (q: ImportQualityDto | null | undefined) => {
+    if (!q) return null
+    const issues = Array.isArray(q.issues) ? q.issues : []
+    const high = issues.filter((i) => String(i.severity).toUpperCase() === 'HIGH').length
+    const med = issues.filter((i) => String(i.severity).toUpperCase() === 'MEDIUM').length
+    const low = issues.filter((i) => String(i.severity).toUpperCase() === 'LOW').length
+    const badge = high ? 'err' : med ? 'warn' : low ? 'warn' : 'ok'
+    const label = high ? `${high} crítico` : med ? `${med} medio` : low ? `${low} leve` : 'OK'
+    return { badge, label }
+  }
 
   const tribunalHint = useMemo(() => {
     const headers = txPreview?.headers || []
@@ -285,6 +439,8 @@ export default function ImportsPage() {
     setDescriptionCol('')
     setCounterpartyCol('')
     setBalanceEndCol('')
+    setBatchUploading(false)
+    batchAbortRef.current.abort = false
   }, [file?.name])
 
   useEffect(() => {
@@ -329,6 +485,20 @@ export default function ImportsPage() {
         setDescriptionCol(String(s.description || ''))
         setCounterpartyCol(String(s.counterparty || ''))
         setBalanceEndCol(String(s.balance_end || ''))
+
+        // Si hay un mapeo guardado por empresa y encaja con las cabeceras, priorizarlo.
+        try {
+          const m: any = savedSmartMapping || {}
+          const headers = Array.isArray(prev.headers) ? prev.headers : []
+          const has = (col: any) => !!col && headers.includes(String(col))
+          if (sheetIndex == null && m.sheetIndex != null) setSheetIndex(Number(m.sheetIndex))
+          if (headerRow == null && m.headerRow != null) setHeaderRow(Number(m.headerRow))
+          if (has(m.txnDateCol)) setTxnDateCol(String(m.txnDateCol))
+          if (has(m.amountCol)) setAmountCol(String(m.amountCol))
+          if (has(m.descriptionCol)) setDescriptionCol(String(m.descriptionCol))
+          if (has(m.counterpartyCol)) setCounterpartyCol(String(m.counterpartyCol))
+          if (has(m.balanceEndCol)) setBalanceEndCol(String(m.balanceEndCol))
+        } catch {}
       } catch (e: any) {
         if (!cancelled) {
           setTone('danger')
@@ -343,7 +513,183 @@ export default function ImportsPage() {
       cancelled = true
       window.clearTimeout(t)
     }
-  }, [companyId, file, mode, sheetIndex, headerRow])
+  }, [companyId, file, mode, sheetIndex, headerRow, savedSmartMapping])
+
+  async function uploadOneBatchFile(entry: BatchItem) {
+    if (!companyId) throw new Error('Falta empresa')
+
+    const currentPeriod = entry.period || (mode === 'transactions' ? period : null)
+
+    const resolveMappingsForHeaders = (headers: any[], suggested: any) => {
+      const headerList = Array.isArray(headers) ? headers.map((h) => String(h || '')) : []
+      const has = (col: any) => !!col && headerList.includes(String(col))
+
+      // Start with suggested mapping
+      let out = {
+        txnDateCol: String(suggested?.txn_date || suggested?.txnDateCol || ''),
+        amountCol: String(suggested?.amount || suggested?.amountCol || ''),
+        descriptionCol: String(suggested?.description || suggested?.descriptionCol || ''),
+        counterpartyCol: String(suggested?.counterparty || suggested?.counterpartyCol || ''),
+        balanceEndCol: String(suggested?.balance_end || suggested?.balanceEndCol || '')
+      }
+
+      // Company saved mapping has priority if it matches headers
+      try {
+        const m: any = savedSmartMapping || {}
+        if (has(m.txnDateCol)) out.txnDateCol = String(m.txnDateCol)
+        if (has(m.amountCol)) out.amountCol = String(m.amountCol)
+        if (has(m.descriptionCol)) out.descriptionCol = String(m.descriptionCol)
+        if (has(m.counterpartyCol)) out.counterpartyCol = String(m.counterpartyCol)
+        if (has(m.balanceEndCol)) out.balanceEndCol = String(m.balanceEndCol)
+      } catch {}
+
+      // Finally, UI selection (if present and matches) overrides for batch uploads
+      if (has(txnDateCol)) out.txnDateCol = String(txnDateCol)
+      if (has(amountCol)) out.amountCol = String(amountCol)
+      if (has(descriptionCol)) out.descriptionCol = String(descriptionCol)
+      if (has(counterpartyCol)) out.counterpartyCol = String(counterpartyCol)
+      if (has(balanceEndCol)) out.balanceEndCol = String(balanceEndCol)
+
+      return out
+    }
+
+    if (mode === 'universal') {
+      const opts =
+        entry.file.name.toLowerCase().endsWith('.xlsx')
+          ? { sheetIndex: sheetIndex ?? xlsxPreview?.sheetIndex ?? undefined, headerRow: headerRow ?? xlsxPreview?.headerRow ?? undefined }
+          : {}
+      await uploadUniversalImport(companyId, entry.file, opts)
+      return { target: 'universal' as const }
+    }
+
+    if (mode === 'transactions') {
+      if (!currentPeriod) throw new Error('Falta periodo (YYYY-MM)')
+      const prev = await previewImport(companyId, entry.file, { sheetIndex: sheetIndex ?? undefined, headerRow: headerRow ?? undefined })
+      const m = resolveMappingsForHeaders(prev.headers || [], prev.suggestedMapping || {})
+      if (!m.txnDateCol || !m.amountCol) {
+        throw new Error('No se detectaron columnas de fecha/importe. Ajusta el mapeo o usa Universal.')
+      }
+      await uploadImportSmart(companyId, currentPeriod, entry.file, {
+        txnDateCol: m.txnDateCol,
+        amountCol: m.amountCol,
+        descriptionCol: m.descriptionCol || undefined,
+        counterpartyCol: m.counterpartyCol || undefined,
+        balanceEndCol: m.balanceEndCol || undefined,
+        sheetIndex: sheetIndex ?? undefined,
+        headerRow: headerRow ?? undefined
+      })
+      return { target: 'transactions' as const }
+    }
+
+    // AUTO: attempt to classify each file with previewImport
+    const prev = await previewImport(companyId, entry.file, { sheetIndex: sheetIndex ?? undefined, headerRow: headerRow ?? undefined })
+    const tribunal = tribunalHintFromHeaders(prev.headers || [])
+    if (tribunal.isLikely) {
+      if (!hasGold) {
+        throw new Error('Este fichero parece de Tribunal, pero requiere plan GOLD/PLATINUM.')
+      }
+      await uploadTribunalImport(companyId, entry.file)
+      return { target: 'tribunal' as const }
+    }
+
+    const conf = Number((prev as any).confidence || 0)
+    const m = resolveMappingsForHeaders(prev.headers || [], (prev as any).suggestedMapping || {})
+    if (conf >= 0.6 && m.txnDateCol && m.amountCol) {
+      const p = currentPeriod || nowYmMinus(1)
+      await uploadImportSmart(companyId, p, entry.file, {
+        txnDateCol: m.txnDateCol,
+        amountCol: m.amountCol,
+        descriptionCol: m.descriptionCol || undefined,
+        counterpartyCol: m.counterpartyCol || undefined,
+        balanceEndCol: m.balanceEndCol || undefined,
+        sheetIndex: sheetIndex ?? undefined,
+        headerRow: headerRow ?? undefined
+      })
+      return { target: 'transactions' as const }
+    }
+
+    const opts =
+      entry.file.name.toLowerCase().endsWith('.xlsx')
+        ? { sheetIndex: sheetIndex ?? xlsxPreview?.sheetIndex ?? undefined, headerRow: headerRow ?? xlsxPreview?.headerRow ?? undefined }
+        : {}
+    await uploadUniversalImport(companyId, entry.file, opts)
+    return { target: 'universal' as const }
+  }
+
+  async function handleBatchUpload() {
+    if (!companyId || !batchFiles.length) return
+    if (!isBatch) {
+      toast.push({ tone: 'warning', title: 'Batch', message: 'Selecciona 2 o más ficheros para subir por lotes.' })
+      return
+    }
+    if (batchUploading) return
+
+    setMessage('')
+    setTone('info')
+    batchAbortRef.current.abort = false
+    setBatchUploading(true)
+
+    // Initialize batch items if not present (e.g. if user refreshed mode)
+    setBatchItems((prev) => {
+      if (prev.length && prev.length === batchFiles.length) return prev
+      return batchFiles.map((f) => ({ file: f, period: inferPeriodFromFilename(f.name), status: 'pending' as const }))
+    })
+
+    try {
+      for (let idx = 0; idx < batchFiles.length; idx++) {
+        if (batchAbortRef.current.abort) break
+        const f = batchFiles[idx]
+
+        setBatchItems((prev) => {
+          const next = [...prev]
+          const existing = next[idx]
+          next[idx] = {
+            file: f,
+            period: existing?.period ?? inferPeriodFromFilename(f.name),
+            status: 'uploading',
+            target: existing?.target ?? null,
+            message: ''
+          }
+          return next
+        })
+
+        try {
+          const result = await uploadOneBatchFile({
+            file: f,
+            period: inferPeriodFromFilename(f.name),
+            status: 'uploading'
+          })
+          setBatchItems((prev) => {
+            const next = [...prev]
+            const existing = next[idx]
+            next[idx] = { ...(existing || { file: f, period: inferPeriodFromFilename(f.name) }), status: 'done', target: result.target, message: '' }
+            return next
+          })
+        } catch (e: any) {
+          const friendly = humanizeFileError(e?.message || e)
+          const msg = [friendly.title, friendly.detail].filter(Boolean).join(' ')
+          setBatchItems((prev) => {
+            const next = [...prev]
+            const existing = next[idx]
+            next[idx] = { ...(existing || { file: f, period: inferPeriodFromFilename(f.name) }), status: 'error', message: msg }
+            return next
+          })
+        }
+      }
+
+      // Invalidate caches once at the end (cheaper than per-file)
+      await queryClient.invalidateQueries({ queryKey: ['imports', companyId] })
+      await queryClient.invalidateQueries({ queryKey: ['universal-summary', companyId] })
+      await queryClient.invalidateQueries({ queryKey: ['universal-suggestions', companyId] })
+      await queryClient.invalidateQueries({ queryKey: ['tribunal-summary', companyId] })
+      await queryClient.invalidateQueries({ queryKey: ['tribunal-status', companyId] })
+
+      toast.push({ tone: 'success', title: 'Batch', message: 'Subida por lotes finalizada.' })
+      setMessage('Subida por lotes finalizada. Revisa el estado de imports/universal/tribunal según corresponda.')
+    } finally {
+      setBatchUploading(false)
+    }
+  }
 
   async function handleUpload() {
     if (!companyId || !file) return
@@ -478,7 +824,7 @@ export default function ImportsPage() {
     <div>
       <PageHeader
         title="Cargar datos"
-        subtitle="Modo AUTO recomendado: sube cualquier fichero y EnterpriseIQ te guía (Caja/Universal/Tribunal)."
+        subtitle="Sube un CSV/XLSX y EnterpriseIQ te guía al módulo correcto."
         actions={
           <>
             <Button size="sm" variant="ghost" onClick={() => navigate(`/guides?module=${guidesModule}`)}>
@@ -526,112 +872,66 @@ export default function ImportsPage() {
           </Button>
         </div>
 
-        {mode === 'auto' ? (
-          <div className="grid" style={{ marginTop: 14 }}>
-            <div className="card soft">
-              <h3 style={{ marginTop: 0 }}>Auto</h3>
-              <p className="hero-sub">Sube un fichero y te sugerimos el destino: Caja (movimientos), Universal (cualquier dataset) o Tribunal.</p>
-            </div>
-            <div className="card soft">
-              <h3 style={{ marginTop: 0 }}>Consejo</h3>
-              <p className="hero-sub">Si tu fichero no son movimientos bancarios, casi siempre encaja mejor en Universal.</p>
-            </div>
-          </div>
-        ) : mode === 'transactions' ? (
-          <div className="grid" style={{ marginTop: 14 }}>
-            <div className="card soft">
-              <h3 style={{ marginTop: 0 }}>Formato (Caja)</h3>
-              <p className="hero-sub">
-                Columnas: <strong>txn_date</strong>, <strong>amount</strong>. Opcionales: <strong>description</strong>,{' '}
-                <strong>counterparty</strong>, <strong>balance_end</strong>.
-              </p>
-            </div>
-            <div className="card soft">
-              <h3 style={{ marginTop: 0 }}>Buenas prácticas</h3>
-              <p className="hero-sub">Un periodo por fichero (YYYY-MM). Fechas ISO (YYYY-MM-DD) para evitar filas descartadas.</p>
-            </div>
-          </div>
-        ) : (
-          <div className="grid" style={{ marginTop: 14 }}>
-            <div className="card soft">
-              <h3 style={{ marginTop: 0 }}>Formato (Universal)</h3>
-              <p className="hero-sub">
-                Sube cualquier CSV/XLSX (presupuestos, salarios, inventario, ventas…). No requiere columnas fijas: EnterpriseIQ detecta tipos y genera
-                resumen/insights.
-              </p>
-            </div>
-            <div className="card soft">
-              <h3 style={{ marginTop: 0 }}>XLSX (guiado)</h3>
-              <p className="hero-sub">
-                Si el encabezado no está en la primera fila o hay varias hojas/tablas, usa el modo guiado para elegir hoja y fila de cabecera.
-              </p>
-            </div>
-          </div>
-        )}
-      </div>
-
-      <div className="card section">
-        <h3 style={{ marginTop: 0 }}>Qué debo subir (según módulo)</h3>
-        <div className="grid" style={{ gap: 10 }}>
-          <div className="card soft">
-            <div className="mini-row" style={{ justifyContent: 'space-between' }}>
-              <strong>Caja</strong>
-              <a className="btn btn-ghost btn-sm" href="/samples/plantilla-caja-transacciones.csv" download>
-                Descargar ejemplo
-              </a>
-            </div>
-            <div className="upload-hint" style={{ marginTop: 8 }}>
-              Para KPIs/alertas de tesorería. Sube movimientos (banco/caja) del periodo.
-            </div>
-            <div className="upload-hint" style={{ marginTop: 8 }}>
-              Mínimo: <strong>txn_date</strong> y <strong>amount</strong> (mejor si incluye descripción/contrapartida).
-            </div>
+        <div className="card soft compact-guide mt-3">
+          <div className="mini-row row-baseline">
+            <h3 className="m-0">Guía rápida</h3>
+            <Button size="sm" variant="ghost" onClick={() => navigate(`/guides?module=${guidesModule}`)}>
+              Ver guía
+            </Button>
           </div>
 
-          <div className="card soft">
-            <div className="mini-row" style={{ justifyContent: 'space-between' }}>
-              <strong>Tribunal</strong>
-              <a className="btn btn-ghost btn-sm" href="/samples/plantilla-tribunal.csv" download>
-                Descargar ejemplo
-              </a>
-            </div>
-            <div className="upload-hint" style={{ marginTop: 8 }}>
-              Para cumplimiento/seguimiento cartera. Requiere columnas <strong>cliente</strong> y <strong>cif</strong>.
-            </div>
-            <div className="upload-hint" style={{ marginTop: 8 }}>
-              Opcionales típicas: gestor, minutas, IRPF/DDCC/Libros, carga de trabajo, % contabilidad, actividad por año (nas2024…).
-            </div>
+          <div className="segmented mt-2" role="tablist" aria-label="Módulo">
+            <Button type="button" size="sm" variant={guideModule === 'caja' ? 'secondary' : 'ghost'} onClick={() => setGuideModule('caja')}>
+              Caja
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant={guideModule === 'universal' ? 'secondary' : 'ghost'}
+              onClick={() => setGuideModule('universal')}
+            >
+              Universal
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant={guideModule === 'tribunal' ? 'secondary' : 'ghost'}
+              onClick={() => setGuideModule('tribunal')}
+              disabled={!hasGold}
+              title={!hasGold ? 'Disponible en planes GOLD/PLATINUM' : undefined}
+            >
+              Tribunal
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant={guideModule === 'presupuesto' ? 'secondary' : 'ghost'}
+              onClick={() => setGuideModule('presupuesto')}
+            >
+              Presupuesto
+            </Button>
           </div>
 
-          <div className="card soft">
-            <div className="mini-row" style={{ justifyContent: 'space-between' }}>
-              <strong>Universal</strong>
-              <a className="btn btn-ghost btn-sm" href="/samples/plantilla-universal.csv" download>
-                Descargar ejemplo
-              </a>
+          {!hasGold ? (
+            <div className="upload-hint mt-8">
+              Tribunal está disponible en planes GOLD/PLATINUM.
             </div>
-            <div className="upload-hint" style={{ marginTop: 8 }}>
-              Para datasets no bancarios (presupuesto, ventas, inventario…). No exige columnas fijas.
-            </div>
-            <div className="upload-hint" style={{ marginTop: 8 }}>
-              Ideal: una tabla limpia con cabeceras. Si es XLSX con varias hojas, usa el modo guiado.
-            </div>
+          ) : null}
+
+          <div className="mini-row compact-guide-head mt-12 row-wrap">
+            <strong>{quickGuide.title}</strong>
+            <a className="btn btn-ghost btn-sm" href={quickGuide.href} download>
+              Descargar ejemplo
+            </a>
           </div>
 
-          <div className="card soft">
-            <div className="mini-row" style={{ justifyContent: 'space-between' }}>
-              <strong>Presupuesto</strong>
-              <a className="btn btn-ghost btn-sm" href="/samples/presupuesto-ejemplo.xlsx" download>
-                Descargar ejemplo
-              </a>
-            </div>
-            <div className="upload-hint" style={{ marginTop: 8 }}>
-              Para análisis anual y PDF con recomendaciones (drivers, meses a cero, concentración).
-            </div>
-            <div className="upload-hint" style={{ marginTop: 8 }}>
-              Sube el XLSX por Universal y luego valida en <strong>Presupuesto</strong> con “Preview long”.
-            </div>
-          </div>
+          <ul className="compact-list mt-2">
+            {quickGuide.bullets.map((b, idx) => (
+              <li key={`g-${idx}`} className="upload-hint">
+                {b}
+              </li>
+            ))}
+          </ul>
         </div>
       </div>
 
@@ -639,7 +939,7 @@ export default function ImportsPage() {
         <div className="section">
           <Alert tone="warning" title="Este fichero quizá no es de transacciones">
             La detección de columnas tiene poca confianza. Si es un presupuesto / ventas / inventario, usa el modo Universal.
-            <div style={{ marginTop: 10 }}>
+            <div className="mt-2">
               <Button size="sm" variant="secondary" onClick={() => setMode('universal')}>
                 Cambiar a Universal
               </Button>
@@ -656,10 +956,10 @@ export default function ImportsPage() {
               : autoTarget === 'tribunal'
               ? 'Parece un fichero de Tribunal (cumplimiento).'
               : 'Parece un dataset genérico. Recomendado: Universal.'}
-            <div className="upload-hint" style={{ marginTop: 8 }}>
+            <div className="upload-hint mt-8">
               Confianza transacciones: {Math.round(Number(txPreview.confidence || 0) * 100)}% · Señales Tribunal: {tribunalHint.score}
             </div>
-            <div style={{ marginTop: 10, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            <div className="row row-wrap row-center gap-2 mt-2">
               <Button size="sm" variant={autoTarget === 'transactions' ? 'secondary' : 'ghost'} onClick={() => setMode('transactions')}>
                 Usar Caja
               </Button>
@@ -680,7 +980,7 @@ export default function ImportsPage() {
       ) : null}
 
       <div className="card section">
-        <h3 style={{ marginTop: 0 }}>Subida</h3>
+        <h3 className="h3-reset">Subida</h3>
         {!companyId ? (
           <Alert tone="warning" title="Falta seleccionar empresa">
             Selecciona una empresa arriba para subir el fichero.
@@ -690,20 +990,30 @@ export default function ImportsPage() {
           {mode === 'transactions' ? (
             <input value={period} onChange={(e) => setPeriod(e.target.value)} placeholder="YYYY-MM" inputMode="numeric" />
           ) : null}
-          <input type="file" accept=".csv,.xlsx" onChange={(e) => setFile(e.target.files?.[0] || null)} />
+          <input
+            type="file"
+            accept=".csv,.xlsx"
+            multiple
+            onChange={(e) => {
+              const list = Array.from(e.target.files || [])
+              setFile(list[0] || null)
+              setBatchFiles(list)
+              setBatchItems(list.map((f) => ({ file: f, period: inferPeriodFromFilename(f.name), status: 'pending' })))
+            }}
+          />
           {(mode === 'universal' || mode === 'auto') && isXlsx ? (
             <details
-              style={{ width: '100%' }}
+              className="w-full"
               open={showUniversalGuided}
               onToggle={(e) => setShowUniversalGuided((e.target as HTMLDetailsElement).open)}
             >
-              <summary className="upload-hint" style={{ cursor: 'pointer' }}>
-                Modo guiado XLSX (hoja + cabecera)
+              <summary className="upload-hint cursor-pointer">
+                XLSX: hoja + cabecera (opcional)
                 {xlsxLoading ? ' • previsualizando…' : ''}
                 {xlsxPreview?.headers?.length ? ` • ${xlsxPreview.headers.length} columnas` : ''}
               </summary>
-              <div className="upload-row" style={{ marginTop: 10, alignItems: 'flex-end' }}>
-                <label style={{ display: 'grid', gap: 6 }}>
+              <div className="upload-row tight align-end">
+                <label className="stack">
                   <span className="upload-hint">Hoja</span>
                   <select
                     value={sheetIndex ?? xlsxPreview?.sheetIndex ?? 0}
@@ -717,30 +1027,39 @@ export default function ImportsPage() {
                     ))}
                   </select>
                 </label>
-                <label style={{ display: 'grid', gap: 6 }}>
+                <label className="stack">
                   <span className="upload-hint">Fila cabecera (1-based)</span>
                   <input
                     value={headerRow ?? xlsxPreview?.headerRow ?? ''}
                     onChange={(e) => setHeaderRow(e.target.value === '' ? null : Number(e.target.value))}
                     placeholder="Ej: 3"
                     inputMode="numeric"
-                    style={{ width: 160 }}
+                    className="w-160"
                   />
                 </label>
-                <span className="upload-hint" style={{ marginBottom: 6 }}>
+                <span className="upload-hint block mb-1">
                   Tip: pon la fila donde están ENERO…DICIEMBRE / txn_date…
                 </span>
               </div>
 
               {xlsxPreview?.headers?.length ? (
-                <div className="upload-hint" style={{ marginTop: 10 }}>
+                <div className="upload-hint mt-2">
                   Cabeceras detectadas: {xlsxPreview.headers.slice(0, 8).join(' · ')}
                   {xlsxPreview.headers.length > 8 ? ' · …' : ''}
                 </div>
               ) : null}
 
               {xlsxPreview?.sampleRows?.length ? (
-                <div style={{ marginTop: 10, overflow: 'auto' }}>
+                <div className="row row-wrap row-center gap-10 mt-2">
+                  <Button type="button" size="sm" variant="ghost" onClick={() => setShowXlsxSample((s) => !s)}>
+                    {showXlsxSample ? 'Ocultar preview' : 'Ver preview'}
+                  </Button>
+                  <span className="upload-hint">Muestra: 6 filas · 8 columnas</span>
+                </div>
+              ) : null}
+
+              {showXlsxSample && xlsxPreview?.sampleRows?.length ? (
+                <div className="mt-2 overflow-auto">
                   <table className="table">
                     <thead>
                       <tr>
@@ -762,32 +1081,32 @@ export default function ImportsPage() {
                     </tbody>
                   </table>
                 </div>
-              ) : (
-                <div className="empty" style={{ marginTop: 10 }}>
+              ) : showXlsxSample ? (
+                <div className="empty mt-2">
                   {xlsxLoading ? 'Previsualizando…' : 'No se pudieron leer filas de muestra.'}
                 </div>
-              )}
+              ) : null}
             </details>
           ) : null}
           {mode === 'transactions' && isXlsx ? (
-            <details style={{ width: '100%' }}>
-              <summary className="upload-hint" style={{ cursor: 'pointer' }}>
+            <details className="w-full">
+              <summary className="upload-hint cursor-pointer">
                 Ajustes XLSX (opcional)
               </summary>
-              <div className="upload-row" style={{ marginTop: 10 }}>
+              <div className="upload-row tight">
                 <input
                   value={sheetIndex ?? ''}
                   onChange={(e) => setSheetIndex(e.target.value === '' ? null : Number(e.target.value))}
                   placeholder="sheetIndex"
                   inputMode="numeric"
-                  style={{ width: 140 }}
+                  className="w-140"
                 />
                 <input
                   value={headerRow ?? ''}
                   onChange={(e) => setHeaderRow(e.target.value === '' ? null : Number(e.target.value))}
                   placeholder="headerRow"
                   inputMode="numeric"
-                  style={{ width: 140 }}
+                  className="w-140"
                 />
                 {txPreviewLoading ? <span className="upload-hint">Analizando…</span> : null}
                 {txPreview?.confidence != null ? (
@@ -799,37 +1118,108 @@ export default function ImportsPage() {
           <Button onClick={handleUpload} disabled={!companyId || !file || uploading} loading={uploading}>
             Subir fichero
           </Button>
+          {isBatch ? (
+            <Button
+              variant="secondary"
+              onClick={handleBatchUpload}
+              disabled={!companyId || batchUploading || uploading || !batchFiles.length}
+              loading={batchUploading}
+            >
+              Subir {batchFiles.length} ficheros
+            </Button>
+          ) : null}
+          {isBatch && batchUploading ? (
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => {
+                batchAbortRef.current.abort = true
+                toast.push({ tone: 'warning', title: 'Batch', message: 'Cancelación solicitada. Se parará al terminar el fichero actual.' })
+              }}
+            >
+              Cancelar
+            </Button>
+          ) : null}
         </div>
+        {isBatch ? (
+          <details className="mt-12" open>
+            <summary className="upload-hint cursor-pointer">
+              Subida por lotes ({batchFiles.length})
+            </summary>
+            <div className="upload-hint mt-8">
+              Tip: si tus ficheros incluyen el periodo en el nombre (p. ej. <span className="mono">2026-03</span> o <span className="mono">202603</span>),
+              se usará automáticamente al subir Caja.
+            </div>
+            <div className="table-wrap mt-12">
+              <table className="table table-fixed">
+                <thead>
+                  <tr>
+                    <th>Fichero</th>
+                    <th className="w-110">Periodo</th>
+                    <th className="w-140">Destino</th>
+                    <th className="w-140">Estado</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(batchItems.length
+                    ? batchItems
+                    : (batchFiles.map((f) => ({
+                        file: f,
+                        period: inferPeriodFromFilename(f.name),
+                        status: 'pending' as const,
+                        target: null,
+                        message: ''
+                      })) as BatchItem[])
+                  ).map((it, idx) => (
+                      <tr key={`b-${idx}-${it.file.name}`}>
+                        <td className="upload-hint">
+                          <div className="fw-700">{it.file.name}</div>
+                          {it.message ? <div className="upload-hint">{it.message}</div> : null}
+                        </td>
+                        <td className="mono upload-hint">{it.period || '—'}</td>
+                        <td className="upload-hint">{it.target || '—'}</td>
+                        <td>
+                          <span className={`badge ${it.status === 'done' ? 'ok' : it.status === 'error' ? 'err' : it.status === 'uploading' ? 'warn' : ''}`}>
+                            {it.status}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
+          </details>
+        ) : null}
         {file && isCsv ? (
-          <div className="upload-hint" style={{ marginTop: 10 }}>
+          <div className="upload-hint mt-2">
             Si es un CSV “de Excel” con varias tablas/gráficas, suele romperse al exportar. Mejor sube el <strong>XLSX original</strong> y usa el modo
             guiado para elegir cabecera.
           </div>
         ) : null}
         {message ? (
-          <div style={{ marginTop: 12 }}>
+          <div className="mt-12">
             <Alert tone={tone}>{message}</Alert>
           </div>
         ) : null}
         {mode === 'transactions' ? (
-          <div className="upload-hint" style={{ marginTop: 10 }}>
+          <div className="upload-hint mt-2">
             Si tu archivo no es de transacciones (por ejemplo presupuestos o datasets externos), usa <strong>Universal</strong>.
           </div>
         ) : (
-          <div className="upload-hint" style={{ marginTop: 10 }}>
-            Universal no recalcula KPIs de caja automáticamente; sirve para análisis exploratorio y asesoramiento.
+          <div className="upload-hint mt-2">
+            Universal es para análisis/insights (no recalcula KPIs de Caja).
           </div>
         )}
       </div>
 
       {mode === 'transactions' && companyId && file && txPreview ? (
         <div className="card section">
-          <h3 style={{ marginTop: 0 }}>Asistente de mapeo (Caja)</h3>
+          <h3 className="h3-reset">Asistente de mapeo (Caja)</h3>
           <div className="upload-hint">
             Selecciona qué columnas significan <strong>fecha</strong> e <strong>importe</strong>. El resto es opcional.
           </div>
-          <div className="upload-row" style={{ marginTop: 12 }}>
-            <label style={{ display: 'grid', gap: 6 }}>
+          <div className="upload-row mt-12">
+            <label className="stack">
               <span className="upload-hint">Fecha (txn_date)</span>
               <select value={txnDateCol} onChange={(e) => setTxnDateCol(e.target.value)}>
                 <option value="">—</option>
@@ -840,7 +1230,7 @@ export default function ImportsPage() {
                 ))}
               </select>
             </label>
-            <label style={{ display: 'grid', gap: 6 }}>
+            <label className="stack">
               <span className="upload-hint">Importe (amount)</span>
               <select value={amountCol} onChange={(e) => setAmountCol(e.target.value)}>
                 <option value="">—</option>
@@ -851,176 +1241,330 @@ export default function ImportsPage() {
                 ))}
               </select>
             </label>
-            <label style={{ display: 'grid', gap: 6 }}>
-              <span className="upload-hint">Descripción</span>
-              <select value={descriptionCol} onChange={(e) => setDescriptionCol(e.target.value)}>
-                <option value="">(ninguna)</option>
-                {txPreview.headers.map((h) => (
-                  <option key={`ds-${h}`} value={h}>
-                    {h}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label style={{ display: 'grid', gap: 6 }}>
-              <span className="upload-hint">Contrapartida</span>
-              <select value={counterpartyCol} onChange={(e) => setCounterpartyCol(e.target.value)}>
-                <option value="">(ninguna)</option>
-                {txPreview.headers.map((h) => (
-                  <option key={`cp-${h}`} value={h}>
-                    {h}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label style={{ display: 'grid', gap: 6 }}>
-              <span className="upload-hint">Saldo fin</span>
-              <select value={balanceEndCol} onChange={(e) => setBalanceEndCol(e.target.value)}>
-                <option value="">(ninguna)</option>
-                {txPreview.headers.map((h) => (
-                  <option key={`be-${h}`} value={h}>
-                    {h}
-                  </option>
-                ))}
-              </select>
-            </label>
           </div>
 
-          {txPreview.sampleRows?.length ? (
-            <div style={{ marginTop: 14, overflow: 'auto' }}>
-              <table className="table">
-                <thead>
-                  <tr>
-                    {txPreview.headers.slice(0, 8).map((h) => (
-                      <th key={`h-${h}`}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {txPreview.sampleRows.slice(0, 6).map((r, idx) => (
-                    <tr key={`r-${idx}`}>
-                      {r.slice(0, 8).map((v, c) => (
-                        <td key={`c-${idx}-${c}`} className="upload-hint">
-                          {String(v || '').slice(0, 60)}
-                        </td>
+          <details className="mt-2">
+            <summary className="upload-hint cursor-pointer">
+              Opcional (mejora el dashboard)
+            </summary>
+            <div className="upload-row tight">
+              <label className="stack">
+                <span className="upload-hint">Descripción</span>
+                <select value={descriptionCol} onChange={(e) => setDescriptionCol(e.target.value)}>
+                  <option value="">(ninguna)</option>
+                  {txPreview.headers.map((h) => (
+                    <option key={`ds-${h}`} value={h}>
+                      {h}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="stack">
+                <span className="upload-hint">Contrapartida</span>
+                <select value={counterpartyCol} onChange={(e) => setCounterpartyCol(e.target.value)}>
+                  <option value="">(ninguna)</option>
+                  {txPreview.headers.map((h) => (
+                    <option key={`cp-${h}`} value={h}>
+                      {h}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="stack">
+                <span className="upload-hint">Saldo fin</span>
+                <select value={balanceEndCol} onChange={(e) => setBalanceEndCol(e.target.value)}>
+                  <option value="">(ninguna)</option>
+                  {txPreview.headers.map((h) => (
+                    <option key={`be-${h}`} value={h}>
+                      {h}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            {txPreview.sampleRows?.length ? (
+              <div className="mt-12 overflow-auto">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      {txPreview.headers.slice(0, 8).map((h) => (
+                        <th key={`h-${h}`}>{h}</th>
                       ))}
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <div className="empty" style={{ marginTop: 12 }}>
-              No se pudieron leer filas de muestra.
-            </div>
-          )}
+                  </thead>
+                  <tbody>
+                    {txPreview.sampleRows.slice(0, 6).map((r, idx) => (
+                      <tr key={`r-${idx}`}>
+                        {r.slice(0, 8).map((v, c) => (
+                          <td key={`c-${idx}-${c}`} className="upload-hint">
+                            {String(v || '').slice(0, 60)}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="empty mt-12">
+                No se pudieron leer filas de muestra.
+              </div>
+            )}
+          </details>
         </div>
       ) : null}
 
       <div className="card section">
-        <h3 style={{ marginTop: 0 }}>Historial de imports</h3>
+        <h3 className="h3-reset">Historial de imports</h3>
         {!data?.length ? (
           <div className="empty">No hay imports todavía.</div>
         ) : (
           <>
-            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 10, alignItems: 'center' }}>
-              <label className="upload-hint" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <input type="checkbox" checked={showAllImports} onChange={(e) => setShowAllImports(e.target.checked)} />
-                Mostrar más (hasta 6)
-              </label>
-              <label className="upload-hint" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <input
-                  type="checkbox"
-                  checked={showOnlyFailedImports}
-                  onChange={(e) => setShowOnlyFailedImports(e.target.checked)}
-                />
-                Solo con problemas
-              </label>
-              <label className="upload-hint" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <input type="checkbox" checked={showDeadImports} onChange={(e) => setShowDeadImports(e.target.checked)} />
-                Incluir DEAD (técnico)
-              </label>
-              <div style={{ flex: 1 }} />
-              <Button size="sm" variant="secondary" onClick={downloadTransactionsTemplate}>
-                Descargar plantilla Caja (CSV)
-              </Button>
-            </div>
+            {latestImport ? (
+              <div className="card soft mb-12">
+                <div className="mini-row row-center row-wrap">
+                  <strong>Último import</strong>
+                  <span className="upload-hint">{new Date(latestImport.createdAt).toLocaleString()}</span>
+                </div>
 
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Periodo</th>
-                  <th>Estado</th>
-                  <th>Fichero</th>
-                  <th>Qué pasó</th>
-                  <th>Qué hacer</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {importsForUi.map((imp: ImportJob) => {
-                  const info = summarizeImport(imp)
-                  const canRetry = (imp.status === 'ERROR' || imp.status === 'DEAD') && info.canRetry && !!imp.storageRef
+                {(() => {
+                  const info = summarizeImport(latestImport)
+                  const canRetry =
+                    (latestImport.status === 'ERROR' || latestImport.status === 'DEAD') && info.canRetry && !!latestImport.storageRef
                   return (
-                    <tr key={imp.id}>
-                      <td>
-                        <div style={{ fontWeight: 700 }}>{imp.period}</div>
-                        <div className="upload-hint">{new Date(imp.createdAt).toLocaleString()}</div>
-                      </td>
-                      <td>
-                        <span
-                          className={`badge ${
-                            imp.status === 'OK'
-                              ? 'ok'
-                              : imp.status === 'WARNING'
-                              ? 'warn'
-                              : imp.status === 'ERROR' || imp.status === 'DEAD'
-                              ? 'err'
-                              : ''
-                          }`}
-                        >
-                          {imp.status}
-                        </span>
-                        <div className="upload-hint">
-                          {typeof imp.attempts === 'number' || typeof imp.maxAttempts === 'number'
-                            ? `Intentos: ${imp.attempts ?? 0}/${imp.maxAttempts ?? 3}`
-                            : null}
+                    <>
+                      <div className="mini-row mt-8 row-wrap">
+                        <div className="row row-center row-wrap gap-10">
+                          <span className="fw-800">{latestImport.period}</span>
+                          <span
+                            className={`badge ${
+                              latestImport.status === 'OK'
+                                ? 'ok'
+                                : latestImport.status === 'WARNING'
+                                ? 'warn'
+                                : latestImport.status === 'ERROR' || latestImport.status === 'DEAD'
+                                ? 'err'
+                                : ''
+                            }`}
+                          >
+                            {latestImport.status}
+                          </span>
+                          <span className="upload-hint">{latestImport.originalFilename || latestImport.storageRef || '-'}</span>
                         </div>
-                      </td>
-                      <td className="upload-hint">{imp.originalFilename || imp.storageRef || '-'}</td>
-                      <td style={{ maxWidth: 460 }}>
-                        <div>{info.title}</div>
-                        {info.raw ? (
-                          <details style={{ marginTop: 6 }}>
-                            <summary className="upload-hint">Detalles técnicos</summary>
-                            <div className="upload-hint" style={{ whiteSpace: 'pre-wrap' }}>
-                              {info.raw}
-                            </div>
-                          </details>
-                        ) : null}
-                      </td>
-                      <td style={{ maxWidth: 420 }} className="upload-hint">
-                        {info.fix || '-'}
-                        {info.showTemplate ? (
-                          <div style={{ marginTop: 8 }}>
-                            <Button size="sm" variant="secondary" onClick={downloadTransactionsTemplate}>
-                              Descargar plantilla (CSV)
-                            </Button>
-                          </div>
-                        ) : null}
-                      </td>
-                      <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                        {imp.status === 'ERROR' || imp.status === 'DEAD' ? (
-                          <Button size="sm" disabled={!canRetry} onClick={() => handleRetry(imp.id)}>
+                        {latestImport.status === 'ERROR' || latestImport.status === 'DEAD' ? (
+                          <Button size="sm" disabled={!canRetry} onClick={() => handleRetry(latestImport.id)}>
                             Reintentar
                           </Button>
                         ) : null}
-                      </td>
-                    </tr>
+                      </div>
+                      <div className="mt-8">{info.title}</div>
+                      {info.fix ? <div className="upload-hint mt-1">{info.fix}</div> : null}
+                    </>
                   )
-                })}
-              </tbody>
-            </table>
+                })()}
+              </div>
+            ) : null}
+
+            <details>
+              <summary className="upload-hint cursor-pointer">
+                Ver historial ({data.length})
+              </summary>
+
+              <div className="row row-between row-center row-wrap gap-8 fs-12 mt-2 mb-2">
+                <label className="upload-hint row row-center gap-8">
+                  <input type="checkbox" checked={showAllImports} onChange={(e) => setShowAllImports(e.target.checked)} />
+                  Mostrar más
+                </label>
+
+                <details>
+                  <summary className="upload-hint cursor-pointer">
+                    Filtros
+                  </summary>
+                  <div className="stack gap-8 mt-8">
+                    <label className="upload-hint row row-center gap-8">
+                      <input
+                        type="checkbox"
+                        checked={showOnlyFailedImports}
+                        onChange={(e) => setShowOnlyFailedImports(e.target.checked)}
+                      />
+                      Solo con problemas
+                    </label>
+                    <label className="upload-hint row row-center gap-8">
+                      <input type="checkbox" checked={showDeadImports} onChange={(e) => setShowDeadImports(e.target.checked)} />
+                      Incluir DEAD (técnico)
+                    </label>
+                  </div>
+                </details>
+              </div>
+
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Periodo</th>
+                    <th>Estado</th>
+                    <th>Fichero</th>
+                    <th>Qué pasó</th>
+                    <th>Qué hacer</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {importsForUi.map((imp: ImportJob) => {
+                    const info = summarizeImport(imp)
+                    const canRetry = (imp.status === 'ERROR' || imp.status === 'DEAD') && info.canRetry && !!imp.storageRef
+                    const isQualityOpen = qualityOpenId === imp.id
+                    return (
+                      <Fragment key={imp.id}>
+                        <tr key={imp.id}>
+                          <td>
+                            <div className="fw-700">{imp.period}</div>
+                            <div className="upload-hint">{new Date(imp.createdAt).toLocaleString()}</div>
+                          </td>
+                          <td>
+                            <span
+                              className={`badge ${
+                                imp.status === 'OK'
+                                  ? 'ok'
+                                  : imp.status === 'WARNING'
+                                  ? 'warn'
+                                  : imp.status === 'ERROR' || imp.status === 'DEAD'
+                                  ? 'err'
+                                  : ''
+                              }`}
+                            >
+                              {imp.status}
+                            </span>
+                            <div className="upload-hint">
+                              {typeof imp.attempts === 'number' || typeof imp.maxAttempts === 'number'
+                                ? `Intentos: ${imp.attempts ?? 0}/${imp.maxAttempts ?? 3}`
+                                : null}
+                            </div>
+                          </td>
+                          <td className="upload-hint">{imp.originalFilename || imp.storageRef || '-'}</td>
+                          <td className="maxw-460">
+                            <div>{info.title}</div>
+                            {info.raw ? (
+                              <details className="mt-1">
+                                <summary className="upload-hint">Detalles técnicos</summary>
+                                <div className="upload-hint pre-wrap">{info.raw}</div>
+                              </details>
+                            ) : null}
+                          </td>
+                          <td className="upload-hint maxw-420">
+                            {info.fix || '-'}
+                            {info.showTemplate ? (
+                              <div className="mt-8">
+                                <Button size="sm" variant="secondary" onClick={downloadTransactionsTemplate}>
+                                  Descargar plantilla (CSV)
+                                </Button>
+                              </div>
+                            ) : null}
+                          </td>
+                          <td className="text-right nowrap">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              disabled={!imp.storageRef}
+                              onClick={() => setQualityOpenId((cur) => (cur === imp.id ? null : imp.id))}
+                            >
+                              Calidad
+                            </Button>
+                            {imp.status === 'ERROR' || imp.status === 'DEAD' ? (
+                              <Button size="sm" disabled={!canRetry} onClick={() => handleRetry(imp.id)}>
+                                Reintentar
+                              </Button>
+                            ) : null}
+                          </td>
+                        </tr>
+                        {isQualityOpen ? (
+                          <tr key={`q-${imp.id}`}>
+                            <td colSpan={6}>
+                              <div className="card soft card-pad-sm mt-2">
+                                <div className="mini-row mt-0 row-between row-center row-wrap gap-8">
+                                  <div className="row row-center gap-8">
+                                    <span className="fw-700">Calidad de dato</span>
+                                    {qualityLoading ? <span className="upload-hint">Analizando…</span> : null}
+                                    {!qualityLoading && quality ? (
+                                      <span className={`badge ${qualitySummary(quality)?.badge || ''}`}>
+                                        {qualitySummary(quality)?.label || 'OK'}
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                  <div className="upload-hint">
+                                    {quality?.minDate && quality?.maxDate ? `Rango: ${quality.minDate} → ${quality.maxDate}` : ''}
+                                  </div>
+                                </div>
+
+                                {qualityError ? (
+                                  <Alert tone="danger">No se pudo calcular la calidad: {String((qualityError as any).message || qualityError)}</Alert>
+                                ) : null}
+
+                                {quality ? (
+                                  <div className="grid grid-autofit-180 mt-12">
+                                    <div className="card soft card-pad-sm">
+                                      <div className="upload-hint">Filas parseadas</div>
+                                      <div className="fw-700">{quality.rowsParsed}</div>
+                                    </div>
+                                    <div className="card soft card-pad-sm">
+                                      <div className="upload-hint">Errores fecha/importe</div>
+                                      <div className="fw-700">
+                                        {quality.dateParseErrors}/{quality.amountParseErrors}
+                                      </div>
+                                    </div>
+                                    <div className="card soft card-pad-sm">
+                                      <div className="upload-hint">Fuera de periodo</div>
+                                      <div className="fw-700">{quality.outsidePeriodRows}</div>
+                                    </div>
+                                    <div className="card soft card-pad-sm">
+                                      <div className="upload-hint">Duplicados</div>
+                                      <div className="fw-700">{quality.duplicateRows}</div>
+                                    </div>
+                                    <div className="card soft card-pad-sm">
+                                      <div className="upload-hint">Sin contraparte</div>
+                                      <div className="fw-700">{quality.missingCounterpartyRows}</div>
+                                    </div>
+                                    <div className="card soft card-pad-sm">
+                                      <div className="upload-hint">Saldo no cuadra</div>
+                                      <div className="fw-700">{quality.balanceEndMismatchRows}</div>
+                                    </div>
+                                  </div>
+                                ) : null}
+
+                                {quality?.issues?.length ? (
+                                  <div className="mt-12">
+                                    {quality.issues.slice(0, 6).map((it, idx) => (
+                                      <div key={`qi-${idx}`} className="row row-center gap-8 mb-1">
+                                        <span className={`badge ${String(it.severity).toUpperCase() === 'HIGH' ? 'err' : String(it.severity).toUpperCase() === 'MEDIUM' ? 'warn' : 'ok'}`}>
+                                          {String(it.severity || '').toUpperCase()}
+                                        </span>
+                                        <div>
+                                          <div className="fw-700">{it.title}</div>
+                                          <div className="upload-hint">{it.detail}</div>
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : null}
+
+                                {quality?.examples?.length ? (
+                                  <details className="mt-12">
+                                    <summary className="upload-hint cursor-pointer">Ver ejemplos</summary>
+                                    <div className="upload-hint mono pre-wrap mt-8">
+                                      {quality.examples.join('\n')}
+                                    </div>
+                                  </details>
+                                ) : null}
+                              </div>
+                            </td>
+                          </tr>
+                        ) : null}
+                      </Fragment>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </details>
           </>
         )}
       </div>

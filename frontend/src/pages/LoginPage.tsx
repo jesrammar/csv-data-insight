@@ -1,18 +1,26 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { confirmPasswordFromToken, login } from '../api'
 import Button from '../components/ui/Button'
 import Alert from '../components/ui/Alert'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 
+function parseHashParams(hash: string) {
+  const raw = String(hash || '').trim()
+  const normalized = raw.startsWith('#') ? raw.slice(1) : raw
+  return new URLSearchParams(normalized)
+}
+
 export default function LoginPage() {
   const navigate = useNavigate()
   const [sp] = useSearchParams()
-  const token = (sp.get('token') || '').trim()
-  const action = (sp.get('action') || '').trim().toLowerCase() === 'invite' ? ('invite' as const) : ('reset' as const)
+  const hashParams = useMemo(() => parseHashParams(window.location.hash), [])
+  const token = (hashParams.get('token') || sp.get('token') || '').trim()
+  const actionRaw = (hashParams.get('action') || sp.get('action') || '').trim().toLowerCase()
+  const action = actionRaw === 'invite' ? ('invite' as const) : ('reset' as const)
   const hasTokenFlow = !!token
 
-  const [email, setEmail] = useState('admin@asecon.local')
-  const [password, setPassword] = useState('password')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [showPassword, setShowPassword] = useState(false)
 
@@ -40,11 +48,31 @@ export default function LoginPage() {
     passwordHint.hasLower &&
     passwordHint.hasDigit
 
+  useEffect(() => {
+    document.body.classList.add('body-login')
+    // UI density modes removed (always use default spacing).
+    document.body.classList.remove('density-compact')
+    localStorage.removeItem('uiDensity')
+    return () => {
+      document.body.classList.remove('body-login')
+    }
+  }, [])
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError('')
+    const e1 = email.trim()
+    const p1 = password.trim()
+    if (!e1) {
+      setError('Introduce tu email.')
+      return
+    }
+    if (!p1) {
+      setError('Introduce tu contraseña.')
+      return
+    }
     try {
-      await login(email, password)
+      await login(e1, p1)
     } catch (err: any) {
       setError(err.message)
     }
@@ -82,7 +110,8 @@ export default function LoginPage() {
 
   return (
     <div className="login-shell">
-      <div className="login-hero">
+      <div className="login-stage card">
+        <div className="login-hero">
         <div>
           <h1 className="hero-title">EnterpriseIQ</h1>
           <p className="hero-sub">
@@ -99,48 +128,51 @@ export default function LoginPage() {
             </div>
           </div>
         </div>
-        <div className="card login-panel fade-up">
-          <div className="login-badge">Acceso seguro</div>
-          <h2 style={{ marginTop: 6 }}>{hasTokenFlow ? (action === 'invite' ? 'Activar cuenta' : 'Restablecer contraseña') : 'Ingreso'}</h2>
-          <p className="hero-sub">
-            {hasTokenFlow
-              ? 'Elige una nueva contraseña segura para continuar.'
-              : 'Usuarios demo: admin, consultor y cliente.'}
-          </p>
+        <div className="login-right">
+          <div className="card login-panel fade-up">
+            <div className="login-panel-head">
+              <div className="login-badge">Acceso seguro</div>
+            </div>
+            <h2 className="login-title">{hasTokenFlow ? (action === 'invite' ? 'Activar cuenta' : 'Restablecer contraseña') : 'Ingreso'}</h2>
+            <p className="hero-sub">
+              {hasTokenFlow
+                ? 'Elige una nueva contraseña segura para continuar.'
+                : 'Acceso por invitación para consultores y clientes.'}
+            </p>
 
-          {hasTokenFlow ? (
-            done ? (
-              <Alert tone="success" title="Contraseña actualizada">
-                Ya puedes iniciar sesión con tu email y tu nueva contraseña.
-                <div style={{ marginTop: 12, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={() => {
-                      setDone(false)
-                      setNewPassword('')
-                      setNewPassword2('')
-                      navigate('/', { replace: true })
-                    }}
-                  >
-                    Ir a iniciar sesión
-                  </Button>
-                </div>
-              </Alert>
-            ) : (
-              <form onSubmit={handleSetPassword}>
-                <div>
-                  <input
-                    type={showPassword ? 'text' : 'password'}
-                    value={newPassword}
-                    onChange={(e) => setNewPassword(e.target.value)}
-                    placeholder="Nueva contraseña"
-                    autoComplete="new-password"
-                    aria-label="Nueva contraseña"
-                  />
-                </div>
-                <div style={{ marginTop: 10 }}>
-                  <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+            {hasTokenFlow ? (
+              done ? (
+                <Alert tone="success" title="Contraseña actualizada">
+                  Ya puedes iniciar sesión con tu email y tu nueva contraseña.
+                  <div className="row row-wrap gap-10 mt-12">
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => {
+                        setDone(false)
+                        setNewPassword('')
+                        setNewPassword2('')
+                        navigate('/', { replace: true })
+                      }}
+                    >
+                      Ir a iniciar sesión
+                    </Button>
+                  </div>
+                </Alert>
+              ) : (
+                <form onSubmit={handleSetPassword}>
+                  <div>
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      placeholder="Nueva contraseña"
+                      autoComplete="new-password"
+                      aria-label="Nueva contraseña"
+                    />
+                  </div>
+                <div className="mt-2">
+                  <div className="password-field">
                     <input
                       type={showPassword ? 'text' : 'password'}
                       value={newPassword2}
@@ -148,88 +180,159 @@ export default function LoginPage() {
                       placeholder="Confirmar contraseña"
                       autoComplete="new-password"
                       aria-label="Confirmar contraseña"
-                      style={{ flex: 1 }}
                     />
-                    <Button type="button" variant="ghost" size="sm" onClick={() => setShowPassword((s) => !s)}>
-                      {showPassword ? 'Ocultar' : 'Ver'}
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="password-toggle"
+                      onClick={() => setShowPassword((s) => !s)}
+                      aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                    >
+                      <svg className="password-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                        <path
+                          d="M2.5 12s3.5-7 9.5-7 9.5 7 9.5 7-3.5 7-9.5 7-9.5-7-9.5-7Z"
+                          stroke="currentColor"
+                          strokeWidth="1.8"
+                          strokeLinejoin="round"
+                        />
+                        <path
+                          d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4Z"
+                          stroke="currentColor"
+                          strokeWidth="1.8"
+                        />
+                      </svg>
+                      <span className="sr-only">{showPassword ? 'Ocultar' : 'Ver'}</span>
                     </Button>
                   </div>
                 </div>
 
-                <div className="upload-hint" style={{ marginTop: 10 }}>
-                  Requisitos: 10+ caracteres · 1 mayúscula · 1 minúscula · 1 número
-                  <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                    <span className={`badge ${passwordHint.len >= 10 ? 'ok' : ''}`}>Longitud</span>
-                    <span className={`badge ${passwordHint.hasUpper ? 'ok' : ''}`}>Mayúscula</span>
-                    <span className={`badge ${passwordHint.hasLower ? 'ok' : ''}`}>Minúscula</span>
-                    <span className={`badge ${passwordHint.hasDigit ? 'ok' : ''}`}>Número</span>
+                  <div className="upload-hint mt-2">
+                    Requisitos: 10+ caracteres · 1 mayúscula · 1 minúscula · 1 número
+                    <div className="row row-wrap gap-8 mt-8">
+                      <span className={`badge ${passwordHint.len >= 10 ? 'ok' : ''}`}>Longitud</span>
+                      <span className={`badge ${passwordHint.hasUpper ? 'ok' : ''}`}>Mayúscula</span>
+                      <span className={`badge ${passwordHint.hasLower ? 'ok' : ''}`}>Minúscula</span>
+                      <span className={`badge ${passwordHint.hasDigit ? 'ok' : ''}`}>Número</span>
+                    </div>
+                  </div>
+
+                  {error && (
+                    <div className="mt-12">
+                      <Alert tone="danger">{error}</Alert>
+                    </div>
+                  )}
+                  <div className="mt-12">
+                    <Button type="submit" disabled={settingPassword || !canSetPassword}>
+                      {settingPassword ? 'Guardando…' : 'Guardar contraseña'}
+                    </Button>
+                  </div>
+                </form>
+              )
+            ) : (
+              <form onSubmit={handleSubmit}>
+                <div>
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="Email"
+                    autoComplete="username"
+                    aria-label="Email"
+                    className="w-full"
+                  />
+                </div>
+                <div className="mt-2">
+                  <div className="password-field">
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="Contraseña"
+                      autoComplete="current-password"
+                      aria-label="Password"
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="password-toggle"
+                      onClick={() => setShowPassword((s) => !s)}
+                      aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                    >
+                      <svg className="password-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                        <path
+                          d="M2.5 12s3.5-7 9.5-7 9.5 7 9.5 7-3.5 7-9.5 7-9.5-7-9.5-7Z"
+                          stroke="currentColor"
+                          strokeWidth="1.8"
+                          strokeLinejoin="round"
+                        />
+                        <path
+                          d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4Z"
+                          stroke="currentColor"
+                          strokeWidth="1.8"
+                        />
+                      </svg>
+                      <span className="sr-only">{showPassword ? 'Ocultar' : 'Ver'}</span>
+                    </Button>
                   </div>
                 </div>
-
                 {error && (
-                  <div style={{ marginTop: 12 }}>
+                  <div className="mt-12">
                     <Alert tone="danger">{error}</Alert>
                   </div>
                 )}
-                <div style={{ marginTop: 12 }}>
-                  <Button type="submit" disabled={settingPassword || !canSetPassword}>
-                    {settingPassword ? 'Guardando…' : 'Guardar contraseña'}
+                <div className="mt-12">
+                  <Button type="submit" className="w-full">
+                    Entrar
                   </Button>
+                </div>
+                <div className="upload-hint mt-2">
+                  ¿No puedes entrar? Pide a tu consultor un enlace de activación o reset.
                 </div>
               </form>
-            )
-          ) : (
-            <form onSubmit={handleSubmit}>
+            )}
+          </div>
+
+          <div className="login-trust">
+            <div className="trust-item">
+              <div className="trust-dot" aria-hidden="true" />
               <div>
-                <input
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="email"
-                  autoComplete="username"
-                  aria-label="Email"
-                />
+                <strong>Datos aislados por empresa</strong>
+                <span>Multiempresa con permisos por cartera.</span>
               </div>
-              <div style={{ marginTop: 10 }}>
-                <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-                  <input
-                    type={showPassword ? 'text' : 'password'}
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="password"
-                    autoComplete="current-password"
-                    aria-label="Password"
-                    style={{ flex: 1 }}
-                  />
-                  <Button type="button" variant="ghost" size="sm" onClick={() => setShowPassword((s) => !s)}>
-                    {showPassword ? 'Ocultar' : 'Ver'}
-                  </Button>
-                </div>
+            </div>
+            <div className="trust-item">
+              <div className="trust-dot" aria-hidden="true" />
+              <div>
+                <strong>Auditoría y trazabilidad</strong>
+                <span>Acciones sensibles con registro y motivo.</span>
               </div>
-              {error && (
-                <div style={{ marginTop: 12 }}>
-                  <Alert tone="danger">{error}</Alert>
-                </div>
-              )}
-              <div style={{ marginTop: 12 }}>
-                <Button type="submit">Entrar</Button>
+            </div>
+            <div className="trust-item">
+              <div className="trust-dot" aria-hidden="true" />
+              <div>
+                <strong>Operación en VPS</strong>
+                <span>Métricas, alertas y límites por plan.</span>
               </div>
-              <div className="upload-hint" style={{ marginTop: 10 }}>
-                ¿No puedes entrar? Pide a tu consultor un enlace de activación o reset.
-              </div>
-            </form>
-          )}
+            </div>
+          </div>
         </div>
       </div>
-      <div className="grid section">
-        <div className="card soft">
+      </div>
+      <div className="grid section login-features" hidden>
+        <div className="card soft login-feature">
+          <div className="login-feature-icon" aria-hidden="true" />
           <h3>Dashboards</h3>
           <p className="hero-sub">KPIs mensuales, tendencias y alertas accionables.</p>
         </div>
-        <div className="card soft">
+        <div className="card soft login-feature">
+          <div className="login-feature-icon" aria-hidden="true" />
           <h3>Importaciones</h3>
-          <p className="hero-sub">CSV validado, staging y normalización automática.</p>
+          <p className="hero-sub">CSV/XLSX validado, staging y normalización automática.</p>
         </div>
-        <div className="card soft">
+        <div className="card soft login-feature">
+          <div className="login-feature-icon" aria-hidden="true" />
           <h3>Reportes</h3>
           <p className="hero-sub">Informes HTML listos para exportar a PDF.</p>
         </div>

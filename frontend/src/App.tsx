@@ -26,13 +26,14 @@ const AdminStoragePage = lazy(() => import('./pages/AdminStoragePage'))
 const AdminUsersPage = lazy(() => import('./pages/AdminUsersPage'))
 const PortfolioPage = lazy(() => import('./pages/PortfolioPage'))
 const GuidesPage = lazy(() => import('./pages/GuidesPage'))
+const CompanySettingsPage = lazy(() => import('./pages/CompanySettingsPage'))
 
 function RouteFallback() {
   return (
     <div className="card section">
-      <Skeleton style={{ width: '42%', height: 14 }} />
-      <Skeleton style={{ width: '78%', height: 12, marginTop: 12 }} />
-      <Skeleton style={{ width: '66%', height: 12, marginTop: 10 }} />
+      <Skeleton className="sk-w-42p sk-h-14" />
+      <Skeleton className="sk-w-78p sk-h-12 mt-12" />
+      <Skeleton className="sk-w-66p sk-h-12 mt-10" />
     </div>
   )
 }
@@ -228,6 +229,14 @@ export default function App() {
             element={
               <Guard allow={!isClient}>
                 <GuidesPage />
+              </Guard>
+            }
+          />
+          <Route
+            path="/settings/company"
+            element={
+              <Guard allow={!isClient}>
+                <CompanySettingsPage />
               </Guard>
             }
           />
