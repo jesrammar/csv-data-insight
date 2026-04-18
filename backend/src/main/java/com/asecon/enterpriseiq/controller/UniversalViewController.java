@@ -1,6 +1,7 @@
 package com.asecon.enterpriseiq.controller;
 
 import com.asecon.enterpriseiq.dto.UniversalChartDataDto;
+import com.asecon.enterpriseiq.dto.UniversalEvidenceDto;
 import com.asecon.enterpriseiq.dto.UniversalViewDto;
 import com.asecon.enterpriseiq.dto.UniversalViewRequest;
 import com.asecon.enterpriseiq.model.Plan;
@@ -75,6 +76,19 @@ public class UniversalViewController {
             .body(bytes);
     }
 
+    @PostMapping("/builder/evidence")
+    @PreAuthorize("hasAnyRole('ADMIN','CONSULTOR')")
+    public UniversalEvidenceDto evidence(@PathVariable Long companyId,
+                                         @RequestParam(name = "importId", required = false) Long importId,
+                                         @RequestParam(name = "focusLabel", required = false) String focusLabel,
+                                         @RequestParam(defaultValue = "40") int limit,
+                                         @Valid @RequestBody UniversalViewRequest request) {
+        var user = accessService.currentUser();
+        accessService.requireCompanyAccess(user, companyId);
+        accessService.requirePlanAtLeast(companyId, Plan.GOLD);
+        return universalViewService.evidence(companyId, request, focusLabel, limit, importId);
+    }
+
     @GetMapping("/views")
     public List<UniversalViewDto> list(@PathVariable Long companyId) {
         var user = accessService.currentUser();
@@ -143,6 +157,23 @@ public class UniversalViewController {
             meta.putIfAbsent("templateImportId", view.getSourceUniversalImportId());
         }
         return new UniversalChartDataDto(out.type(), out.labels(), out.series(), meta);
+    }
+
+    @PostMapping("/views/{viewId}/evidence")
+    public UniversalEvidenceDto viewEvidence(@PathVariable Long companyId,
+                                             @PathVariable Long viewId,
+                                             @RequestParam(name = "importId", required = false) Long importId,
+                                             @RequestParam(name = "focusLabel", required = false) String focusLabel,
+                                             @RequestParam(defaultValue = "40") int limit) {
+        var user = accessService.currentUser();
+        accessService.requireCompanyAccess(user, companyId);
+        accessService.requirePlanAtLeast(companyId, Plan.GOLD);
+        UniversalView view = universalViewRepository.findByIdAndCompanyId(viewId, companyId)
+            .orElseThrow(() -> new ResponseStatusException(org.springframework.http.HttpStatus.NOT_FOUND, "Dashboard no encontrado"));
+        UniversalViewRequest req = universalViewService.decodeConfig(view.getConfigJson());
+        if (req.getType() == null || req.getType().isBlank()) req.setType(view.getType());
+        Long src = importId != null ? importId : view.getSourceUniversalImportId();
+        return universalViewService.evidence(companyId, req, focusLabel, limit, src);
     }
 
     private UniversalViewDto toDto(UniversalView view) {

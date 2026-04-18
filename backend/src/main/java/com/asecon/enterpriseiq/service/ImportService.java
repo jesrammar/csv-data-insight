@@ -3,10 +3,14 @@ package com.asecon.enterpriseiq.service;
 import com.asecon.enterpriseiq.model.Company;
 import com.asecon.enterpriseiq.model.ImportJob;
 import com.asecon.enterpriseiq.model.ImportStatus;
+import com.asecon.enterpriseiq.model.AutomationJobStatus;
+import com.asecon.enterpriseiq.model.AutomationJobType;
 import com.asecon.enterpriseiq.model.StagingTransaction;
 import com.asecon.enterpriseiq.model.Transaction;
+import com.asecon.enterpriseiq.repo.AutomationJobRepository;
 import com.asecon.enterpriseiq.repo.CompanyRepository;
 import com.asecon.enterpriseiq.repo.ImportJobRepository;
+import com.asecon.enterpriseiq.repo.ReportRepository;
 import com.asecon.enterpriseiq.repo.StagingTransactionRepository;
 import com.asecon.enterpriseiq.repo.TransactionRepository;
 import com.asecon.enterpriseiq.metrics.ErrorTagger;
@@ -32,6 +36,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import java.util.HashMap;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.DistributionSummary;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -69,6 +74,10 @@ public class ImportService {
     private final TabularFileService tabularFileService;
     private final MeterRegistry meterRegistry;
     private final ErrorTagger errorTagger;
+    private final CompanySettingsService companySettingsService;
+    private final ReportRepository reportRepository;
+    private final AutomationJobService automationJobService;
+    private final AutomationJobRepository automationJobRepository;
 
     public ImportService(ImportJobRepository importJobRepository,
                          CompanyRepository companyRepository,
@@ -80,7 +89,11 @@ public class ImportService {
                          @Value("${app.storage.imports}") String importsRoot,
                          TabularFileService tabularFileService,
                          MeterRegistry meterRegistry,
-                         ErrorTagger errorTagger) {
+                         ErrorTagger errorTagger,
+                         CompanySettingsService companySettingsService,
+                         ReportRepository reportRepository,
+                         AutomationJobService automationJobService,
+                         AutomationJobRepository automationJobRepository) {
         this.importJobRepository = importJobRepository;
         this.companyRepository = companyRepository;
         this.stagingRepository = stagingRepository;
@@ -92,6 +105,10 @@ public class ImportService {
         this.tabularFileService = tabularFileService;
         this.meterRegistry = meterRegistry;
         this.errorTagger = errorTagger;
+        this.companySettingsService = companySettingsService;
+        this.reportRepository = reportRepository;
+        this.automationJobService = automationJobService;
+        this.automationJobRepository = automationJobRepository;
         try {
             Files.createDirectories(this.importsRoot);
         } catch (IOException ex) {
@@ -505,6 +522,7 @@ public class ImportService {
 
             var kpi = kpiService.recompute(job.getCompany(), job.getPeriod(), lastBalanceEnd);
             alertService.evaluateMonthly(job.getCompany(), kpi);
+            maybeEnqueueDefaultDeliverable(job.getCompany().getId(), job.getPeriod());
 
             try {
                 long durMs = Math.max(0L, (System.nanoTime() - startNs) / 1_000_000L);
@@ -563,6 +581,27 @@ public class ImportService {
             } catch (Exception ignored) {}
             handleFailure(job, ex);
         }
+    }
+
+    private void maybeEnqueueDefaultDeliverable(Long companyId, String period) {
+        try {
+            if (companyId == null || period == null || period.isBlank()) return;
+            if (!companySettingsService.autoMonthlyReportEnabled(companyId)) return;
+            if (reportRepository.findByCompanyIdAndPeriod(companyId, period).isPresent()) return;
+
+            boolean alreadyQueued = automationJobRepository.existsByCompany_IdAndTypeAndStatusInAndPayloadJsonContaining(
+                companyId,
+                AutomationJobType.GENERATE_MONTHLY_REPORT,
+                List.of(AutomationJobStatus.PENDING, AutomationJobStatus.RETRY, AutomationJobStatus.RUNNING),
+                "\"period\":\"" + period.trim() + "\""
+            );
+            if (alreadyQueued) return;
+
+            Map<String, Object> payload = new HashMap<>();
+            payload.put("period", period.trim());
+            String json = objectMapper.writeValueAsString(payload);
+            automationJobService.enqueue(companyId, AutomationJobType.GENERATE_MONTHLY_REPORT, Instant.now(), json);
+        } catch (Exception ignored) {}
     }
 
     @Transactional

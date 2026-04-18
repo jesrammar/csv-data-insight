@@ -5,6 +5,8 @@ import { useCompanySelection } from '../hooks/useCompany'
 import PageHeader from '../components/ui/PageHeader'
 import Alert from '../components/ui/Alert'
 import Button from '../components/ui/Button'
+import Card from '../components/ui/Card'
+import Table from '../components/ui/Table'
 
 export default function UniversalViewsPage() {
   const { id: companyId, plan } = useCompanySelection()
@@ -23,7 +25,7 @@ export default function UniversalViewsPage() {
         title="Mis dashboards"
         subtitle="Dashboards guardados a partir de Universal (compartibles por enlace)."
         actions={
-          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          <div className="row row-center gap-2">
             <span className="badge">{plan}</span>
             <Button variant="ghost" size="sm" onClick={() => refetch()} disabled={!companyId || isPending}>
               Refrescar
@@ -39,19 +41,19 @@ export default function UniversalViewsPage() {
       ) : null}
 
       {error ? (
-        <div style={{ marginTop: 12 }}>
+        <div className="mt-2">
           <Alert tone="danger">{String((error as any)?.message || error)}</Alert>
         </div>
       ) : null}
 
-      <div className="card section">
-        <h3 style={{ marginTop: 0 }}>Listado</h3>
+      <Card className="section">
+        <h3 className="h3-reset">Listado</h3>
         {!views.length ? (
           <div className="empty">
             No hay dashboards todavía. Ve a <strong>Universal</strong> y usa “Crear dashboard (Auto → Guiado)”.
           </div>
         ) : (
-          <table className="table">
+          <Table>
             <thead>
               <tr>
                 <th>Nombre</th>
@@ -67,7 +69,7 @@ export default function UniversalViewsPage() {
                   <td>{v.name}</td>
                   <td>{v.type}</td>
                   <td>
-                    <div style={{ display: 'grid' }}>
+                    <div className="stack">
                       <span>{v.sourceFilename || '—'}</span>
                       <span className="upload-hint">
                         {v.sourceImportedAt ? new Date(v.sourceImportedAt).toLocaleString() : '—'}
@@ -75,8 +77,8 @@ export default function UniversalViewsPage() {
                     </div>
                   </td>
                   <td>{v.createdAt ? new Date(v.createdAt).toLocaleString() : '—'}</td>
-                  <td style={{ textAlign: 'right' }}>
-                    <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                  <td className="text-right">
+                    <div className="row row-wrap row-center row-end gap-1">
                       <Link className="badge" to={`/universal/views/${v.id}`}>
                         Abrir
                       </Link>
@@ -98,9 +100,9 @@ export default function UniversalViewsPage() {
                 </tr>
               ))}
             </tbody>
-          </table>
+          </Table>
         )}
-      </div>
+      </Card>
     </div>
   )
 }

@@ -3,7 +3,10 @@ server:
   servlet:
     encoding:
       charset: UTF-8
+      enabled: true
       force: true
+      force-request: true
+      force-response: true
 
 spring:
   datasource:
@@ -33,7 +36,7 @@ app:
       max-rows: 120000
       max-seconds: 25
   jwt:
-    secret: "change-this-in-prod-please-change-this-in-prod"
+    secret: ${APP_JWT_SECRET}
     access-expiration-minutes: 60
     refresh-expiration-days: 30
     issuer: "enterpriseiq"

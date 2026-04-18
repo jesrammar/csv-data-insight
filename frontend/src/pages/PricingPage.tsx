@@ -99,11 +99,10 @@ export default function PricingPage() {
 
       <Section title="Tiers" subtitle="Diferencias claras para vender consultoría por impacto.">
         <div className="pricing-grid">
-          {plans.map((plan, idx) => (
+          {plans.map((plan) => (
             <article
               key={plan.key}
               className={`pricing-card card ${plan.highlight ? 'pricing-card-highlight' : ''}`}
-              style={{ animationDelay: `${idx * 120}ms` }}
             >
               <div className="pricing-card-top">
                 <span className={`pricing-tag ${plan.accentClass}`}>{plan.tag}</span>

@@ -1,19 +1,37 @@
 import { useEffect } from 'react'
-import { NavLink, useNavigate } from 'react-router-dom'
+import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { getCompanies, getUserRole, logout } from '../api'
+import { getCompanies, getCompanySettings, getUserRole, logout } from '../api'
 import CompanySelector from './CompanySelector'
 import Button from './ui/Button'
 import Icon from './ui/Icon'
+import { useCompanySelection } from '../hooks/useCompany'
+import { getWorkPeriod, nowYm, setWorkPeriod } from '../utils/workPeriod'
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate()
+  const location = useLocation()
   const queryClient = useQueryClient()
+  const { id: companyId } = useCompanySelection()
   const { data: companies, error: companiesError, isPending: companiesPending } = useQuery({
     queryKey: ['companies'],
     queryFn: getCompanies,
     retry: 1
   })
+
+  const { data: settings } = useQuery({
+    queryKey: ['company-settings', companyId],
+    queryFn: () => getCompanySettings(companyId as number),
+    enabled: !!companyId
+  })
+
+  useEffect(() => {
+    if (!companyId) return
+    const local = getWorkPeriod(companyId)
+    const server = (settings as any)?.workingPeriod ? String((settings as any).workingPeriod) : null
+    const next = (local || server || nowYm()).trim()
+    if (!local) setWorkPeriod(companyId, next)
+  }, [companyId, settings])
 
   const role = getUserRole()
   const isClient = role === 'CLIENTE'
@@ -37,6 +55,12 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     document.body.classList.toggle('body-client', isClient)
     return () => document.body.classList.remove('body-client')
   }, [isClient])
+
+  useEffect(() => {
+    // UI density modes removed (always use default spacing).
+    document.body.classList.remove('density-compact')
+    localStorage.removeItem('uiDensity')
+  }, [])
 
   async function handleLogout() {
     try {
@@ -106,7 +130,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 Entregables
               </NavLink>
 
-              <div className="nav-section" style={{ marginTop: 12 }}>
+              <div className="nav-section mt-12">
                 Más
               </div>
               <NavLink to="/guides" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
@@ -116,6 +140,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               <NavLink to="/tools" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
                 <Icon name="advisor" />
                 Herramientas
+              </NavLink>
+              <NavLink to="/settings/company" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+                <Icon name="settings" />
+                Ajustes empresa
               </NavLink>
 
               {isConsultor ? (
@@ -127,7 +155,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
               {isAdmin ? (
                 <>
-                  <div className="nav-section" style={{ marginTop: 14 }}>
+                  <div className="nav-section mt-3">
                     Admin
                   </div>
                   <NavLink to="/admin/users" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
@@ -153,12 +181,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             <div className="status-dot" />
             <span className="top-title">{isClient ? 'Panel operativo' : 'Control financiero operativo'}</span>
             <span className={`pill ${isClient ? 'pill-client' : 'pill-consultant'}`}>{isClient ? 'Cliente' : 'Consultoría'}</span>
-            {companiesPending ? <span className="pill" style={{ marginLeft: 12 }}>Cargando empresas...</span> : null}
+            {companiesPending ? <span className="pill">Cargando empresas...</span> : null}
             {companiesError ? (
-              <span
-                className="pill"
-                style={{ marginLeft: 12, borderColor: 'rgba(255,90,90,.35)', color: 'rgba(255,190,190,.95)' }}
-              >
+              <span className="pill pill-danger">
                 Error cargando empresas
               </span>
             ) : null}
@@ -166,6 +191,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           <div className="nav-actions">
             {!isClient ? <span className="pill">ASECON Platform</span> : null}
             <CompanySelector companies={companies || []} />
+            {!isClient ? (
+              <Button variant="ghost" size="sm" onClick={() => navigate('/settings/company')} disabled={!companyId} title="Ajustes por empresa">
+                <Icon name="settings" /> Ajustes
+              </Button>
+            ) : null}
             {companiesError ? (
               <Button
                 variant="ghost"
@@ -181,7 +211,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             </Button>
           </div>
         </header>
-        <main className="container">{children}</main>
+        <main className="container">
+          <div key={location.key} className="route-stage">
+            {children}
+          </div>
+        </main>
       </div>
     </div>
   )

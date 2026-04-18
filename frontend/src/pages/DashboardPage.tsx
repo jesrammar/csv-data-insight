@@ -1,12 +1,13 @@
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { downloadPowerBiExportZip, downloadTransactionsCsv, getDashboard, getTransactionAnalytics, getTransactions, getUserRole } from '../api'
 import KpiChart from '../components/KpiChart'
 import CashFlowBiChart from '../components/charts/CashFlowBiChart'
 import PageHeader from '../components/ui/PageHeader'
 import Alert from '../components/ui/Alert'
 import Button from '../components/ui/Button'
+import Reveal from '../components/ui/Reveal'
 import { useCompanySelection } from '../hooks/useCompany'
 import { formatMoney } from '../utils/format'
 
@@ -28,6 +29,8 @@ function lastMonths(count: number) {
 
 export default function DashboardPage() {
   const { id: companyId, plan: localPlan } = useCompanySelection()
+  const location = useLocation()
+  const navigate = useNavigate()
   const isClient = getUserRole() === 'CLIENTE'
   const monthsCount = isClient ? 6 : localPlan === 'PLATINUM' ? 24 : localPlan === 'GOLD' ? 12 : 6
   const months = lastMonths(monthsCount)
@@ -46,6 +49,75 @@ export default function DashboardPage() {
   const hasPlatinum = plan === 'PLATINUM'
   const metrics = data?.metrics || []
   const insights = data?.insights || []
+
+  const explain = useMemo(() => {
+    const kpis = (data?.kpis || []) as any[]
+    if (!kpis.length) return null
+    const last = kpis[kpis.length - 1]
+    const prev = kpis.length >= 2 ? kpis[kpis.length - 2] : null
+
+    const net = Number(last?.netFlow || 0)
+    const bal = Number(last?.endingBalance || 0)
+    const inflows = Number(last?.inflows || 0)
+    const outflows = Number(last?.outflows || 0)
+
+    const prevNet = prev ? Number(prev?.netFlow || 0) : null
+    const prevBal = prev ? Number(prev?.endingBalance || 0) : null
+
+    const dNet = prevNet == null ? null : net - prevNet
+    const dBal = prevBal == null ? null : bal - prevBal
+
+    const severityRank = (s: string) => {
+      const v = String(s || '').toLowerCase()
+      if (v === 'critical') return 3
+      if (v === 'warning') return 2
+      if (v === 'info') return 1
+      return 0
+    }
+
+    const topInsights = [...(insights as any[])]
+      .sort((a, b) => severityRank(String(b?.severity)) - severityRank(String(a?.severity)))
+      .slice(0, 2)
+    const hasCritical = topInsights.some((i) => String(i?.severity || '').toLowerCase() === 'critical')
+    const hasWarning = topInsights.some((i) => String(i?.severity || '').toLowerCase() === 'warning')
+
+    const tone = hasCritical || bal < 0 ? ('danger' as const) : hasWarning || net < 0 ? ('warning' as const) : ('info' as const)
+
+    const what: string[] = []
+    what.push(
+      `Este mes: entradas ${formatMoney(inflows)}, salidas ${formatMoney(outflows)} y neto ${formatMoney(net)}${
+        dNet == null ? '' : ` (${dNet >= 0 ? '+' : ''}${formatMoney(dNet)} vs mes anterior)`
+      }.`
+    )
+    what.push(`Saldo final estimado: ${formatMoney(bal)}${dBal == null ? '' : ` (${dBal >= 0 ? '+' : ''}${formatMoney(dBal)} vs mes anterior)`}.`)
+
+    const why: string[] = []
+    for (const i of topInsights) {
+      const title = String(i?.title || '').trim()
+      const detail = String(i?.detail || '').trim()
+      if (title || detail) why.push([title, detail].filter(Boolean).join(': '))
+    }
+    if (!why.length) {
+      why.push('Lectura rápida: si el neto baja 2-3 meses seguidos o el saldo se acerca a 0, prioriza plan de cobros/pagos.')
+    }
+
+    const todo: string[] = []
+    const runwayMention = topInsights.some((i) => String(i?.title || '').toLowerCase().includes('runway'))
+    const trendDown = topInsights.some((i) => String(i?.title || '').toLowerCase().includes('tendencia') && String(i?.detail || '').toLowerCase().includes('baja'))
+    if (hasCritical || runwayMention || bal < 0) {
+      todo.push('Haz un plan de tesorería (13 semanas): cobros comprometidos, pagos fijos y margen de seguridad.')
+      todo.push('Acelera cobros (recordatorios, pronto pago) y renegocia vencimientos de pagos.')
+    } else if (net < 0 || (dBal != null && dBal < 0)) {
+      todo.push('Revisa cobros pendientes y gasto no crítico antes de ajustar precios/ventas.')
+      todo.push('Separa gastos recurrentes vs puntuales para evitar “falsos picos”.')
+    } else {
+      todo.push('Reserva parte del neto como colchón y fija un mínimo de caja objetivo.')
+      todo.push('Busca palancas: subir cobros recurrentes o reducir 1-2 partidas de gasto fijo.')
+    }
+    if (trendDown && todo.length < 3) todo.push('Investiga qué cambia: caen cobros, suben gastos o cambia estacionalidad.')
+
+    return { tone, what: what.slice(0, 2), why: why.slice(0, 2), todo: todo.slice(0, 3) }
+  }, [data?.kpis, insights])
 
   const cashCoach = useMemo(() => {
     if (!isClient || !data?.kpis?.length) return null
@@ -108,6 +180,7 @@ export default function DashboardPage() {
   const [pbiExporting, setPbiExporting] = useState(false)
   const [pbiExportError, setPbiExportError] = useState<string | null>(null)
   const txSectionRef = useRef<HTMLDivElement | null>(null)
+  const [cashFocusPeriod, setCashFocusPeriod] = useState<string | null>(to)
 
   const dashboardPeriods = useMemo<string[]>(() => {
     const periods = (data?.kpis || []).map((k: any) => String(k.period)).filter(Boolean) as string[]
@@ -128,10 +201,19 @@ export default function DashboardPage() {
   }
 
   useEffect(() => {
+    const p = (location.state as any)?.drillPeriod
+    if (!p) return
+    drillToPeriod(String(p))
+    navigate('.', { replace: true, state: {} })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.key])
+
+  useEffect(() => {
     setTxPeriod(to)
     const r = monthRange(to)
     setTxFromDate(r.fromDate)
     setTxToDate(r.toDate)
+    setCashFocusPeriod(to)
   }, [to])
 
   useEffect(() => {
@@ -171,6 +253,14 @@ export default function DashboardPage() {
     queryKey: ['transactions-analytics', companyId, plan, analyticsParams],
     queryFn: () => getTransactionAnalytics(companyId as number, analyticsParams),
     enabled: !!companyId && hasPlatinum && !isClient
+  })
+
+  const { data: cashDrivers } = useQuery({
+    queryKey: ['cash-drivers', companyId, plan, cashFocusPeriod],
+    queryFn: () => getTransactionAnalytics(companyId as number, { period: cashFocusPeriod || undefined, topN: 5 } as any),
+    enabled: !!companyId && hasPlatinum && !isClient && !!cashFocusPeriod,
+    staleTime: 10 * 60 * 1000,
+    retry: 0
   })
 
   async function handleExportTransactions() {
@@ -225,7 +315,8 @@ export default function DashboardPage() {
 
   return (
     <div>
-      <PageHeader
+      <Reveal>
+        <PageHeader
         title={isClient ? 'Caja' : 'Dashboard financiero'}
         subtitle={
           isClient
@@ -233,15 +324,15 @@ export default function DashboardPage() {
             : `KPIs del periodo actual y últimos ${monthsCount} meses.`
         }
         actions={
-          <div style={{ display: 'grid', gap: 10, justifyItems: 'end' }}>
-            <div className="card soft" style={{ padding: 14, minWidth: 220 }}>
+          <div className="stack gap-10 justify-items-end">
+            <div className="card soft card-pad-14 minw-220">
               <div className="upload-hint">Periodo actual</div>
-              <div style={{ fontWeight: 800, marginTop: 6 }}>{to}</div>
-              <div className="upload-hint" style={{ marginTop: 6 }}>
+              <div className="fw-800 mt-1">{to}</div>
+              <div className="upload-hint mt-1">
                 {latest ? `Neto del mes: ${formatMoney(latest.netFlow)}` : 'Sin datos'}
               </div>
             </div>
-            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            <div className="row row-wrap gap-10 row-end">
               {!isClient ? (
                 <Link className="badge" to="/imports">
                   Subir datos
@@ -252,23 +343,28 @@ export default function DashboardPage() {
               </Link>
             </div>
             {!isClient && hasPlatinum ? (
-              <div style={{ display: 'grid', gap: 6, width: '100%', maxWidth: 260 }}>
+              <div className="stack w-full maxw-260">
                 <Button onClick={handleExportPowerBi} disabled={pbiExporting || !companyId}>
                   {pbiExporting ? 'Exportando…' : 'Exportar Power BI (ZIP)'}
                 </Button>
                 {pbiExportError ? <div className="alert danger">{pbiExportError}</div> : null}
               </div>
             ) : !isClient ? (
-              <div className="upload-hint" style={{ maxWidth: 260, textAlign: 'right' }}>
-                Exportación Power BI disponible en <Link to="/pricing" className="badge">PLATINUM</Link>.
+              <div className="upload-hint maxw-260 text-right">
+                Exportación Power BI disponible en{' '}
+                <Link to="/pricing" className="badge">
+                  PLATINUM
+                </Link>
+                .
               </div>
             ) : null}
           </div>
         }
-      />
+        />
+      </Reveal>
 
       {!companyId ? (
-        <div className="empty" style={{ marginBottom: 14 }}>
+        <div className="empty mb-3">
           Selecciona una empresa arriba para ver caja y KPIs.
         </div>
       ) : (
@@ -277,8 +373,9 @@ export default function DashboardPage() {
           {error && <p className="error">{String((error as any).message)}</p>}
 
           <div className="grid section">
-            <div className="card">
-              <h3 style={{ marginTop: 0 }}>KPIs clave</h3>
+            <Reveal delay={1}>
+              <div className="card">
+              <h3 className="h3-reset">KPIs clave</h3>
               <div className="grid">
                 <div className="kpi">
                   <h4>Entradas</h4>
@@ -298,22 +395,24 @@ export default function DashboardPage() {
                 </div>
               </div>
               {cashCoach ? (
-                <div style={{ marginTop: 12 }}>
+                <div className="mt-12">
                   <Alert tone={cashCoach.tone} title={cashCoach.title}>
                     {cashCoach.message}
                   </Alert>
                 </div>
               ) : null}
-            </div>
-            <div className="card">
-              <h3 style={{ marginTop: 0 }}>Evolución mensual</h3>
+              </div>
+            </Reveal>
+            <Reveal delay={2}>
+              <div className="card">
+              <h3 className="h3-reset">Evolución mensual</h3>
               {!data?.kpis?.length ? (
                 <div>
                   <div className="empty">
                     {isClient ? 'Sin datos todavía. Tu consultora debe importar el CSV/XLSX.' : 'Sin datos todavía. Importa un CSV/XLSX para calcular caja.'}
                   </div>
                   {isClient ? null : (
-                    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 12 }}>
+                    <div className="row row-wrap gap-10 mt-12">
                       <Link className="badge" to="/imports">
                         Cargar datos
                       </Link>
@@ -324,18 +423,46 @@ export default function DashboardPage() {
                   )}
                 </div>
               ) : (
-                <div style={{ marginBottom: 16 }}>
-                  <CashFlowBiChart
-                    kpis={(data?.kpis || []).map((k: any) => ({
-                      period: String(k.period),
-                      inflows: Number(k.inflows || 0),
-                      outflows: Number(k.outflows || 0),
-                      netFlow: Number(k.netFlow || 0),
-                      endingBalance: Number(k.endingBalance || 0)
-                    }))}
-                    onSelectPeriod={hasPlatinum && !isClient ? drillToPeriod : undefined}
-                  />
-                </div>
+                <>
+                  <div className="mb-3">
+                    <CashFlowBiChart
+                      kpis={(data?.kpis || []).map((k: any) => ({
+                        period: String(k.period),
+                        inflows: Number(k.inflows || 0),
+                        outflows: Number(k.outflows || 0),
+                        netFlow: Number(k.netFlow || 0),
+                        endingBalance: Number(k.endingBalance || 0)
+                      }))}
+                      drivers={cashDrivers as any}
+                      driversPeriod={cashFocusPeriod}
+                      onFocusPeriodChange={setCashFocusPeriod}
+                      onSelectPeriod={hasPlatinum && !isClient ? drillToPeriod : undefined}
+                    />
+                  </div>
+                  {explain ? (
+                    <div className="mt-12">
+                      <Alert tone={explain.tone} title="Resumen automático">
+                        <div className="hero-sub">
+                          <ul className="list-steps gap-8">
+                            {explain.what.map((t) => (
+                              <li key={`w-${t}`}>{t}</li>
+                            ))}
+                            {explain.why.map((t) => (
+                              <li key={`y-${t}`}>
+                                <strong>Por qué importa:</strong> {t}
+                              </li>
+                            ))}
+                            {explain.todo.map((t) => (
+                              <li key={`t-${t}`}>
+                                <strong>Qué haría:</strong> {t}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      </Alert>
+                    </div>
+                  ) : null}
+                </>
               )}
               {!data?.kpis?.length || isClient ? null : (
                 <table className="table">
@@ -361,16 +488,18 @@ export default function DashboardPage() {
                   </tbody>
                 </table>
               )}
-            </div>
+              </div>
+            </Reveal>
           </div>
         </>
       )}
 
       {!companyId ? null : isClient ? (
-        <div className="card section">
-          <h3 style={{ marginTop: 0 }}>Qué significa esto</h3>
+        <Reveal delay={1}>
+          <div className="card section">
+          <h3 className="h3-reset">Qué significa esto</h3>
           <div className="hero-sub">
-            <ul style={{ margin: 0, paddingLeft: 18, display: 'grid', gap: 8 }}>
+            <ul className="list-steps gap-8">
               <li>
                 <strong>Entradas</strong>: cobros (ventas, ingresos).
               </li>
@@ -385,11 +514,13 @@ export default function DashboardPage() {
               </li>
             </ul>
           </div>
-        </div>
+          </div>
+        </Reveal>
       ) : (
         <div className="grid section">
-          <div className="card">
-            <h3 style={{ marginTop: 0 }}>Seguimiento y asesoramiento</h3>
+          <Reveal delay={1}>
+            <div className="card">
+            <h3 className="h3-reset">Seguimiento y asesoramiento</h3>
             <p className="hero-sub">Plan actual: {plan}</p>
             {!metrics.length ? (
               <div className="empty">Sin métricas avanzadas para este plan.</div>
@@ -403,9 +534,11 @@ export default function DashboardPage() {
                 ))}
               </div>
             )}
-          </div>
-          <div className="card">
-            <h3 style={{ marginTop: 0 }}>Insights</h3>
+            </div>
+          </Reveal>
+          <Reveal delay={2}>
+            <div className="card">
+            <h3 className="h3-reset">Insights</h3>
             {!insights.length ? (
               <div className="empty">No hay insights disponibles para este plan.</div>
             ) : (
@@ -418,20 +551,22 @@ export default function DashboardPage() {
                 ))}
               </div>
             )}
-          </div>
+            </div>
+          </Reveal>
         </div>
       )}
 
       {!companyId || isClient ? null : (
+        <Reveal delay={3}>
         <div className="grid section">
           <div className="card">
-            <h3 style={{ marginTop: 0 }}>Detalle de transacciones</h3>
+            <h3 className="h3-reset">Detalle de transacciones</h3>
             {!hasPlatinum ? (
               <div className="empty">Disponible en PLATINUM (drill-down, analítica y export).</div>
             ) : (
               <div ref={txSectionRef}>
-              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
-                <label style={{ display: 'grid', gap: 6 }}>
+              <div className="upload-row flush align-end">
+                <label className="stack">
                   <span className="upload-hint">Modo</span>
                   <select value={txMode} onChange={(e) => setTxMode(e.target.value as any)}>
                     <option value="period">Por periodo (YYYY-MM)</option>
@@ -440,7 +575,7 @@ export default function DashboardPage() {
                 </label>
 
                 {txMode === 'period' ? (
-                  <label style={{ display: 'grid', gap: 6 }}>
+                  <label className="stack">
                     <span className="upload-hint">Periodo</span>
                     <select value={txPeriod} onChange={(e) => setTxPeriod(e.target.value)}>
                       {(dashboardPeriods.length ? dashboardPeriods : [to]).map((p) => (
@@ -452,23 +587,23 @@ export default function DashboardPage() {
                   </label>
                 ) : (
                   <>
-                    <label style={{ display: 'grid', gap: 6 }}>
+                    <label className="stack">
                       <span className="upload-hint">Desde</span>
                       <input type="date" value={txFromDate} onChange={(e) => setTxFromDate(e.target.value)} />
                     </label>
-                    <label style={{ display: 'grid', gap: 6 }}>
+                    <label className="stack">
                       <span className="upload-hint">Hasta</span>
                       <input type="date" value={txToDate} onChange={(e) => setTxToDate(e.target.value)} />
                     </label>
                   </>
                 )}
 
-                <label style={{ display: 'grid', gap: 6, minWidth: 180 }}>
+                <label className="stack minw-180">
                   <span className="upload-hint">Buscar</span>
                   <input value={txQ} onChange={(e) => setTxQ(e.target.value)} placeholder="Descripción / contrapartida" />
                 </label>
 
-                <label style={{ display: 'grid', gap: 6 }}>
+                <label className="stack">
                   <span className="upload-hint">Dirección</span>
                   <select value={txDirection} onChange={(e) => setTxDirection(e.target.value as any)}>
                     <option value="">Todas</option>
@@ -477,16 +612,16 @@ export default function DashboardPage() {
                   </select>
                 </label>
 
-                <label style={{ display: 'grid', gap: 6, width: 120 }}>
+                <label className="stack w-120">
                   <span className="upload-hint">Min €</span>
                   <input value={txMin} onChange={(e) => setTxMin(e.target.value)} placeholder="0" />
                 </label>
-                <label style={{ display: 'grid', gap: 6, width: 120 }}>
+                <label className="stack w-120">
                   <span className="upload-hint">Max €</span>
                   <input value={txMax} onChange={(e) => setTxMax(e.target.value)} placeholder="1000" />
                 </label>
 
-                <label style={{ display: 'grid', gap: 6, width: 110 }}>
+                <label className="stack w-110">
                   <span className="upload-hint">Tamaño</span>
                   <select value={txSize} onChange={(e) => setTxSize(Number(e.target.value))}>
                     {[25, 50, 100, 200].map((n) => (
@@ -504,17 +639,17 @@ export default function DashboardPage() {
                 )}
               </div>
 
-              {txExportError && <div className="error" style={{ marginTop: 10 }}>{txExportError}</div>}
-              {txError && <div className="error" style={{ marginTop: 10 }}>{String((txError as any).message)}</div>}
-              {txAnalyticsError && <div className="error" style={{ marginTop: 10 }}>{String((txAnalyticsError as any).message)}</div>}
+              {txExportError && <div className="error mt-2">{txExportError}</div>}
+              {txError && <div className="error mt-2">{String((txError as any).message)}</div>}
+              {txAnalyticsError && <div className="error mt-2">{String((txAnalyticsError as any).message)}</div>}
 
-              <div className="upload-hint" style={{ marginTop: 10 }}>
+              <div className="upload-hint mt-2">
                 {txLoading ? 'Cargando…' : null}
                 {!!txData && `Resultados: ${txData.totalElements} · Página ${txData.page + 1}/${txData.totalPages || 1}`}
               </div>
 
               {!!txAnalytics && (
-                <div style={{ marginTop: 12 }}>
+                <Reveal className="mt-12" delay={1}>
                   <div className="grid">
                     <div className="kpi">
                       <h4>Total entradas</h4>
@@ -534,11 +669,12 @@ export default function DashboardPage() {
                     </div>
                   </div>
 
-                  <div style={{ marginTop: 14 }}>
+                  <div className="mt-3">
                     <KpiChart
                       title="Serie diaria (neto)"
                       points={(txAnalytics.daily || []).map((d) => ({ label: d.date, value: Number(d.net) }))}
                       variant="area"
+                      module="overview"
                       valueSuffix="€"
                       onPointClick={(label) => {
                         if (!hasPlatinum || isClient) return
@@ -549,19 +685,19 @@ export default function DashboardPage() {
                         setTxPage(0)
                       }}
                     />
-                    <div className="upload-hint" style={{ marginTop: 6 }}>
+                    <div className="upload-hint mt-1">
                       Nota: salidas se almacenan como importes negativos.
                     </div>
                   </div>
 
-                  <div style={{ marginTop: 14 }}>
-                    <h4 style={{ margin: '0 0 8px' }}>Top contrapartes (impacto)</h4>
+                  <div className="mt-3">
+                    <h4 className="m-0 mb-8">Top contrapartes (impacto)</h4>
                     {txAnalyticsLoading ? (
                       <div className="upload-hint">Calculando agregados…</div>
                     ) : !txAnalytics.topCounterparties?.length ? (
                       <div className="empty">Sin contrapartes para estos filtros.</div>
                     ) : (
-                      <div style={{ overflow: 'auto' }}>
+                      <div className="overflow-auto">
                         <table className="table">
                           <thead>
                             <tr>
@@ -574,7 +710,7 @@ export default function DashboardPage() {
                             {txAnalytics.topCounterparties.slice(0, 10).map((cp) => (
                               <tr key={cp.counterparty}>
                                 <td>{cp.counterparty}</td>
-                                <td style={{ fontWeight: 700 }}>{Number(cp.total).toFixed(2)}</td>
+                                <td className="fw-700">{Number(cp.total).toFixed(2)}</td>
                                 <td>{cp.count}</td>
                               </tr>
                             ))}
@@ -584,12 +720,12 @@ export default function DashboardPage() {
                     )}
                   </div>
 
-                  <div style={{ marginTop: 14 }}>
-                    <h4 style={{ margin: '0 0 8px' }}>Desglose por categoría (reglas)</h4>
+                  <div className="mt-3">
+                    <h4 className="m-0 mb-8">Desglose por categoría (reglas)</h4>
                     {!txAnalytics.categories?.length ? (
                       <div className="empty">Sin categorías para estos filtros.</div>
                     ) : (
-                      <div style={{ overflow: 'auto' }}>
+                      <div className="overflow-auto">
                         <table className="table">
                           <thead>
                             <tr>
@@ -604,7 +740,7 @@ export default function DashboardPage() {
                             {txAnalytics.categories.slice(0, 12).map((c) => (
                               <tr key={c.category}>
                                 <td>{c.category}</td>
-                                <td style={{ fontWeight: 700 }}>{Number(c.total).toFixed(2)}</td>
+                                <td className="fw-700">{Number(c.total).toFixed(2)}</td>
                                 <td>{Number(c.inflows).toFixed(2)}</td>
                                 <td>{Number(c.outflows).toFixed(2)}</td>
                                 <td>{c.count}</td>
@@ -612,19 +748,19 @@ export default function DashboardPage() {
                             ))}
                           </tbody>
                         </table>
-                        <div className="upload-hint" style={{ marginTop: 8 }}>
+                        <div className="upload-hint mt-8">
                           Clasificación aproximada por texto (description + counterparty). En PLATINUM se puede refinar con reglas a medida.
                         </div>
                       </div>
                     )}
                   </div>
 
-                  <div style={{ marginTop: 14 }}>
-                    <h4 style={{ margin: '0 0 8px' }}>Anomalías detectadas</h4>
+                  <div className="mt-3">
+                    <h4 className="m-0 mb-8">Anomalías detectadas</h4>
                     {!txAnalytics.anomalies?.length ? (
                       <div className="empty">No se detectan anomalías relevantes en este rango.</div>
                     ) : (
-                      <div style={{ overflow: 'auto' }}>
+                      <div className="overflow-auto">
                         <table className="table">
                           <thead>
                             <tr>
@@ -638,7 +774,7 @@ export default function DashboardPage() {
                             {txAnalytics.anomalies.slice(0, 10).map((a) => (
                               <tr key={a.date}>
                                 <td>{a.date}</td>
-                                <td style={{ fontWeight: 700 }}>{Number(a.net).toFixed(2)}</td>
+                                <td className="fw-700">{Number(a.net).toFixed(2)}</td>
                                 <td>{Number(a.score).toFixed(2)}</td>
                                 <td className="upload-hint">{a.reason}</td>
                               </tr>
@@ -648,13 +784,13 @@ export default function DashboardPage() {
                       </div>
                     )}
                   </div>
-                </div>
+                </Reveal>
               )}
 
               {!txData?.items?.length ? (
-                <div className="empty" style={{ marginTop: 10 }}>No hay transacciones para estos filtros.</div>
+                <div className="empty mt-2">No hay transacciones para estos filtros.</div>
               ) : (
-                <div style={{ marginTop: 10, overflow: 'auto' }}>
+                <Reveal className="mt-2 overflow-auto" delay={2}>
                   <table className="table">
                     <thead>
                       <tr>
@@ -668,11 +804,11 @@ export default function DashboardPage() {
                     <tbody>
                       {txData.items.map((t: any) => {
                         const amt = Number(t.amount)
-                        const color = amt < 0 ? '#ef4444' : '#22c55e'
+                        const amtClass = amt < 0 ? 'text-danger' : 'text-success'
                         return (
                           <tr key={t.id}>
                             <td>{t.txnDate}</td>
-                            <td style={{ color, fontWeight: 700 }}>{formatMoney(amt)}</td>
+                            <td className={`fw-700 ${amtClass}`}>{formatMoney(amt)}</td>
                             <td>{t.description}</td>
                             <td>{t.counterparty || '-'}</td>
                             <td>{t.period}</td>
@@ -681,11 +817,11 @@ export default function DashboardPage() {
                       })}
                     </tbody>
                   </table>
-                </div>
+                </Reveal>
               )}
 
               {!!txData && txData.totalPages > 1 && (
-                <div className="mini-row" style={{ marginTop: 10 }}>
+                <Reveal className="mini-row mt-2" delay={3}>
                   <Button variant="ghost" size="sm" onClick={() => setTxPage((p) => Math.max(0, p - 1))} disabled={txPage <= 0}>
                     Anterior
                   </Button>
@@ -693,12 +829,13 @@ export default function DashboardPage() {
                   <Button variant="ghost" size="sm" onClick={() => setTxPage((p) => p + 1)} disabled={!txData.hasNext}>
                     Siguiente
                   </Button>
-                </div>
+                </Reveal>
               )}
               </div>
             )}
           </div>
         </div>
+        </Reveal>
       )}
     </div>
   )

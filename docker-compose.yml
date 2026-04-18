@@ -19,9 +19,11 @@ services:
     build:
       context: ./backend
     environment:
+      SPRING_PROFILES_ACTIVE: dev
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/enterpriseiq
       SPRING_DATASOURCE_USERNAME: enterpriseiq
       SPRING_DATASOURCE_PASSWORD: enterpriseiq
+      APP_JWT_SECRET: dev-secret-dev-secret-dev-secret-1234
       CORS_ALLOWED_ORIGINS: http://localhost:5174
       MANAGEMENT_SERVER_PORT: 8082
       MANAGEMENT_SERVER_ADDRESS: 0.0.0.0

@@ -29,4 +29,6 @@ public interface AutomationJobRepository extends JpaRepository<AutomationJob, Lo
               @Param("now") Instant now);
 
     boolean existsByCompany_IdAndTypeAndStatusIn(Long companyId, AutomationJobType type, List<AutomationJobStatus> statuses);
+
+    boolean existsByCompany_IdAndTypeAndStatusInAndPayloadJsonContaining(Long companyId, AutomationJobType type, List<AutomationJobStatus> statuses, String payloadJsonPart);
 }

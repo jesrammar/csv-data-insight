@@ -29,7 +29,7 @@ Notas:
 | Universal: análisis + preview XLSX | ✅ | ✅ | ✅ |
 | Universal: correlaciones | ❌ | ✅ | ✅ |
 | Universal: CSV normalizado + preview filas | ❌ | ❌ | ✅ |
-| Asistente (chat) | ❌ | ❌ | ✅ |
+| Assistant (reglas · chat) | ❌ | ❌ | ✅ |
 
 ## Endpoints relevantes (referencia rápida)
 

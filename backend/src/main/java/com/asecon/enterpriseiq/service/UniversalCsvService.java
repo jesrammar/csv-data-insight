@@ -4,8 +4,11 @@ import com.asecon.enterpriseiq.dto.UniversalBucketDto;
 import com.asecon.enterpriseiq.dto.UniversalColumnDto;
 import com.asecon.enterpriseiq.dto.UniversalCorrelationDto;
 import com.asecon.enterpriseiq.dto.UniversalInsightDto;
+import com.asecon.enterpriseiq.dto.UniversalImportAnalysisDto;
+import com.asecon.enterpriseiq.dto.UniversalImportLineageDto;
 import com.asecon.enterpriseiq.dto.UniversalSummaryDto;
 import com.asecon.enterpriseiq.dto.UniversalTopValueDto;
+import com.asecon.enterpriseiq.dto.UniversalXlsxOptionsDto;
 import com.asecon.enterpriseiq.model.Company;
 import com.asecon.enterpriseiq.model.Plan;
 import com.asecon.enterpriseiq.model.UniversalImport;
@@ -179,10 +182,34 @@ public class UniversalCsvService {
             throw ex;
         }
         String json = objectMapper.writeValueAsString(result.summary());
+        String analysisJson = null;
+        try {
+            UniversalXlsxOptionsDto xlsxDto = xlsxOptions == null
+                ? null
+                : new UniversalXlsxOptionsDto(xlsxOptions.sheetIndex(), xlsxOptions.headerRow1Based());
+            UniversalImportAnalysisDto analysis = new UniversalImportAnalysisDto(
+                result.bytes(),
+                result.durationMs(),
+                result.charsetName(),
+                String.valueOf(result.delimiter()),
+                result.sampled(),
+                result.totalRowsRead(),
+                result.goodRows(),
+                result.badRows(),
+                result.observedRows(),
+                result.removedEmptyColumns(),
+                tabular.convertedFromXlsx(),
+                xlsxDto
+            );
+            analysisJson = objectMapper.writeValueAsString(analysis);
+        } catch (Exception ignored) {
+            analysisJson = null;
+        }
 
         imp.setRowCount(result.summary().rowCount());
         imp.setColumnCount(result.summary().columnCount());
         imp.setSummaryJson(json);
+        if (analysisJson != null) imp.setAnalysisJson(analysisJson);
         imp = importRepository.save(imp);
 
         try {
@@ -327,6 +354,33 @@ public class UniversalCsvService {
                     return null;
                 }
             });
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<UniversalImportLineageDto> lineage(Long companyId, Long importId) {
+        Optional<UniversalImport> impOpt = (importId == null)
+            ? importRepository.findFirstByCompanyIdOrderByCreatedAtDesc(companyId)
+            : importRepository.findByIdAndCompanyId(importId, companyId);
+
+        return impOpt.map(imp -> {
+            UniversalImportAnalysisDto analysis = null;
+            String raw = imp.getAnalysisJson();
+            if (raw != null && !raw.trim().isEmpty() && !"null".equalsIgnoreCase(raw.trim())) {
+                try {
+                    analysis = objectMapper.readValue(raw, UniversalImportAnalysisDto.class);
+                } catch (Exception ignored) {
+                    analysis = null;
+                }
+            }
+            return new UniversalImportLineageDto(
+                imp.getId(),
+                imp.getFilename(),
+                imp.getCreatedAt(),
+                imp.getRowCount(),
+                imp.getColumnCount(),
+                analysis
+            );
+        });
     }
 
     private AnalysisResult analyze(String filename, byte[] bytes, Charset charset, Plan plan, Instant createdAt) throws IOException {

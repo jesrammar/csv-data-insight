@@ -11,5 +11,5 @@ create table if not exists user_tokens (
 
 create index if not exists idx_user_tokens_user_purpose_active
   on user_tokens(user_id, purpose)
-  where used_at is null;
+  ;
 

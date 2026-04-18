@@ -18,15 +18,15 @@ function Card({
   badge?: string
 }) {
   const inner = (
-    <div className={`card soft ${disabled ? 'disabled' : ''}`} style={{ padding: 14 }}>
-      <div className="mini-row" style={{ marginTop: 0, justifyContent: 'space-between', alignItems: 'baseline' }}>
-        <strong style={{ fontSize: 14 }}>{title}</strong>
+    <div className={`card soft card-pad-14 ${disabled ? 'disabled' : ''}`.trim()}>
+      <div className="row row-between row-baseline">
+        <strong className="fs-14">{title}</strong>
         {badge ? <span className="badge">{badge}</span> : null}
       </div>
-      <div className="upload-hint" style={{ marginTop: 8 }}>
+      <div className="upload-hint mt-8">
         {subtitle}
       </div>
-      <div className="upload-hint" style={{ marginTop: 10 }}>
+      <div className="upload-hint mt-2">
         {disabled ? 'No disponible con tu plan.' : 'Abrir →'}
       </div>
     </div>
@@ -34,9 +34,7 @@ function Card({
 
   if (disabled) return inner
   return (
-    <Link to={to} style={{ textDecoration: 'none' }}>
-      {inner}
-    </Link>
+    <Link to={to}>{inner}</Link>
   )
 }
 
@@ -57,13 +55,13 @@ export default function ToolsPage() {
 
       <div className="grid section">
         <div className="card">
-          <div className="mini-row" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
-            <h3 style={{ margin: 0 }}>Consultoría</h3>
+          <div className="row row-between row-baseline">
+            <h3 className="m-0">Consultoría</h3>
             <span className="upload-hint">
               <Icon name="advisor" /> módulos avanzados
             </span>
           </div>
-          <div className="grid" style={{ marginTop: 12 }}>
+          <div className="grid mt-12">
             <Card
               title="Cumplimiento (Tribunal)"
               subtitle="KPIs y riesgos a partir de CSV del Tribunal."
@@ -100,8 +98,8 @@ export default function ToolsPage() {
         </div>
 
         <div className="card">
-          <h3 style={{ marginTop: 0 }}>Operación</h3>
-          <div className="grid" style={{ marginTop: 12 }}>
+          <h3 className="h3-reset">Operación</h3>
+          <div className="grid mt-12">
             <Card
               title="Auditoría"
               subtitle="Registro de acciones (descargas, imports, etc.)."
@@ -116,11 +114,11 @@ export default function ToolsPage() {
             />
           </div>
 
-          <details style={{ marginTop: 14 }}>
-            <summary className="upload-hint" style={{ cursor: 'pointer' }}>
+          <details className="mt-3">
+            <summary className="upload-hint cursor-pointer">
               Avanzado (soporte/operación)
             </summary>
-            <div className="grid" style={{ marginTop: 12 }}>
+            <div className="grid mt-12">
               <Card
                 title="Operaciones · Automatización"
                 subtitle="Forzar/reintentar jobs si algo no corre (KPIs, informes, snapshots). Normalmente no hace falta tocarlo."
