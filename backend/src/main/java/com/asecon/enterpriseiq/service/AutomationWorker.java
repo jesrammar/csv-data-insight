@@ -12,33 +12,41 @@ import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 @Component
+@ConditionalOnProperty(value = "app.scheduler.enabled", havingValue = "true", matchIfMissing = true)
 public class AutomationWorker {
     private static final Logger log = LoggerFactory.getLogger(AutomationWorker.class);
 
     private final AutomationJobRepository jobRepository;
     private final ObjectMapper objectMapper;
     private final KpiAutomationService kpiAutomationService;
+    private final PeriodCloseAutomationService periodCloseAutomationService;
     private final ReportAutomationService reportAutomationService;
     private final RecommendationSnapshotService recommendationSnapshotService;
+    private final PeriodWorkflowService periodWorkflowService;
     private final TransactionTemplate txNew;
 
     public AutomationWorker(AutomationJobRepository jobRepository,
                             ObjectMapper objectMapper,
                             KpiAutomationService kpiAutomationService,
+                            PeriodCloseAutomationService periodCloseAutomationService,
                             ReportAutomationService reportAutomationService,
                             RecommendationSnapshotService recommendationSnapshotService,
+                            PeriodWorkflowService periodWorkflowService,
                             PlatformTransactionManager transactionManager) {
         this.jobRepository = jobRepository;
         this.objectMapper = objectMapper;
         this.kpiAutomationService = kpiAutomationService;
+        this.periodCloseAutomationService = periodCloseAutomationService;
         this.reportAutomationService = reportAutomationService;
         this.recommendationSnapshotService = recommendationSnapshotService;
+        this.periodWorkflowService = periodWorkflowService;
         this.txNew = new TransactionTemplate(transactionManager);
         this.txNew.setPropagationBehaviorName("PROPAGATION_REQUIRES_NEW");
     }
@@ -71,13 +79,19 @@ public class AutomationWorker {
             if (job.getType() == AutomationJobType.RECOMPUTE_KPIS) {
                 int monthsBack = intPayload(payload, "monthsBack", 2);
                 if (companyId != null) kpiAutomationService.recomputeRecent(companyId, monthsBack);
+            } else if (job.getType() == AutomationJobType.ORCHESTRATE_PERIOD_CLOSE) {
+                String period = stringPayload(payload, "period", YearMonth.now().minusMonths(1).toString());
+                if (companyId != null) periodCloseAutomationService.orchestrate(companyId, period);
             } else if (job.getType() == AutomationJobType.GENERATE_MONTHLY_REPORT) {
                 String period = stringPayload(payload, "period", YearMonth.now().minusMonths(1).toString());
                 if (companyId != null) reportAutomationService.generateMonthly(companyId, period);
             } else if (job.getType() == AutomationJobType.SNAPSHOT_RECOMMENDATIONS) {
                 String period = stringPayload(payload, "period", YearMonth.now().toString());
                 String objective = stringPayload(payload, "objective", null);
-                if (companyId != null) recommendationSnapshotService.snapshot(companyId, period, objective);
+                if (companyId != null) {
+                    var recommendation = recommendationSnapshotService.snapshot(companyId, period, objective);
+                    periodWorkflowService.syncFromRecommendation(recommendation);
+                }
             }
 
             job.setStatus(AutomationJobStatus.SUCCESS);

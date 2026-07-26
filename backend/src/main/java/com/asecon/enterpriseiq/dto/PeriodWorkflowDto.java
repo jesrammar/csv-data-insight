@@ -1,0 +1,39 @@
+package com.asecon.enterpriseiq.dto;
+
+import com.asecon.enterpriseiq.model.PeriodWorkflowStatus;
+import java.time.Instant;
+
+public record PeriodWorkflowDto(
+    Long id,
+    Long companyId,
+    String period,
+    PeriodWorkflowStatus status,
+    String statusTitle,
+    String statusDetail,
+    String statusBadgeTone,
+    String primaryActionLabel,
+    String orchestrationStatus,
+    boolean orchestrationRunnable,
+    boolean autoCloseReady,
+    String orchestrationTitle,
+    String orchestrationDetail,
+    String orchestrationActionLabel,
+    Integer priority,
+    String blockingCode,
+    String blockingReason,
+    Integer exceptionCount,
+    Long sourceImportId,
+    String sourceImportStatus,
+    Long reportId,
+    String reportStatus,
+    Long recommendationSnapshotId,
+    String recommendationSummary,
+    Instant recommendationCreatedAt,
+    PortfolioWorkflowStepDto portfolioStep,
+    Long ownerUserId,
+    Instant startedAt,
+    Instant updatedAt,
+    Instant reviewedAt,
+    Instant closedAt,
+    String notes
+) {}

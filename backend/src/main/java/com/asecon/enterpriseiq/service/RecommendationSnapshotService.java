@@ -14,15 +14,18 @@ public class RecommendationSnapshotService {
     private final AdvisorRecommendationRepository recommendationRepository;
     private final CompanyRepository companyRepository;
     private final ObjectMapper objectMapper;
+    private final AdvisorActionFollowUpService advisorActionFollowUpService;
 
     public RecommendationSnapshotService(AdvisorAssistantService advisorAssistantService,
                                          AdvisorRecommendationRepository recommendationRepository,
                                          CompanyRepository companyRepository,
-                                         ObjectMapper objectMapper) {
+                                         ObjectMapper objectMapper,
+                                         AdvisorActionFollowUpService advisorActionFollowUpService) {
         this.advisorAssistantService = advisorAssistantService;
         this.recommendationRepository = recommendationRepository;
         this.companyRepository = companyRepository;
         this.objectMapper = objectMapper;
+        this.advisorActionFollowUpService = advisorActionFollowUpService;
     }
 
     @Transactional
@@ -35,7 +38,10 @@ public class RecommendationSnapshotService {
         String resolvedPeriod = (period == null || period.isBlank()) ? java.time.YearMonth.now().toString() : period;
         String source = RecommendationObjective.toSource(objective);
         var existing = recommendationRepository.findByCompany_IdAndPeriodAndSource(companyId, resolvedPeriod, source);
-        if (existing.isPresent()) return existing.get();
+        if (existing.isPresent()) {
+            advisorActionFollowUpService.syncForRecommendation(existing.get());
+            return existing.get();
+        }
 
         var company = companyRepository.findById(companyId).orElseThrow();
         var rec = advisorAssistantService.recommendations(companyId, resolvedPeriod, objective);
@@ -51,7 +57,9 @@ public class RecommendationSnapshotService {
         } catch (Exception e) {
             entity.setActionsJson("[]");
         }
-        return recommendationRepository.save(entity);
+        AdvisorRecommendation saved = recommendationRepository.save(entity);
+        advisorActionFollowUpService.syncForRecommendation(saved);
+        return saved;
     }
 }
 

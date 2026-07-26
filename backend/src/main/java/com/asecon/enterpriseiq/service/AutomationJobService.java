@@ -43,4 +43,15 @@ public class AutomationJobService {
         if (companyId == null) return false;
         return jobRepository.existsByCompany_IdAndTypeAndStatusIn(companyId, type, List.of(AutomationJobStatus.PENDING, AutomationJobStatus.RETRY, AutomationJobStatus.RUNNING));
     }
+
+    public boolean hasActiveJobForPeriod(Long companyId, AutomationJobType type, String period) {
+        if (companyId == null || period == null || period.isBlank()) return hasActiveJob(companyId, type);
+        String payloadToken = "\"period\":\"" + period.trim() + "\"";
+        return jobRepository.existsByCompany_IdAndTypeAndStatusInAndPayloadJsonContaining(
+            companyId,
+            type,
+            List.of(AutomationJobStatus.PENDING, AutomationJobStatus.RETRY, AutomationJobStatus.RUNNING),
+            payloadToken
+        );
+    }
 }

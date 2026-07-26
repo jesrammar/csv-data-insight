@@ -4,6 +4,7 @@ public enum ImportStatus {
     PENDING,
     RUNNING,
     RETRY,
+    BLOCKED,
     OK,
     WARNING,
     ERROR,

@@ -12,6 +12,7 @@ import java.time.YearMonth;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -19,6 +20,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 
 @RestController
 @RequestMapping("/api/companies/{companyId}/automation")
@@ -90,6 +92,23 @@ public class AutomationController {
             AutomationJobType.SNAPSHOT_RECOMMENDATIONS,
             Instant.now(),
             json(Map.of("period", resolved, "objective", objective))
+        );
+        return new AutomationJobDto(job.getId(), companyId, job.getType().name(), job.getStatus().name(), job.getAttempts(), job.getMaxAttempts(), job.getRunAfter(), job.getCreatedAt(), job.getUpdatedAt(), job.getTraceId(), job.getLastError());
+    }
+
+    @PostMapping("/periods/{period}/close-flow")
+    public AutomationJobDto closeFlow(@PathVariable Long companyId, @PathVariable String period) {
+        var user = accessService.currentUser();
+        accessService.requireCompanyAccess(user, companyId);
+        String resolved = (period == null || period.isBlank()) ? YearMonth.now().minusMonths(1).toString() : period.trim();
+        if (jobService.hasActiveJobForPeriod(companyId, AutomationJobType.ORCHESTRATE_PERIOD_CLOSE, resolved)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Ya existe un cierre automatico en cola para este periodo.");
+        }
+        var job = jobService.enqueue(
+            companyId,
+            AutomationJobType.ORCHESTRATE_PERIOD_CLOSE,
+            Instant.now(),
+            json(Map.of("period", resolved))
         );
         return new AutomationJobDto(job.getId(), companyId, job.getType().name(), job.getStatus().name(), job.getAttempts(), job.getMaxAttempts(), job.getRunAfter(), job.getCreatedAt(), job.getUpdatedAt(), job.getTraceId(), job.getLastError());
     }

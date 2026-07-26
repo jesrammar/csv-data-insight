@@ -17,6 +17,17 @@ export function notifyCompanyChange() {
   window.dispatchEvent(new Event(COMPANY_EVENT))
 }
 
+export function setActiveCompanySelection(id: number | null, plan?: string | null) {
+  if (id == null) {
+    localStorage.removeItem('companyId')
+    localStorage.removeItem('companyPlan')
+  } else {
+    localStorage.setItem('companyId', String(id))
+    localStorage.setItem('companyPlan', String(plan || 'BRONZE').toUpperCase())
+  }
+  notifyCompanyChange()
+}
+
 export function useCompanySelection(): CompanySelection {
   const [selection, setSelection] = useState<CompanySelection>(() => readSelection())
 

@@ -3,9 +3,11 @@ package com.asecon.enterpriseiq.service;
 import com.asecon.enterpriseiq.dto.UniversalBucketDto;
 import com.asecon.enterpriseiq.dto.UniversalColumnDto;
 import com.asecon.enterpriseiq.dto.UniversalCorrelationDto;
+import com.asecon.enterpriseiq.dto.UniversalDetectedEntityDto;
 import com.asecon.enterpriseiq.dto.UniversalInsightDto;
 import com.asecon.enterpriseiq.dto.UniversalImportAnalysisDto;
 import com.asecon.enterpriseiq.dto.UniversalImportLineageDto;
+import com.asecon.enterpriseiq.dto.UniversalRelationshipDto;
 import com.asecon.enterpriseiq.dto.UniversalSummaryDto;
 import com.asecon.enterpriseiq.dto.UniversalTopValueDto;
 import com.asecon.enterpriseiq.dto.UniversalXlsxOptionsDto;
@@ -27,12 +29,14 @@ import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Collectors;
 import io.micrometer.core.instrument.Counter;
@@ -62,6 +66,7 @@ public class UniversalCsvService {
     private static final int MAX_DATE_SERIES = 24;
     private static final int MAX_CORR_COLS = 8;
     private static final int MAX_CORR_ROWS = 5000;
+    private static final int MAX_SEMANTIC_SAMPLE_ROWS = 5000;
 
     private final CompanyRepository companyRepository;
     private final UniversalImportRepository importRepository;
@@ -78,6 +83,7 @@ public class UniversalCsvService {
     private final int maxAnalyzeSecondsPlatinum;
     private final MeterRegistry meterRegistry;
     private final ErrorTagger errorTagger;
+    private final UniversalSemanticProfiler semanticProfiler;
 
     public UniversalCsvService(CompanyRepository companyRepository,
                                UniversalImportRepository importRepository,
@@ -109,6 +115,7 @@ public class UniversalCsvService {
         this.maxAnalyzeSecondsPlatinum = Math.max(5, maxAnalyzeSecondsPlatinum);
         this.meterRegistry = meterRegistry;
         this.errorTagger = errorTagger;
+        this.semanticProfiler = new UniversalSemanticProfiler();
     }
 
     int effectiveMaxAnalyzeRows(Plan plan) {
@@ -127,6 +134,10 @@ public class UniversalCsvService {
             case GOLD -> maxAnalyzeSecondsGold > 0 ? maxAnalyzeSecondsGold : maxAnalyzeSecondsDefault;
             case PLATINUM -> maxAnalyzeSecondsPlatinum > 0 ? maxAnalyzeSecondsPlatinum : maxAnalyzeSecondsDefault;
         };
+    }
+
+    UniversalSummaryDto analyzePreview(String filename, byte[] bytes, Charset charset, Plan plan, Instant createdAt) throws IOException {
+        return analyze(null, filename, bytes, charset, plan, createdAt, false).summary();
     }
 
     @Transactional
@@ -170,7 +181,7 @@ public class UniversalCsvService {
         AnalysisResult result;
         long analyzeStartNs = System.nanoTime();
         try {
-            result = analyze(displayFilename, tabular.bytes(), charset, plan, imp.getCreatedAt());
+            result = analyze(String.valueOf(companyId), displayFilename, tabular.bytes(), charset, plan, imp.getCreatedAt(), tabular.convertedFromXlsx());
         } catch (ResponseStatusException ex) {
             recordUniversalAnalyzeFailure(tabular.bytes().length, tabular.convertedFromXlsx(), analyzeStartNs, ex);
             throw ex;
@@ -199,7 +210,8 @@ public class UniversalCsvService {
                 result.observedRows(),
                 result.removedEmptyColumns(),
                 tabular.convertedFromXlsx(),
-                xlsxDto
+                xlsxDto,
+                result.summary().intakeDiagnosis()
             );
             analysisJson = objectMapper.writeValueAsString(analysis);
         } catch (Exception ignored) {
@@ -280,7 +292,12 @@ public class UniversalCsvService {
             result.summary().columnCount(),
             result.summary().columns(),
             result.summary().correlations(),
-            result.summary().insights() == null ? List.of() : result.summary().insights()
+            result.summary().rowGranularity(),
+            result.summary().detectedEntities(),
+            result.summary().relationships(),
+            result.summary().semanticWarnings(),
+            result.summary().insights() == null ? List.of() : result.summary().insights(),
+            result.summary().intakeDiagnosis()
         );
     }
 
@@ -325,7 +342,12 @@ public class UniversalCsvService {
                         summary.columnCount(),
                         summary.columns(),
                         summary.correlations(),
-                        summary.insights() == null ? List.of() : summary.insights()
+                        summary.rowGranularity(),
+                        summary.detectedEntities(),
+                        summary.relationships(),
+                        summary.semanticWarnings(),
+                        summary.insights() == null ? List.of() : summary.insights(),
+                        summary.intakeDiagnosis()
                     );
                 } catch (Exception ex) {
                     return null;
@@ -348,7 +370,12 @@ public class UniversalCsvService {
                         summary.columnCount(),
                         summary.columns(),
                         summary.correlations(),
-                        summary.insights() == null ? List.of() : summary.insights()
+                        summary.rowGranularity(),
+                        summary.detectedEntities(),
+                        summary.relationships(),
+                        summary.semanticWarnings(),
+                        summary.insights() == null ? List.of() : summary.insights(),
+                        summary.intakeDiagnosis()
                     );
                 } catch (Exception ex) {
                     return null;
@@ -383,7 +410,13 @@ public class UniversalCsvService {
         });
     }
 
-    private AnalysisResult analyze(String filename, byte[] bytes, Charset charset, Plan plan, Instant createdAt) throws IOException {
+    private AnalysisResult analyze(String clientKey,
+                                   String filename,
+                                   byte[] bytes,
+                                   Charset charset,
+                                   Plan plan,
+                                   Instant createdAt,
+                                   boolean convertedFromXlsx) throws IOException {
         long startNs = System.nanoTime();
         BufferedReader reader = new BufferedReader(new InputStreamReader(new ByteArrayInputStream(bytes), charset));
         String firstLine = reader.readLine();
@@ -431,6 +464,7 @@ public class UniversalCsvService {
         int observedRows = 0;
         boolean sampled = false;
         List<String> numericHeaders = new ArrayList<>();
+        List<Map<String, String>> semanticSampleRows = new ArrayList<>();
         int effectiveMaxRows = effectiveMaxAnalyzeRows(plan);
         int effectiveMaxSeconds = effectiveMaxAnalyzeSeconds(plan);
 
@@ -456,6 +490,7 @@ public class UniversalCsvService {
                 continue;
             }
             observedRows++;
+            Map<String, String> sampleRow = semanticSampleRows.size() < MAX_SEMANTIC_SAMPLE_ROWS ? new HashMap<>() : null;
             for (String header : headers) {
                 ColumnStats col = stats.get(header);
                 String raw;
@@ -465,6 +500,12 @@ public class UniversalCsvService {
                     raw = null;
                 }
                 col.observe(raw);
+                if (sampleRow != null) {
+                    sampleRow.put(header, raw);
+                }
+            }
+            if (sampleRow != null) {
+                semanticSampleRows.add(sampleRow);
             }
         }
 
@@ -492,9 +533,30 @@ public class UniversalCsvService {
             }
         }
 
-        numericHeaders = stats.values().stream()
-            .filter(c -> "number".equals(c.detectedType))
-            .map(c -> c.name)
+        List<UniversalColumnDto> baseColumns = stats.values().stream()
+            .sorted(Comparator.comparing(c -> c.name.toLowerCase(Locale.ROOT)))
+            .map(ColumnStats::toDto)
+            .collect(Collectors.toList());
+
+        UniversalSemanticProfiler.Profile semanticProfile = semanticProfiler.enrich(baseColumns, semanticSampleRows);
+        List<UniversalColumnDto> columns = semanticProfile.columns();
+        var intakeDiagnosis = UniversalIntakeDiagnosisService.diagnose(
+            clientKey,
+            filename,
+            headers,
+            columns,
+            semanticProfile.rowGranularity(),
+            semanticProfile.detectedEntities(),
+            semanticProfile.semanticWarnings(),
+            semanticSampleRows,
+            bytes,
+            convertedFromXlsx
+        );
+
+        numericHeaders = columns.stream()
+            .filter(c -> "number".equalsIgnoreCase(clean(c.detectedType())))
+            .filter(c -> "MEASURE".equalsIgnoreCase(clean(c.analyticalType())))
+            .map(UniversalColumnDto::name)
             .collect(Collectors.toList());
 
         List<UniversalCorrelationDto> correlations = Collections.emptyList();
@@ -505,11 +567,6 @@ public class UniversalCsvService {
             corrRows = correlations.isEmpty() ? 0 : 1;
         }
 
-        List<UniversalColumnDto> columns = stats.values().stream()
-            .sorted(Comparator.comparing(c -> c.name.toLowerCase(Locale.ROOT)))
-            .map(ColumnStats::toDto)
-            .collect(Collectors.toList());
-
         if (plan == null || !plan.isAtLeast(Plan.GOLD)) {
             correlations = Collections.emptyList();
         }
@@ -519,6 +576,11 @@ public class UniversalCsvService {
                 .map(c -> new UniversalColumnDto(
                     c.name(),
                     c.detectedType(),
+                    c.physicalType(),
+                    c.semanticType(),
+                    c.analyticalType(),
+                    c.nullSemantics(),
+                    c.semanticConfidence(),
                     c.totalCount(),
                     c.nullCount(),
                     c.uniqueCount(),
@@ -529,6 +591,10 @@ public class UniversalCsvService {
                     null,
                     c.dateMin(),
                     c.dateMax(),
+                    c.validAggregations() == null ? List.of() : c.validAggregations().stream().limit(4).collect(Collectors.toList()),
+                    c.recommendedCharts() == null ? List.of() : c.recommendedCharts(),
+                    c.relatedColumns() == null ? List.of() : c.relatedColumns().stream().limit(3).collect(Collectors.toList()),
+                    c.warnings() == null ? List.of() : c.warnings().stream().limit(2).collect(Collectors.toList()),
                     c.topValues() == null ? List.of() : c.topValues().stream().limit(3).collect(Collectors.toList()),
                     List.of(),
                     List.of()
@@ -537,7 +603,19 @@ public class UniversalCsvService {
             correlations = Collections.emptyList();
         }
 
-        List<UniversalInsightDto> insights = buildInsights(plan, headers, columns, correlations, bytes, charset, delimiter);
+        List<UniversalInsightDto> insights = buildInsights(
+            plan,
+            headers,
+            columns,
+            correlations,
+            semanticProfile.rowGranularity(),
+            semanticProfile.detectedEntities(),
+            semanticProfile.relationships(),
+            semanticProfile.semanticWarnings(),
+            bytes,
+            charset,
+            delimiter
+        );
         if (sampled) {
             insights.add(0, new UniversalInsightDto(
                 "info",
@@ -573,9 +651,13 @@ public class UniversalCsvService {
             rowCount,
             stats.size(),
             columns,
-            correlations
-            ,
-            insights
+            correlations,
+            semanticProfile.rowGranularity(),
+            semanticProfile.detectedEntities(),
+            semanticProfile.relationships(),
+            semanticProfile.semanticWarnings(),
+            insights,
+            intakeDiagnosis
         );
 
         return new AnalysisResult(
@@ -599,15 +681,83 @@ public class UniversalCsvService {
         List<String> headers,
         List<UniversalColumnDto> columns,
         List<UniversalCorrelationDto> correlations,
+        String rowGranularity,
+        List<UniversalDetectedEntityDto> detectedEntities,
+        List<UniversalRelationshipDto> relationships,
+        List<String> semanticWarnings,
         byte[] bytes,
         Charset charset,
         char delimiter
     ) {
         List<UniversalInsightDto> insights = new ArrayList<>();
 
+        if (rowGranularity != null && !"ROW".equalsIgnoreCase(rowGranularity)) {
+            String entityDetail = detectedEntities == null || detectedEntities.isEmpty()
+                ? "Hay granularidad específica detectada en el dataset."
+                : detectedEntities.stream()
+                    .limit(3)
+                    .map(e -> e.entityType() + "=" + e.distinctCount())
+                    .collect(Collectors.joining(", "));
+            insights.add(new UniversalInsightDto(
+                "info",
+                "Granularidad detectada",
+                "El dataset se interpreta como " + rowGranularity + ". " + entityDetail + ". Antes de contar o sumar, conviene elegir si analizas filas, entidades distintas o importes."
+            ));
+        }
+
+        insights.addAll(UniversalAccountingInsightService.buildInsights(
+            columns,
+            rowGranularity,
+            detectedEntities,
+            bytes,
+            charset,
+            delimiter
+        ));
+
+        UniversalColumnDto accountCode = findColumnBySemantic(columns, "ACCOUNT_CODE");
+        UniversalColumnDto accountName = findColumnBySemantic(columns, "ACCOUNT_NAME");
+        if (accountCode != null) {
+            String relationText = accountName != null ? " y se relaciona con '" + accountName.name() + "'" : "";
+            insights.add(new UniversalInsightDto(
+                "advisor",
+                "Cuenta contable tratada como categoría",
+                "'" + accountCode.name() + "' se ha reclasificado como código contable" + relationText + ". Se usa para frecuencias, asientos distintos y lectura de debe/haber/saldo; no para medias ni histogramas numéricos."
+            ));
+        }
+
+        UniversalColumnDto issueDate = findColumnByName(columns, "fecha_emision", "issue_date", "invoice_date");
+        UniversalDetectedEntityDto invoiceEntity = findEntity(detectedEntities, "INVOICE");
+        if (issueDate != null && invoiceEntity != null && "ACCOUNTING_ENTRY_LINE".equalsIgnoreCase(rowGranularity)) {
+            insights.add(new UniversalInsightDto(
+                "advisor",
+                "Facturación sin doble conteo",
+                "'" + issueDate.name() + "' se repite por línea contable. Para analizar facturación conviene contar " + invoiceEntity.distinctCount() + " facturas distintas y deduplicar los totales por factura antes de sumar."
+            ));
+        }
+
+        UniversalColumnDto taxableBase = findColumnByName(columns, "base_imponible_eur", "base_imponible", "taxable_base");
+        if (taxableBase != null && "STRUCTURAL".equalsIgnoreCase(clean(taxableBase.nullSemantics()))) {
+            insights.add(new UniversalInsightDto(
+                "info",
+                "Nulos estructurales",
+                "La ausencia en '" + taxableBase.name() + "' parece estructural: suele informarse solo en líneas principales de factura y no necesariamente indica mala calidad en cobros, pagos, bancos o IVA."
+            ));
+        }
+
+        UniversalColumnDto bankReconciled = findColumnByName(columns, "conciliado_banco", "bank_reconciled", "reconciled_bank");
+        if (bankReconciled != null) {
+            insights.add(new UniversalInsightDto(
+                "advisor",
+                "Conciliación solo en movimientos aplicables",
+                "'" + bankReconciled.name() + "' no debe leerse sobre todas las filas. La conciliación bancaria tiene sentido únicamente sobre movimientos bancarios aplicables, no sobre todo el dataset."
+            ));
+        }
+
         // Calidad: columnas con muchos nulos
         UniversalColumnDto worstNull = columns.stream()
             .filter(c -> c.totalCount() > 0)
+            .filter(c -> !"STRUCTURAL".equalsIgnoreCase(clean(c.nullSemantics())))
+            .filter(c -> !"NOT_APPLICABLE".equalsIgnoreCase(clean(c.nullSemantics())))
             .max(Comparator.comparingDouble(c -> (double) c.nullCount() / (double) c.totalCount()))
             .orElse(null);
         if (worstNull != null) {
@@ -617,6 +767,20 @@ public class UniversalCsvService {
                     "warning",
                     "Calidad de datos",
                     "La columna '" + worstNull.name() + "' tiene muchos nulos (" + Math.round(ratio * 100) + "%). Considera completar, imputar o excluirla de métricas."
+                ));
+            }
+        }
+
+        if (relationships != null && !relationships.isEmpty()) {
+            UniversalRelationshipDto topRel = relationships.stream()
+                .filter(rel -> rel != null && rel.confidence() >= 0.96d)
+                .findFirst()
+                .orElse(null);
+            if (topRel != null) {
+                insights.add(new UniversalInsightDto(
+                    "info",
+                    "Relación estable detectada",
+                    "'" + topRel.sourceColumn() + "' y '" + topRel.targetColumn() + "' mantienen una relación estable. Esto ayuda a evitar análisis duplicados y a elegir mejor la clave de agregación."
                 ));
             }
         }
@@ -643,6 +807,12 @@ public class UniversalCsvService {
             }
         }
 
+        if (semanticWarnings != null && !semanticWarnings.isEmpty()) {
+            semanticWarnings.stream()
+                .limit(2)
+                .forEach(warning -> insights.add(new UniversalInsightDto("info", "Lectura semántica", warning)));
+        }
+
         if (insights.isEmpty()) {
             insights.add(new UniversalInsightDto(
                 "info",
@@ -652,6 +822,34 @@ public class UniversalCsvService {
         }
 
         return insights;
+    }
+
+    private static UniversalColumnDto findColumnBySemantic(List<UniversalColumnDto> columns, String semanticType) {
+        if (columns == null || semanticType == null) return null;
+        return columns.stream()
+            .filter(c -> c != null && semanticType.equalsIgnoreCase(clean(c.semanticType())))
+            .findFirst()
+            .orElse(null);
+    }
+
+    private static UniversalColumnDto findColumnByName(List<UniversalColumnDto> columns, String... aliases) {
+        if (columns == null || aliases == null || aliases.length == 0) return null;
+        List<String> normalizedAliases = Arrays.stream(aliases)
+            .map(alias -> alias == null ? "" : alias.trim().toLowerCase(Locale.ROOT))
+            .toList();
+        return columns.stream()
+            .filter(Objects::nonNull)
+            .filter(c -> normalizedAliases.contains(clean(c.name()) == null ? "" : clean(c.name()).trim().toLowerCase(Locale.ROOT)))
+            .findFirst()
+            .orElse(null);
+    }
+
+    private static UniversalDetectedEntityDto findEntity(List<UniversalDetectedEntityDto> entities, String entityType) {
+        if (entities == null || entityType == null) return null;
+        return entities.stream()
+            .filter(e -> e != null && entityType.equalsIgnoreCase(clean(e.entityType())))
+            .findFirst()
+            .orElse(null);
     }
 
     private UniversalInsightDto tryBudgetLikeInsight(List<String> headers, byte[] bytes, Charset charset, char delimiter) {
@@ -1010,6 +1208,11 @@ public class UniversalCsvService {
             return new UniversalColumnDto(
                 name,
                 detectedType,
+                "number".equals(detectedType) ? "NUMBER" : "date".equals(detectedType) ? "DATE" : "STRING",
+                null,
+                null,
+                "UNKNOWN",
+                null,
                 total,
                 nulls,
                 unique,
@@ -1020,6 +1223,10 @@ public class UniversalCsvService {
                 p90,
                 dateMin,
                 dateMax,
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
                 topValues,
                 histogram,
                 dateSeries

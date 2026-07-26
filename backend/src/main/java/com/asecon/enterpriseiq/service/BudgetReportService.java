@@ -4,19 +4,26 @@ import com.asecon.enterpriseiq.dto.BudgetLongInsightsDto;
 import com.asecon.enterpriseiq.dto.BudgetMonthDto;
 import com.asecon.enterpriseiq.dto.BudgetSummaryDto;
 import com.asecon.enterpriseiq.model.Company;
+import java.io.IOException;
+import java.io.InputStream;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.nio.charset.StandardCharsets;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
+import java.util.Map;
 import org.springframework.stereotype.Service;
 
 @Service
 public class BudgetReportService {
+    private static final String BUDGET_REPORT_TEMPLATE = loadClasspathResource("reports/budget-report-template.html");
+    private static final String BUDGET_REPORT_CSS = loadClasspathResource("reports/budget-report.css");
+
     private final ReportService reportService;
 
     public BudgetReportService(ReportService reportService) {
@@ -36,198 +43,56 @@ public class BudgetReportService {
         BigDecimal totalIncome = summary == null ? null : summary.totalIncome();
         BigDecimal totalExpense = summary == null ? null : summary.totalExpense();
         BigDecimal totalMargin = summary == null ? null : summary.totalMargin();
-
         String bestMonth = summary == null ? null : summary.bestMonth();
         String worstMonth = summary == null ? null : summary.worstMonth();
 
-        String topDriversHtml = buildTopDriversTable(longInsights);
-        String zeroHeavyHtml = buildZeroHeavyList(longInsights);
-        String monthTableHtml = buildMonthTable(summary);
-        String executiveHtml = buildExecutive(summary, longInsights);
-        String recommendationsHtml = buildRecommendations(summary, longInsights);
-        String miniTotalsHtml = buildMiniMonthTotals(longInsights);
-
-        return """
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <meta charset='utf-8'/>
-          <title>Presupuesto · %s</title>
-          <style>
-            @page {
-              size: A4;
-              margin: 18mm 16mm 18mm;
-              @bottom-right { content: counter(page) " / " counter(pages); font-size: 10px; color: #64748b; }
-            }
-            :root {
-              --ink: #0b1220;
-              --muted: #475569;
-              --muted2: #64748b;
-              --bg: #ffffff;
-              --soft: #f8fafc;
-              --border: #e2e8f0;
-              --navy: #0b1220;
-              --navy2: #0f1b33;
-              --accent: #14b8a6;
-              --warn: #f59e0b;
-              --danger: #fb7185;
-              --success: #22c55e;
-            }
-            body { font-family: Arial, sans-serif; color: var(--ink); background: var(--bg); }
-            .muted { color: var(--muted); font-size: 12px; }
-            .small { font-size: 12px; }
-            .cover {
-              padding: 28px 28px 32px;
-              border-radius: 16px;
-              background: linear-gradient(135deg, var(--navy) 0%%, var(--navy2) 70%%, #082f49 100%%);
-              border: 1px solid #1e293b;
-              color: #f8fafc;
-              position: relative;
-              overflow: hidden;
-            }
-            .cover::before {
-              content: "";
-              position: absolute;
-              inset: -120px -140px auto auto;
-              width: 320px;
-              height: 320px;
-              border-radius: 999px;
-              background: radial-gradient(circle at 30%% 30%%, rgba(20,184,166,0.40), rgba(96,165,250,0.10) 55%%, rgba(0,0,0,0) 70%%);
-            }
-            .brand { font-size: 12px; letter-spacing: .16em; text-transform: uppercase; opacity: 0.88; }
-            .title { margin-top: 18px; font-size: 30px; }
-            .subtitle { margin-top: 10px; color: rgba(248,250,252,0.78); line-height: 1.5; }
-            .grid { display: table; width: 100%%; margin-top: 14px; }
-            .grid .col { display: table-cell; vertical-align: top; }
-            .pill {
-              display: inline-block;
-              padding: 6px 10px;
-              border-radius: 999px;
-              border: 1px solid rgba(248,250,252,0.18);
-              background: rgba(15,23,42,0.35);
-              font-size: 11px;
-              letter-spacing: .06em;
-              margin-right: 8px;
-            }
-            .section { margin-top: 18px; }
-            .section-title { font-size: 14px; font-weight: 700; color: #0f172a; margin: 16px 0 8px; }
-            .card {
-              border: 1px solid var(--border);
-              background: var(--soft);
-              border-radius: 14px;
-              padding: 12px 14px;
-            }
-            .kpi-row { display: table; width: 100%%; margin-top: 10px; }
-            .kpi { display: table-cell; width: 33%%; padding-right: 10px; }
-            .kpi .k { color: var(--muted2); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
-            .kpi .v { font-size: 18px; font-weight: 800; margin-top: 6px; }
-            .table { width: 100%%; border-collapse: collapse; margin-top: 10px; }
-            .table th { text-align: left; font-size: 11px; color: var(--muted2); border-bottom: 1px solid var(--border); padding: 8px 6px; }
-            .table td { font-size: 12px; border-bottom: 1px solid var(--border); padding: 8px 6px; }
-            .right { text-align: right; }
-            .badge { font-size: 11px; padding: 3px 8px; border-radius: 999px; display: inline-block; border: 1px solid var(--border); background: #fff; }
-            .impact-high { border-color: rgba(245,158,11,0.35); background: rgba(245,158,11,0.10); }
-            .impact-med { border-color: rgba(96,165,250,0.35); background: rgba(96,165,250,0.10); }
-            .impact-low { border-color: rgba(34,197,94,0.35); background: rgba(34,197,94,0.10); }
-            .hr { height: 1px; background: var(--border); margin: 14px 0; }
-          </style>
-        </head>
-        <body>
-          <div class='cover'>
-            <div class='brand'>EnterpriseIQ · Presupuestos</div>
-            <div class='title'>Cuenta de explotación · Presupuesto</div>
-            <div class='subtitle'>
-              %s<br/>
-              <span class='muted' style='color: rgba(248,250,252,0.72);'>Fuente: %s · Generado: %s</span>
-            </div>
-            <div class='grid'>
-              <div class='col'>
-                <span class='pill'>Ingresos: %s</span>
-                <span class='pill'>Gastos: %s</span>
-                <span class='pill'>Margen: %s</span>
-              </div>
-            </div>
-          </div>
-
-          <div class='section'>
-            <div class='section-title'>Mini resumen</div>
-            <div class='card'>
-              %s
-              %s
-              <div class='hr'></div>
-              <div class='small muted'>
-                Mejor mes (margen): <b>%s</b> · Peor mes (margen): <b>%s</b>
-              </div>
-            </div>
-          </div>
-
-          <div class='section'>
-            <div class='section-title'>Insights accionables</div>
-            <div class='card'>
-              %s
-              <div class='hr'></div>
-              %s
-            </div>
-          </div>
-
-          <div class='section'>
-            <div class='section-title'>Tabla resumen (mes)</div>
-            %s
-          </div>
-
-          <div class='section'>
-            <div class='section-title'>Top drivers (partidas)</div>
-            %s
-          </div>
-
-          <div class='section'>
-            <div class='section-title'>Notas de calidad</div>
-            <div class='card small muted'>
-              Este informe se genera automáticamente desde un XLSX subido en el módulo Universal. Si faltan meses o las cabeceras no están en la fila correcta,
-              usa el modo guiado (selección de hoja y fila de cabecera) y vuelve a subir el fichero.
-            </div>
-          </div>
-        </body>
-        </html>
-        """.formatted(
-            escape(companyName),
-            escape(companyName),
-            escape(filename),
-            escape(generatedAt),
-            escape(fmtMoney(totalIncome)),
-            escape(fmtMoney(totalExpense)),
-            escape(fmtMoney(totalMargin)),
-            executiveHtml,
-            miniTotalsHtml,
-            escape(bestMonth == null ? "—" : bestMonth),
-            escape(worstMonth == null ? "—" : worstMonth),
-            recommendationsHtml,
-            zeroHeavyHtml,
-            monthTableHtml,
-            topDriversHtml
-        );
+        Map<String, String> placeholders = new LinkedHashMap<>();
+        placeholders.put("REPORT_CSS", BUDGET_REPORT_CSS);
+        placeholders.put("COMPANY_NAME", escape(companyName));
+        placeholders.put("SOURCE_FILENAME", escape(filename));
+        placeholders.put("GENERATED_AT", escape(generatedAt));
+        placeholders.put("TOTAL_INCOME", escape(fmtMoney(totalIncome)));
+        placeholders.put("TOTAL_EXPENSE", escape(fmtMoney(totalExpense)));
+        placeholders.put("TOTAL_MARGIN", escape(fmtMoney(totalMargin)));
+        placeholders.put("EXECUTIVE_HTML", buildExecutive(summary, longInsights));
+        placeholders.put("MINI_TOTALS_HTML", buildMiniMonthTotals(longInsights));
+        placeholders.put("BEST_MONTH", escape(bestMonth == null ? "-" : bestMonth));
+        placeholders.put("WORST_MONTH", escape(worstMonth == null ? "-" : worstMonth));
+        placeholders.put("RECOMMENDATIONS_HTML", buildRecommendations(summary, longInsights));
+        placeholders.put("ZERO_HEAVY_HTML", buildZeroHeavyList(longInsights));
+        placeholders.put("MONTH_TABLE_HTML", buildMonthTable(summary));
+        placeholders.put("TOP_DRIVERS_HTML", buildTopDriversTable(longInsights));
+        return applyTemplate(BUDGET_REPORT_TEMPLATE, placeholders);
     }
 
     private String buildExecutive(BudgetSummaryDto summary, BudgetLongInsightsDto longInsights) {
-        if (summary == null) return "<div class='muted'>Sin datos de presupuesto.</div>";
+        if (summary == null) {
+            return "<div class='muted'>Sin datos de presupuesto.</div>";
+        }
 
         String margin = fmtMoney(summary.totalMargin());
         String income = fmtMoney(summary.totalIncome());
         String expense = fmtMoney(summary.totalExpense());
-        BigDecimal conc = longInsights == null ? null : longInsights.concentrationTop3AbsPct();
-
-        String concText = conc == null ? "—" : (conc.setScale(2, RoundingMode.HALF_UP).toPlainString() + "%");
-        String top3 = buildTop3DriversInline(longInsights);
+        BigDecimal concentration = longInsights == null ? null : longInsights.concentrationTop3AbsPct();
+        String concentrationText = concentration == null
+            ? "-"
+            : concentration.setScale(2, RoundingMode.HALF_UP).toPlainString() + "%";
 
         return """
           <div class='small'>
-            <b>Margen anual:</b> %s · <b>Ingresos:</b> %s · <b>Gastos:</b> %s
-            <div class='muted' style='margin-top:8px;'>
-              Concentración (top 3 partidas, por peso absoluto): <b>%s</b>
+            <b>Lectura anual:</b> EBITDA <b>%s</b> con ingresos de <b>%s</b> y gastos operativos de <b>%s</b>.
+            <div class='muted top-gap'>
+              La concentracion del top 3 de drivers operativos queda en <b>%s</b>.
               %s
             </div>
           </div>
-        """.formatted(escape(margin), escape(income), escape(expense), escape(concText), top3);
+        """.formatted(
+            escape(margin),
+            escape(income),
+            escape(expense),
+            escape(concentrationText),
+            buildTop3DriversInline(longInsights)
+        );
     }
 
     private String buildRecommendations(BudgetSummaryDto summary, BudgetLongInsightsDto longInsights) {
@@ -237,65 +102,65 @@ public class BudgetReportService {
             .min(Comparator.comparing(BudgetMonthDto::margin))
             .orElse(null);
 
-        String worstText = worst == null ? "—" : (safe(worst.label()) + " (" + fmtMoney(worst.margin()) + ")");
+        String worstText = worst == null ? "-" : safe(worst.label()) + " (" + fmtMoney(worst.margin()) + ")";
         MonthExtremes totalsExt = computeMonthExtremes(longInsights);
-        String seasonalityLine = totalsExt == null
-            ? "Foco: estacionalidad y concentración."
-            : "Pico (total partidas): <b>%s</b> (%s) · Valle: <b>%s</b> (%s).".formatted(
+        String activityLine = totalsExt == null
+            ? "Sin lectura clara de actividad agregada."
+            : "Pico de actividad: <b>%s</b> (%s). Valle de actividad: <b>%s</b> (%s).".formatted(
                 escape(totalsExt.bestMonthLabel),
                 escape(fmtMoney(totalsExt.bestTotal)),
                 escape(totalsExt.worstMonthLabel),
                 escape(fmtMoney(totalsExt.worstTotal))
             );
 
-        String c1 = """
-          <div class='small'>
+        BigDecimal concentration = longInsights == null ? null : longInsights.concentrationTop3AbsPct();
+        boolean highConcentration = concentration != null && concentration.compareTo(new BigDecimal("55")) >= 0;
+        String concentrationText = concentration == null
+            ? "-"
+            : concentration.setScale(2, RoundingMode.HALF_UP).toPlainString() + "%";
+
+        return """
+          <div class='small recommendation-block'>
             <span class='badge impact-high'>Impacto alto</span>
-            <b style='margin-left:8px;'>Plan de acción sobre el peor mes</b>
-            <div class='muted' style='margin-top:6px;'>
-              %s
-              Identifica las 3 partidas con más peso y revisa si su distribución mensual es realista. Peor mes (margen): <b>%s</b>.
+            <b class='recommendation-title'>Blindar el mes mas debil</b>
+            <div class='muted top-gap'>
+              %s Peor mes por margen: <b>%s</b>.
             </div>
           </div>
-        """.formatted(seasonalityLine, escape(worstText));
 
-        BigDecimal conc = longInsights == null ? null : longInsights.concentrationTop3AbsPct();
-        boolean highConc = conc != null && conc.compareTo(new BigDecimal("55")) >= 0;
-        String top3Inline = buildTop3DriversInline(longInsights);
-        String c2 = """
-          <div class='small' style='margin-top:12px;'>
+          <div class='small recommendation-block'>
             <span class='badge %s'>Impacto medio</span>
-            <b style='margin-left:8px;'>Reducir dependencia de pocas partidas</b>
-            <div class='muted' style='margin-top:6px;'>
-              La concentración del top 3 está en <b>%s</b>. %s %s
+            <b class='recommendation-title'>Reducir dependencia de pocas partidas</b>
+            <div class='muted top-gap'>
+              El top 3 concentra <b>%s</b> del peso absoluto analizado. %s %s
+            </div>
+          </div>
+
+          <div class='small recommendation-block'>
+            <span class='badge impact-low'>Impacto bajo</span>
+            <b class='recommendation-title'>Cerrar mejor la base anual</b>
+            <div class='muted top-gap'>
+              %s Mantener una sola tabla, cabeceras limpias y meses completos reduce lecturas parciales.
             </div>
           </div>
         """.formatted(
-            highConc ? "impact-med" : "impact-low",
-            escape(conc == null ? "—" : conc.setScale(2, RoundingMode.HALF_UP).toPlainString() + "%"),
-            highConc ? "Revisa supuestos (precio/volumen) y prepara escenario alternativo." : "Mantén trazabilidad de supuestos y revisa trimestralmente.",
-            top3Inline
+            activityLine,
+            escape(worstText),
+            highConcentration ? "impact-med" : "impact-low",
+            escape(concentrationText),
+            highConcentration
+                ? "Conviene revisar supuestos de precio, volumen y escenario alternativo."
+                : "Conviene revisar supuestos al menos una vez por trimestre.",
+            buildTop3DriversInline(longInsights),
+            buildZeroHeavyInline(longInsights)
         );
-
-        String zeroHint = buildZeroHeavyInline(longInsights);
-        String c3 = """
-          <div class='small' style='margin-top:12px;'>
-            <span class='badge impact-low'>Impacto bajo</span>
-            <b style='margin-left:8px;'>Higiene y completitud</b>
-            <div class='muted' style='margin-top:6px;'>
-              %s
-              Asegura que el XLSX tiene una sola tabla, cabeceras correctas y meses ENERO..DICIEMBRE. Esto evita lecturas parciales y errores de interpretación.
-            </div>
-          </div>
-        """.formatted(zeroHint);
-
-        return c1 + c2 + c3;
     }
 
     private String buildMonthTable(BudgetSummaryDto summary) {
         if (summary == null || summary.months() == null || summary.months().isEmpty()) {
             return "<div class='muted small'>Sin tabla mensual.</div>";
         }
+
         String rows = summary.months().stream()
             .filter(m -> m != null && m.monthKey() != null)
             .map(m -> """
@@ -320,7 +185,7 @@ public class BudgetReportService {
                 <th>Mes</th>
                 <th class='right'>Ingresos</th>
                 <th class='right'>Gastos</th>
-                <th class='right'>Margen</th>
+                <th class='right'>EBITDA</th>
               </tr>
             </thead>
             <tbody>%s</tbody>
@@ -330,8 +195,9 @@ public class BudgetReportService {
 
     private String buildTopDriversTable(BudgetLongInsightsDto longInsights) {
         if (longInsights == null || longInsights.topDrivers() == null || longInsights.topDrivers().isEmpty()) {
-            return "<div class='muted small'>Sin drivers detectables (partidas).</div>";
+            return "<div class='muted small'>Sin drivers detectables.</div>";
         }
+
         String rows = longInsights.topDrivers().stream()
             .limit(10)
             .map(d -> """
@@ -355,7 +221,7 @@ public class BudgetReportService {
           <table class='table'>
             <thead>
               <tr>
-                <th>Código</th>
+                <th>Codigo</th>
                 <th>Partida</th>
                 <th class='right'>Total anual</th>
                 <th class='right'>Peso abs.</th>
@@ -371,13 +237,14 @@ public class BudgetReportService {
         if (longInsights == null || longInsights.zeroHeavyItems() == null || longInsights.zeroHeavyItems().isEmpty()) {
             return """
               <div class='small muted'>
-                No se detectan partidas con muchos meses a cero (bien: el presupuesto parece completo).
+                No se detectan partidas con meses a cero que requieran una revision prioritaria.
               </div>
             """;
         }
+
         String items = longInsights.zeroHeavyItems().stream()
             .limit(8)
-            .map(i -> "<li><b>%s</b> — %s · %s meses a 0</li>".formatted(
+            .map(i -> "<li><b>%s</b> - %s · %s meses a 0</li>".formatted(
                 escape(safe(i.code())),
                 escape(safe(i.label())),
                 escape(String.valueOf(i.zeroMonths()))
@@ -386,19 +253,19 @@ public class BudgetReportService {
 
         return """
           <div class='small'>
-            <b>Partidas con muchos meses a 0</b>
-            <div class='muted' style='margin-top:6px;'>
-              Suele indicar estacionalidad fuerte o celdas sin rellenar. Revisa estas líneas:
+            <b>Partidas a revisar por huecos mensuales</b>
+            <div class='muted top-gap'>
+              Esta lista no implica error automatico. Sirve para distinguir estacionalidad real de posibles faltas de dato.
             </div>
-            <ul class='small' style='margin:8px 0 0 16px;'>%s</ul>
+            <ul class='small compact-list'>%s</ul>
           </div>
         """.formatted(items);
     }
 
     private String buildMiniMonthTotals(BudgetLongInsightsDto longInsights) {
-        if (longInsights == null || longInsights.monthTotals() == null || longInsights.monthTotals().isEmpty()) return "";
-
-        // Compact mini-table: first 6 months present in the dataset (columns).
+        if (longInsights == null || longInsights.monthTotals() == null || longInsights.monthTotals().isEmpty()) {
+            return "";
+        }
         var months = longInsights.monthTotals();
         var take = months.size() <= 6 ? months : months.subList(0, 6);
 
@@ -408,13 +275,16 @@ public class BudgetReportService {
                 <td>%s</td>
                 <td class='right'>%s</td>
               </tr>
-            """.formatted(escape(safe(m.monthLabel())), escape(fmtMoney(m.total()))))
+            """.formatted(
+                escape(safe(m.monthLabel())),
+                escape(fmtMoney(m.total()))
+            ))
             .reduce("", (a, b) -> a + b);
 
         return """
-          <div style='margin-top:10px;'>
-            <div class='small muted'>Mini tabla (total agregado por mes, primeras columnas)</div>
-            <table class='table' style='margin-top:6px;'>
+          <div class='mini-totals'>
+            <div class='small muted'>Mini resumen de control por mes</div>
+            <table class='table compact-table'>
               <thead>
                 <tr><th>Mes</th><th class='right'>Total</th></tr>
               </thead>
@@ -425,26 +295,96 @@ public class BudgetReportService {
     }
 
     private String buildTop3DriversInline(BudgetLongInsightsDto longInsights) {
-        if (longInsights == null || longInsights.topDrivers() == null || longInsights.topDrivers().isEmpty()) return "";
+        if (longInsights == null || longInsights.topDrivers() == null || longInsights.topDrivers().isEmpty()) {
+            return "";
+        }
         List<String> parts = new ArrayList<>();
-        for (var d : longInsights.topDrivers().stream().limit(3).toList()) {
-            String code = safe(d.code());
-            String label = safe(d.label());
-            String share = d.shareAbsPct() == null ? "" : d.shareAbsPct().setScale(2, RoundingMode.HALF_UP).toPlainString() + "%";
+        for (var driver : longInsights.topDrivers().stream().limit(3).toList()) {
+            String code = safe(driver.code());
+            String label = safe(driver.label());
+            String share = driver.shareAbsPct() == null
+                ? ""
+                : driver.shareAbsPct().setScale(2, RoundingMode.HALF_UP).toPlainString() + "%";
             String name = (code.isBlank() ? "" : code + " · ") + (label.isBlank() ? "Partida" : label);
             parts.add(name + (share.isBlank() ? "" : " (" + share + ")"));
         }
-        if (parts.isEmpty()) return "";
-        return "<div style='margin-top:6px;'>Top 3: <b>%s</b></div>".formatted(escape(String.join(" · ", parts)));
+        if (parts.isEmpty()) {
+            return "";
+        }
+        return "<div class='inline-note'>Top 3 actual: <b>%s</b></div>".formatted(escape(String.join(" · ", parts)));
     }
 
     private String buildZeroHeavyInline(BudgetLongInsightsDto longInsights) {
-        if (longInsights == null || longInsights.zeroHeavyItems() == null || longInsights.zeroHeavyItems().isEmpty()) return "";
+        if (longInsights == null || longInsights.zeroHeavyItems() == null || longInsights.zeroHeavyItems().isEmpty()) {
+            return "No se detectan huecos de completitud relevantes.";
+        }
         var first = longInsights.zeroHeavyItems().get(0);
         String code = safe(first.code());
         String label = safe(first.label());
         String name = (code.isBlank() ? "" : code + " · ") + (label.isBlank() ? "Partida" : label);
-        return "Partidas con muchos meses a 0 detectadas (ej.: <b>%s</b>).".formatted(escape(name));
+        return "La primera revision sugerida es <b>%s</b>.".formatted(escape(name));
+    }
+
+    private MonthExtremes computeMonthExtremes(BudgetLongInsightsDto longInsights) {
+        if (longInsights == null || longInsights.monthTotals() == null || longInsights.monthTotals().isEmpty()) {
+            return null;
+        }
+        var best = longInsights.monthTotals().stream()
+            .max(Comparator.comparing(m -> m.total() == null ? BigDecimal.ZERO : m.total()))
+            .orElse(null);
+        var worst = longInsights.monthTotals().stream()
+            .min(Comparator.comparing(m -> m.total() == null ? BigDecimal.ZERO : m.total()))
+            .orElse(null);
+        if (best == null || worst == null) {
+            return null;
+        }
+        return new MonthExtremes(
+            safe(best.monthLabel()),
+            best.total() == null ? BigDecimal.ZERO : best.total(),
+            safe(worst.monthLabel()),
+            worst.total() == null ? BigDecimal.ZERO : worst.total()
+        );
+    }
+
+    private static String applyTemplate(String template, Map<String, String> placeholders) {
+        String resolved = template;
+        for (Map.Entry<String, String> entry : placeholders.entrySet()) {
+            resolved = resolved.replace("{{" + entry.getKey() + "}}", entry.getValue() == null ? "" : entry.getValue());
+        }
+        return resolved;
+    }
+
+    private static String loadClasspathResource(String location) {
+        try (InputStream input = BudgetReportService.class.getClassLoader().getResourceAsStream(location)) {
+            if (input == null) {
+                throw new IllegalStateException("No se pudo cargar el recurso de presupuesto: " + location);
+            }
+            return new String(input.readAllBytes(), StandardCharsets.UTF_8);
+        } catch (IOException ex) {
+            throw new IllegalStateException("No se pudo leer el recurso de presupuesto: " + location, ex);
+        }
+    }
+
+    private static String fmtMoney(BigDecimal value) {
+        if (value == null) {
+            return "-";
+        }
+        return value.setScale(2, RoundingMode.HALF_UP).toPlainString() + " EUR";
+    }
+
+    private static String safe(String value) {
+        return value == null ? "" : value.trim();
+    }
+
+    private static String escape(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace("\"", "&quot;")
+            .replace("'", "&#39;");
     }
 
     private static final class MonthExtremes {
@@ -459,42 +399,5 @@ public class BudgetReportService {
             this.worstMonthLabel = worstMonthLabel;
             this.worstTotal = worstTotal;
         }
-    }
-
-    private MonthExtremes computeMonthExtremes(BudgetLongInsightsDto longInsights) {
-        if (longInsights == null || longInsights.monthTotals() == null || longInsights.monthTotals().isEmpty()) return null;
-        var best = longInsights.monthTotals().stream()
-            .max(Comparator.comparing(m -> m.total() == null ? BigDecimal.ZERO : m.total()))
-            .orElse(null);
-        var worst = longInsights.monthTotals().stream()
-            .min(Comparator.comparing(m -> m.total() == null ? BigDecimal.ZERO : m.total()))
-            .orElse(null);
-        if (best == null || worst == null) return null;
-        return new MonthExtremes(
-            safe(best.monthLabel()),
-            best.total() == null ? BigDecimal.ZERO : best.total(),
-            safe(worst.monthLabel()),
-            worst.total() == null ? BigDecimal.ZERO : worst.total()
-        );
-    }
-
-    private static String fmtMoney(BigDecimal v) {
-        if (v == null) return "—";
-        BigDecimal x = v.setScale(2, RoundingMode.HALF_UP);
-        String s = x.toPlainString();
-        return s + " €";
-    }
-
-    private static String safe(String s) {
-        return s == null ? "" : s.trim();
-    }
-
-    private static String escape(String s) {
-        if (s == null) return "";
-        return s.replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-            .replace("\"", "&quot;")
-            .replace("'", "&#39;");
     }
 }

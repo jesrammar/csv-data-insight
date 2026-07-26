@@ -1,6 +1,7 @@
 ﻿import { useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
+import '../components/charts/echarts-advanced'
 import { getUniversalLineage, getUniversalViewDataForImport, getUniversalViewEvidenceForImport, listUniversalImports, type UniversalChartData, type UniversalEvidenceDto, type UniversalImportDto } from '../api'
 import { useCompanySelection } from '../hooks/useCompany'
 import PageHeader from '../components/ui/PageHeader'
@@ -15,6 +16,69 @@ import { buildUniversalChartNarrative } from '../utils/universalChartNarrative'
 function asNum(x: string | undefined) {
   const n = Number(x)
   return Number.isFinite(n) ? n : null
+}
+
+function aggregationModeLabel(value: string | null | undefined) {
+  const key = String(value || '').trim().toUpperCase()
+  const labels: Record<string, string> = {
+    ROW_COUNT: 'Filas',
+    DISTINCT_ENTRY_COUNT: 'Asientos',
+    DISTINCT_DOCUMENT_COUNT: 'Documentos',
+    DISTINCT_INVOICE_COUNT: 'Facturas',
+    DISTINCT_PARTY_COUNT: 'Terceros',
+    SUM_DEBIT: 'Debe',
+    SUM_CREDIT: 'Haber',
+    NET_BALANCE: 'Saldo',
+    SUM_AMOUNT: 'Importe',
+    AVG_VALUE: 'Media'
+  }
+  return labels[key] || 'Modo pendiente'
+}
+
+function aggregationModeDetail(value: string | null | undefined) {
+  const key = String(value || '').trim().toUpperCase()
+  const labels: Record<string, string> = {
+    ROW_COUNT: 'Cuenta filas operativas.',
+    DISTINCT_ENTRY_COUNT: 'Cuenta asientos distintos.',
+    DISTINCT_DOCUMENT_COUNT: 'Cuenta documentos distintos.',
+    DISTINCT_INVOICE_COUNT: 'Cuenta facturas distintas.',
+    DISTINCT_PARTY_COUNT: 'Cuenta terceros distintos.',
+    SUM_DEBIT: 'Suma debe.',
+    SUM_CREDIT: 'Suma haber.',
+    NET_BALANCE: 'Calcula saldo neto.',
+    SUM_AMOUNT: 'Suma importe monetario.',
+    AVG_VALUE: 'Calcula media del valor.'
+  }
+  return labels[key] || 'La vista todavia no expone un modo oficial claro.'
+}
+
+function aggregationModeExecutiveLine(value: string | null | undefined) {
+  const key = String(value || '').trim().toUpperCase()
+  const labels: Record<string, string> = {
+    ROW_COUNT: 'Esta vista cuenta filas operativas.',
+    DISTINCT_ENTRY_COUNT: 'Esta vista cuenta asientos distintos.',
+    DISTINCT_DOCUMENT_COUNT: 'Esta vista cuenta documentos distintos.',
+    DISTINCT_INVOICE_COUNT: 'Esta vista cuenta facturas distintas.',
+    DISTINCT_PARTY_COUNT: 'Esta vista cuenta terceros distintos.',
+    SUM_DEBIT: 'Esta vista suma importe en debe.',
+    SUM_CREDIT: 'Esta vista suma importe en haber.',
+    NET_BALANCE: 'Esta vista calcula saldo neto.',
+    SUM_AMOUNT: 'Esta vista suma importe monetario.',
+    AVG_VALUE: 'Esta vista calcula la media del valor.'
+  }
+  return labels[key] || 'Esta vista mantiene un modo oficial pendiente de lectura.'
+}
+
+function ChartHeader({ title, mode }: { title: string; mode: string | null }) {
+  return (
+    <div className="row row-between row-center row-wrap gap-10 mb-2">
+      <div>
+        <h3 className="h3-reset">{title}</h3>
+        <div className="upload-hint mt-1">{aggregationModeExecutiveLine(mode)}</div>
+      </div>
+      <span className="badge">{aggregationModeLabel(mode)}</span>
+    </div>
+  )
 }
 
 export default function UniversalViewPage() {
@@ -52,6 +116,13 @@ export default function UniversalViewPage() {
   const isBar = t.includes('CATEGORY')
   const isAdvancedType = t === 'SCATTER' || t === 'HEATMAP' || t === 'PIVOT_MONTHLY'
   const canUseEvidence = plan === 'GOLD' || plan === 'PLATINUM'
+  const chartWarnings = Array.isArray((chart?.meta as any)?.warnings) ? ((chart?.meta as any)?.warnings as any[]) : []
+  const chartMeta = ((chart?.meta as any) || {}) as Record<string, any>
+  const officialAggregationMode = String(chartMeta?.request?.aggregationMode || chartMeta?.aggregationMode || '').trim() || null
+  const sourceFilename = String(chartMeta?.sourceFilename || (lineage as any)?.filename || '').trim() || null
+  const sourceImportedAt = String(chartMeta?.sourceImportedAt || (lineage as any)?.createdAt || '').trim() || null
+  const sourceImportId = chartMeta?.sourceImportId ?? (lineage as any)?.importId ?? null
+  const templateImportId = chartMeta?.templateImportId ?? chartMeta?.pinnedImportId ?? null
 
   const lastLabel = labels.length ? String(labels[labels.length - 1] || '') : ''
   const [focusLabel, setFocusLabel] = useState(lastLabel)
@@ -67,6 +138,7 @@ export default function UniversalViewPage() {
   const [evidenceError, setEvidenceError] = useState<string | null>(null)
   const [autoEvidence, setAutoEvidence] = useState(true)
   const evidenceRequestSeq = useRef(0)
+  const viewSupportOpen = !chart || !!error || !!evidenceError
 
   useEffect(() => {
     evidenceRequestSeq.current += 1
@@ -133,7 +205,7 @@ export default function UniversalViewPage() {
     <div>
       <PageHeader
         title="Dashboard Universal"
-        subtitle="Vista compartible a partir de plantilla guardada."
+        subtitle="Vista compartible a partir de una plantilla guardada para una empresa gestionada."
         actions={
           <div className="row row-center row-wrap gap-10">
             <span className="badge">{plan}</span>
@@ -180,14 +252,14 @@ export default function UniversalViewPage() {
       />
 
       {!companyId ? (
-        <Alert tone="warning" title="Falta seleccionar empresa">
-          Selecciona una empresa para abrir el dashboard.
+        <Alert tone="warning" title="Falta seleccionar empresa gestionada">
+          Selecciona una empresa gestionada para abrir el dashboard.
         </Alert>
       ) : null}
 
       {!id ? (
-        <Alert tone="danger" title="ID invalido">
-          URL invalida.
+        <Alert tone="danger" title="ID inválido">
+          URL inválida.
         </Alert>
       ) : null}
 
@@ -206,22 +278,58 @@ export default function UniversalViewPage() {
       {!isPending && !error && companyId && id && !chart ? (
         <div className="mt-12">
           <Alert tone="warning" title="Sin datos para este dashboard">
-            Este dashboard se calcula con el ultimo dataset subido en Universal. Sube o vuelve a subir un fichero en Universal y abre este enlace de nuevo.
+            Este dashboard se calcula con el último dataset subido en Universal. Sube o vuelve a subir un fichero en Universal y abre este enlace de nuevo.
           </Alert>
         </div>
       ) : null}
 
       {chart && plan === 'BRONZE' && isAdvancedType ? (
         <div className="mt-12">
-          <Alert tone="warning" title="Grafico avanzado">
-            Este dashboard usa un tipo de grafico avanzado (scatter, heatmap o pivote). En plan BRONZE se recomienda usar series temporales o rankings para que se entienda solo.
+          <Alert tone="warning" title="Gráfico avanzado">
+            Este dashboard usa un tipo de gráfico avanzado (scatter, heatmap o pivote). En plan BRONZE se recomienda usar series temporales o rankings para que se entienda mejor.
           </Alert>
         </div>
       ) : null}
 
+      {chart ? (
+        <Reveal className="card section soft">
+          <div className="row row-between row-center row-wrap gap-10">
+            <div>
+              <div className="fw-800">Trazabilidad de la vista</div>
+              <div className="upload-hint">Antes del gráfico, deja claro de qué dataset sale y qué está contando o sumando de verdad.</div>
+            </div>
+            {templateImportId && templateImportId !== sourceImportId ? (
+              <span className="badge warn">Reaplicada sobre otro import</span>
+            ) : (
+              <span className="badge ok">Origen confirmado</span>
+            )}
+          </div>
+          <div className="grid grid-min-220 grid-gap-12 mt-12">
+            <div className="card soft">
+              <div className="field-label">Dataset origen</div>
+              <div className="fw-800 mt-1">{sourceFilename || 'Sin dataset visible'}</div>
+              <div className="upload-hint mt-1">
+                {sourceImportId ? `Import #${sourceImportId}` : 'Import no disponible'}
+                {sourceImportedAt ? ` · ${new Date(sourceImportedAt).toLocaleString()}` : ''}
+              </div>
+              {templateImportId && templateImportId !== sourceImportId ? (
+                <div className="upload-hint mt-1">La plantilla original estaba anclada al import #{templateImportId}, pero ahora se está leyendo sobre otro dataset.</div>
+              ) : null}
+            </div>
+            <div className="card soft">
+              <div className="field-label">Modo oficial</div>
+              <div className="row row-center row-wrap gap-8 mt-1">
+                <span className="badge">{aggregationModeLabel(officialAggregationMode)}</span>
+              </div>
+              <div className="upload-hint mt-1">{aggregationModeDetail(officialAggregationMode)}</div>
+            </div>
+          </div>
+        </Reveal>
+      ) : null}
+
       {chart && t === 'KPI_CARDS' ? (
         <Reveal className="card section">
-          <h3 className="h3-reset">KPIs</h3>
+          <ChartHeader title="KPIs" mode={officialAggregationMode} />
           <div className="grid grid-min-160 grid-gap-12">
             {labels.map((k, idx) => (
               <div key={`${k}-${idx}`} className="card soft">
@@ -250,7 +358,7 @@ export default function UniversalViewPage() {
         </Reveal>
       ) : chart && t === 'SCATTER' ? (
         <Reveal className="card section">
-          <h3 className="h3-reset">{series0?.name || 'Scatter'}</h3>
+          <ChartHeader title={series0?.name || 'Scatter'} mode={officialAggregationMode} />
           <EChart
             module="universal"
             height={360}
@@ -287,7 +395,7 @@ export default function UniversalViewPage() {
         </Reveal>
       ) : chart && t === 'HEATMAP' ? (
         <Reveal className="card section">
-          <h3 className="h3-reset">{series0?.name || 'Heatmap'}</h3>
+          <ChartHeader title={series0?.name || 'Heatmap'} mode={officialAggregationMode} />
           <EChart
             module="universal"
             height={420}
@@ -334,7 +442,7 @@ export default function UniversalViewPage() {
         </Reveal>
       ) : chart && t === 'PIVOT_MONTHLY' ? (
         <Reveal className="card section">
-          <h3 className="h3-reset">Tabla pivote</h3>
+          <ChartHeader title="Tabla pivote" mode={officialAggregationMode} />
           <EChart
             module="universal"
             height={360}
@@ -395,7 +503,7 @@ export default function UniversalViewPage() {
         </Reveal>
       ) : chart && labels.length ? (
         <Reveal className="card section">
-          <h3 className="h3-reset">{series0?.name || 'Grafico'}</h3>
+          <ChartHeader title={series0?.name || 'Grafico'} mode={officialAggregationMode} />
           <EChart
             module="universal"
             height={360}
@@ -442,84 +550,110 @@ export default function UniversalViewPage() {
       ) : null}
 
       {chart ? (
-        <Reveal delay={1}>
-          <LineagePanel lineage={lineage as any} chart={chart as any} />
-        </Reveal>
-      ) : null}
+        <details className="universal-support-details" open={viewSupportOpen}>
+          <summary>
+            <div>
+              <div className="fw-700">Soporte analítico</div>
+              <div className="upload-hint">Lineage, evidencia y avisos solo cuando quieres justificar el gráfico o auditar su origen.</div>
+            </div>
+            <div className="row row-center row-wrap gap-8">
+              <span className={`badge ${chartWarnings.length ? 'warn' : 'ok'}`}>{chartWarnings.length ? `${chartWarnings.length} avisos` : 'Sin avisos'}</span>
+              <span className="badge">{canUseEvidence ? 'Evidencia disponible' : 'Evidencia GOLD+'}</span>
+            </div>
+          </summary>
+          <div className="universal-support-body">
+            <Reveal delay={1}>
+              <LineagePanel lineage={lineage as any} chart={chart as any} />
+            </Reveal>
 
-      {chart && canUseEvidence ? (
-        <Reveal delay={2} className="card section soft">
-          <div className="row row-between row-center row-wrap gap-10">
-            <div>
-              <div className="fw-800">Evidencia (GOLD+)</div>
-              <div className="upload-hint">Filas detras del punto o etiqueta: {focusLabel || '-'}</div>
-            </div>
-            <div className="row row-wrap gap-2">
-              <label className="upload-hint row row-center gap-6">
-                <input
-                  type="checkbox"
-                  checked={autoEvidence}
-                  onChange={(e) => setAutoEvidence(Boolean((e.target as any)?.checked))}
-                />
-                Auto
-              </label>
-              <button className="badge" onClick={() => loadEvidence()} disabled={evidenceLoading || !focusLabel}>
-                {evidenceLoading ? 'Cargando...' : 'Ver evidencia'}
-              </button>
-              {evidence?.rows?.length ? (
-                <button className="badge" onClick={() => downloadEvidenceCsv(evidence)}>
-                  Descargar CSV
-                </button>
-              ) : null}
-            </div>
-          </div>
-          {evidenceError ? (
-            <div className="mt-12">
-              <Alert tone="danger" title="Evidencia">
-                {evidenceError}
-              </Alert>
-            </div>
-          ) : null}
-          {evidence?.rows?.length ? (
-            <details className="card soft mt-12">
-              <summary className="upload-hint cursor-pointer">
-                Ver tabla · {evidence.rows.length} filas
-              </summary>
-              <div className="overflow-auto mt-12">
-                <table className="table">
-                  <thead>
-                    <tr>
-                      <th>#</th>
-                      {(evidence.headers || []).map((h) => (
-                        <th key={h}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(evidence.rows || []).slice(0, 60).map((r, idx) => (
-                      <tr key={`${idx}`}>
-                        <td className="upload-hint">{String((evidence.rowNumbers || [])[idx] ?? '')}</td>
-                        {(r || []).map((cell, j) => (
-                          <td key={`${idx}-${j}`}>{String(cell ?? '')}</td>
-                        ))}
-                      </tr>
+            {chartWarnings.length ? (
+              <div className="card section soft">
+                <Alert tone="warning" title="Avisos del gráfico">
+                  <ul className="list-steps">
+                    {chartWarnings.slice(0, 8).map((w: any, idx: number) => (
+                      <li key={`${idx}`}>{String(w)}</li>
                     ))}
-                  </tbody>
-                </table>
+                  </ul>
+                </Alert>
               </div>
-            </details>
-          ) : null}
-        </Reveal>
-      ) : chart ? (
-        <Reveal delay={2} className="card section soft">
-          <div className="row row-between row-center row-wrap gap-10">
-            <div>
-              <div className="fw-800">Evidencia</div>
-              <div className="upload-hint">Disponible en planes GOLD y PLATINUM.</div>
-            </div>
-            <span className="badge">Upgrade requerido</span>
+            ) : null}
+
+            {canUseEvidence ? (
+              <Reveal delay={2} className="card section soft">
+                <div className="row row-between row-center row-wrap gap-10">
+                  <div>
+                    <div className="fw-800">Evidencia (GOLD+)</div>
+                    <div className="upload-hint">Filas detrás del punto o etiqueta: {focusLabel || '-'}</div>
+                  </div>
+                  <div className="row row-wrap gap-2">
+                    <label className="upload-hint row row-center gap-6">
+                      <input
+                        type="checkbox"
+                        checked={autoEvidence}
+                        onChange={(e) => setAutoEvidence(Boolean((e.target as any)?.checked))}
+                      />
+                      Auto
+                    </label>
+                    <button className="badge" onClick={() => loadEvidence()} disabled={evidenceLoading || !focusLabel}>
+                      {evidenceLoading ? 'Cargando...' : 'Ver evidencia'}
+                    </button>
+                    {evidence?.rows?.length ? (
+                      <button className="badge" onClick={() => downloadEvidenceCsv(evidence)}>
+                        Descargar CSV
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+                {evidenceError ? (
+                  <div className="mt-12">
+                    <Alert tone="danger" title="Evidencia">
+                      {evidenceError}
+                    </Alert>
+                  </div>
+                ) : null}
+                {evidence?.rows?.length ? (
+                  <details className="card soft mt-12">
+                    <summary className="upload-hint cursor-pointer">
+                      Ver tabla · {evidence.rows.length} filas
+                    </summary>
+                    <div className="overflow-auto mt-12">
+                      <table className="table">
+                        <thead>
+                          <tr>
+                            <th>#</th>
+                            {(evidence.headers || []).map((h) => (
+                              <th key={h}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(evidence.rows || []).slice(0, 60).map((r, idx) => (
+                            <tr key={`${idx}`}>
+                              <td className="upload-hint">{String((evidence.rowNumbers || [])[idx] ?? '')}</td>
+                              {(r || []).map((cell, j) => (
+                                <td key={`${idx}-${j}`}>{String(cell ?? '')}</td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </details>
+                ) : null}
+              </Reveal>
+            ) : (
+              <Reveal delay={2} className="card section soft">
+                <div className="row row-between row-center row-wrap gap-10">
+                  <div>
+                    <div className="fw-800">Evidencia</div>
+                    <div className="upload-hint">Disponible en planes GOLD y PLATINUM.</div>
+                  </div>
+                  <span className="badge">Upgrade requerido</span>
+                </div>
+              </Reveal>
+            )}
           </div>
-        </Reveal>
+        </details>
       ) : null}
     </div>
   )

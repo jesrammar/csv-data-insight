@@ -87,10 +87,10 @@ export default function CompanySettingsPage() {
   return (
     <>
       <PageHeader
-        title="Ajustes de empresa"
+        title="Ajustes de empresa gestionada"
         subtitle={
           <>
-            Configura el <span className="badge">mes de trabajo</span> y el entregable automático para la empresa seleccionada.
+            Configura el <span className="badge">mes de trabajo</span> y el entregable automático para la empresa gestionada seleccionada.
           </>
         }
         actions={
@@ -100,7 +100,7 @@ export default function CompanySettingsPage() {
         }
       />
 
-      {!companyId ? <Alert tone="warning">Selecciona una empresa para configurar sus ajustes.</Alert> : null}
+      {!companyId ? <Alert tone="warning">Selecciona una empresa gestionada para configurar sus ajustes.</Alert> : null}
       {error ? <Alert tone="danger">{String((error as any)?.message || error)}</Alert> : null}
 
       {companyId && isPending ? (

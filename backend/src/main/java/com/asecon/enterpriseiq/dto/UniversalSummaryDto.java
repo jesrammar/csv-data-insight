@@ -11,5 +11,10 @@ public record UniversalSummaryDto(
     int columnCount,
     List<UniversalColumnDto> columns,
     List<UniversalCorrelationDto> correlations,
-    List<UniversalInsightDto> insights
+    String rowGranularity,
+    List<UniversalDetectedEntityDto> detectedEntities,
+    List<UniversalRelationshipDto> relationships,
+    List<String> semanticWarnings,
+    List<UniversalInsightDto> insights,
+    UniversalIntakeDiagnosisDto intakeDiagnosis
 ) {}

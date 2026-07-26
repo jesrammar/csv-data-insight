@@ -6,10 +6,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
 import java.time.YearMonth;
 import java.util.Map;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 @Component
+@ConditionalOnProperty(value = "app.scheduler.enabled", havingValue = "true", matchIfMissing = true)
 public class AutomationEnqueuer {
     private final CompanyRepository companyRepository;
     private final AutomationJobService jobService;
@@ -27,9 +29,6 @@ public class AutomationEnqueuer {
             if (!jobService.hasActiveJob(company.getId(), AutomationJobType.RECOMPUTE_KPIS)) {
                 jobService.enqueue(company.getId(), AutomationJobType.RECOMPUTE_KPIS, Instant.now(), json(Map.of("monthsBack", 2)));
             }
-            if (!jobService.hasActiveJob(company.getId(), AutomationJobType.SNAPSHOT_RECOMMENDATIONS)) {
-                jobService.enqueue(company.getId(), AutomationJobType.SNAPSHOT_RECOMMENDATIONS, Instant.now(), json(Map.of("period", YearMonth.now().toString())));
-            }
         }
     }
 
@@ -39,9 +38,6 @@ public class AutomationEnqueuer {
             if (!jobService.hasActiveJob(company.getId(), AutomationJobType.RECOMPUTE_KPIS)) {
                 jobService.enqueue(company.getId(), AutomationJobType.RECOMPUTE_KPIS, Instant.now(), json(Map.of("monthsBack", 6)));
             }
-            if (!jobService.hasActiveJob(company.getId(), AutomationJobType.SNAPSHOT_RECOMMENDATIONS)) {
-                jobService.enqueue(company.getId(), AutomationJobType.SNAPSHOT_RECOMMENDATIONS, Instant.now(), json(Map.of("period", YearMonth.now().toString())));
-            }
         }
     }
 
@@ -49,11 +45,8 @@ public class AutomationEnqueuer {
     public void enqueueMonthlyReports() {
         String period = YearMonth.now().minusMonths(1).toString();
         for (var company : companyRepository.findAll()) {
-            if (!jobService.hasActiveJob(company.getId(), AutomationJobType.GENERATE_MONTHLY_REPORT)) {
-                jobService.enqueue(company.getId(), AutomationJobType.GENERATE_MONTHLY_REPORT, Instant.now(), json(Map.of("period", period)));
-            }
-            if (!jobService.hasActiveJob(company.getId(), AutomationJobType.SNAPSHOT_RECOMMENDATIONS)) {
-                jobService.enqueue(company.getId(), AutomationJobType.SNAPSHOT_RECOMMENDATIONS, Instant.now(), json(Map.of("period", period)));
+            if (!jobService.hasActiveJobForPeriod(company.getId(), AutomationJobType.ORCHESTRATE_PERIOD_CLOSE, period)) {
+                jobService.enqueue(company.getId(), AutomationJobType.ORCHESTRATE_PERIOD_CLOSE, Instant.now(), json(Map.of("period", period)));
             }
         }
     }

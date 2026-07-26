@@ -19,7 +19,7 @@ import PageHeader from '../components/ui/PageHeader'
 import Alert from '../components/ui/Alert'
 import Button from '../components/ui/Button'
 import { useToast } from '../components/ui/ToastProvider'
-import { formatMoney } from '../utils/format'
+import { EMPTY_VALUE, formatDateTime, formatMoney } from '../utils/format'
 
 function priorityTone(priority: string) {
   const p = (priority || '').toLowerCase()
@@ -40,7 +40,7 @@ export default function AdvisorPage() {
     {
       role: 'assistant',
       content:
-        'Soy tu Assistant (reglas) en PLATINUM. Dime tu objetivo (margen, costes, caja o crecimiento) y te propongo un plan 30/60/90 días con acciones y evidencias.'
+        'Assistant consultivo. Dime el objetivo y te propongo un plan breve con evidencia.'
     }
   ])
   const [assistantInput, setAssistantInput] = useState('')
@@ -232,7 +232,7 @@ export default function AdvisorPage() {
 
     if (t.includes('tribunal')) return { to: '/tribunal', label: 'Abrir Tribunal' }
     if (t.includes('universal')) return { to: '/universal', label: 'Abrir Universal' }
-    if (t.includes('budget')) return { to: '/budget', label: 'Abrir Presupuesto' }
+    if (t.includes('budget')) return { to: '/budget', label: 'Abrir plan anual' }
 
     if (t.includes('alert')) {
       const to = maybePeriod ? `/alerts?period=${encodeURIComponent(maybePeriod)}` : '/alerts'
@@ -263,22 +263,22 @@ export default function AdvisorPage() {
   return (
     <div>
       <PageHeader
-        title="Assistant (reglas) · PLATINUM"
-        subtitle="Motor de reglas/heurísticas: diagnóstico + plan 30/60/90 + evidencias. No IA generativa."
+        title="Assistant"
+        subtitle="Diagnóstico, plan y evidencia."
         actions={<span className="badge">{(plan || 'BRONZE').toUpperCase()}</span>}
       />
 
       {!companyId ? (
-        <Alert tone="warning" title="Falta seleccionar empresa">
-          Selecciona una empresa arriba para usar el asesor.
+        <Alert tone="warning" title="Falta seleccionar empresa gestionada">
+          Selecciona una empresa gestionada para abrir su contexto consultivo.
         </Alert>
       ) : null}
 
       {!hasPlatinum ? (
         <div className="card section">
-          <h3 className="h3-reset">Disponible en PLATINUM</h3>
+          <h3 className="h3-reset">Disponible en Platinum</h3>
           <div className="upload-hint">
-            Para habilitar chat consultivo y acciones 30/60/90 días, sube el plan de la empresa a PLATINUM.
+            Chat, snapshot y plan 30/60/90.
           </div>
         </div>
       ) : (
@@ -288,11 +288,11 @@ export default function AdvisorPage() {
               <div className="row row-between row-center">
                 <h3 className="m-0">Personalización</h3>
                 <Button size="sm" onClick={handleStartPersonalPlan} disabled={assistantLoading}>
-                  Generar plan
+                  Abrir plan
                 </Button>
               </div>
               <div className="upload-hint mt-2">
-                Ajusta 4 datos y el asesor te devuelve diagnóstico + plan 30/60/90 con evidencias.
+                Ajusta contexto y abre un plan breve.
               </div>
 
               <div className="grid mt-12">
@@ -333,23 +333,23 @@ export default function AdvisorPage() {
 
               <div className="grid mt-12">
                 <div className="card soft">
-                  <div className="upload-hint">Datos detectados</div>
+                  <div className="upload-hint">Cobertura detectada</div>
                   <div className="upload-hint mt-8">
-                    Caja: {(dashboard as any)?.kpis?.length ? 'OK' : '—'} · Universal: {(universal as any)?.filename ? 'OK' : '—'} · Último import:{' '}
-                    {String((ingestion as any)?.lastImport?.status || '—')}
+                    Caja: {(dashboard as any)?.kpis?.length ? 'OK' : EMPTY_VALUE} · Universal: {(universal as any)?.filename ? 'OK' : EMPTY_VALUE} · Último import:{' '}
+                    {String((ingestion as any)?.lastImport?.status || EMPTY_VALUE)}
                   </div>
                 </div>
                 <div className="card soft">
                   <div className="upload-hint">Última ingesta</div>
                   <div className="fw-900 mt-1">
                     {(ingestion as any)?.lastProcessedImport?.processedAt
-                      ? new Date((ingestion as any).lastProcessedImport.processedAt).toLocaleString()
+                      ? formatDateTime((ingestion as any).lastProcessedImport.processedAt)
                       : (ingestion as any)?.lastImport?.createdAt
-                        ? new Date((ingestion as any).lastImport.createdAt).toLocaleString()
-                        : '—'}
+                        ? formatDateTime((ingestion as any).lastImport.createdAt)
+                        : EMPTY_VALUE}
                   </div>
                   <div className="upload-hint mt-1">
-                    Neto mes: {(dashboard as any)?.kpis?.[0]?.netFlow != null ? formatMoney((dashboard as any).kpis[0].netFlow) : '—'}
+                    Neto mes: {(dashboard as any)?.kpis?.[0]?.netFlow != null ? formatMoney((dashboard as any).kpis[0].netFlow) : EMPTY_VALUE}
                   </div>
                 </div>
               </div>
@@ -363,7 +363,7 @@ export default function AdvisorPage() {
                 </Button>
               </div>
               <div className="upload-hint mt-2">
-                Usa snapshots por objetivo. Luego abre evidencias para ir al detalle (Caja/Universal/Tribunal).
+                Trabaja por objetivo, genera snapshots y baja después a la evidencia concreta en Caja, Universal o Tribunal para sostener la recomendación.
               </div>
 
               <div className="upload-row mt-12">
@@ -378,16 +378,16 @@ export default function AdvisorPage() {
 
               {!latestActions?.length ? (
                 <div className="empty mt-12">
-                  Aún no hay snapshots para este objetivo. Pulsa “Generar snapshot”.
+                  Aún no hay snapshots para este objetivo. Genera uno para abrir una lectura consultiva estructurada de esta empresa gestionada.
                 </div>
               ) : (
                 <div className="stack gap-10 mt-12">
                   {(['7d', '30d', '60d', '90d'] as const).map((h) =>
                     groupedActions[h].length ? (
-                      <div key={h} className="card soft">
-                        <div className="upload-hint fw-900">
-                          Horizonte: {h}
-                        </div>
+                        <div key={h} className="card soft">
+                          <div className="upload-hint fw-900">
+                          Horizonte de trabajo: {h}
+                          </div>
                         <div className="stack gap-8 mt-2">
                           {groupedActions[h].slice(0, 3).map((a, idx) => (
                             <details key={`${a.title}-${idx}`} className="card soft card-pad-sm">
@@ -418,7 +418,7 @@ export default function AdvisorPage() {
                                           )}
                                         </div>
                                         {e.subtitle ? <div className="upload-hint mt-1">{e.subtitle}</div> : null}
-                                        {e.metric ? <div className="upload-hint">Metric: {e.metric}</div> : null}
+                                        {e.metric ? <div className="upload-hint">Métrica: {e.metric}</div> : null}
                                         {e.detail ? <div className="upload-hint">{e.detail}</div> : null}
                                       </div>
                                     )
@@ -454,14 +454,14 @@ export default function AdvisorPage() {
                     <div className="chat-msg">{m.content}</div>
                   </div>
                 ))}
-                {assistantLoading ? <div className="chat-typing">Pensando…</div> : null}
+                {assistantLoading ? <div className="chat-typing">Preparando la siguiente recomendación...</div> : null}
               </div>
 
               <div className="upload-row mt-12">
                 <input
                   value={assistantInput}
                   onChange={(e) => setAssistantInput(e.target.value)}
-                  placeholder="Pregunta por caja, márgenes, costes, precios o riesgos…"
+                  placeholder="Pregunta por caja, márgenes, costes, precios, riesgos o siguiente paso recomendado"
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') handleSend()
                   }}
@@ -473,7 +473,7 @@ export default function AdvisorPage() {
 
               {assistantQuestions?.length ? (
                 <div className="upload-hint mt-2">
-                  <strong>Preguntas sugeridas:</strong> {assistantQuestions.slice(0, 5).join(' · ')}
+                  <strong>Preguntas sugeridas para profundizar:</strong> {assistantQuestions.slice(0, 5).join(' · ')}
                 </div>
               ) : null}
             </div>
@@ -505,7 +505,7 @@ export default function AdvisorPage() {
 
               {!latestActions?.length ? (
                 <div className="empty mt-12">
-                  Aún no hay snapshots para este objetivo. Pulsa “Generar” o usa Automatización.
+                  Aún no hay recomendaciones publicadas para este objetivo. Genera un snapshot o relánzalo desde Automatización.
                 </div>
               ) : (
                 <div className="stack gap-10 mt-12">
@@ -529,7 +529,7 @@ export default function AdvisorPage() {
               {assistantActions?.length ? (
                 <div className="mt-3">
                   <div className="upload-hint mb-8">
-                    <strong>Acciones del chat:</strong>
+                    <strong>Acciones propuestas en la conversación:</strong>
                   </div>
                   <div className="stack gap-10">
                     {assistantActions.slice(0, 6).map((a, idx) => (

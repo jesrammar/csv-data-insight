@@ -10,5 +10,6 @@ public record UniversalViewDto(
     Instant createdAt,
     Long sourceImportId,
     String sourceFilename,
-    String sourceImportedAt
+    String sourceImportedAt,
+    String aggregationMode
 ) {}

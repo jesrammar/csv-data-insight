@@ -5,6 +5,7 @@ import com.asecon.enterpriseiq.dto.AdvisorRecommendationSnapshotDto;
 import com.asecon.enterpriseiq.repo.AdvisorRecommendationRepository;
 import com.asecon.enterpriseiq.service.AccessService;
 import com.asecon.enterpriseiq.service.AdvisorAssistantService;
+import com.asecon.enterpriseiq.service.PeriodWorkflowService;
 import com.asecon.enterpriseiq.service.RecommendationObjective;
 import com.asecon.enterpriseiq.service.RecommendationSnapshotService;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -25,17 +26,20 @@ public class RecommendationController {
     private final AccessService accessService;
     private final AdvisorAssistantService advisorAssistantService;
     private final RecommendationSnapshotService snapshotService;
+    private final PeriodWorkflowService periodWorkflowService;
     private final AdvisorRecommendationRepository recommendationRepository;
     private final ObjectMapper objectMapper;
 
     public RecommendationController(AccessService accessService,
                                     AdvisorAssistantService advisorAssistantService,
                                     RecommendationSnapshotService snapshotService,
+                                    PeriodWorkflowService periodWorkflowService,
                                     AdvisorRecommendationRepository recommendationRepository,
                                     ObjectMapper objectMapper) {
         this.accessService = accessService;
         this.advisorAssistantService = advisorAssistantService;
         this.snapshotService = snapshotService;
+        this.periodWorkflowService = periodWorkflowService;
         this.recommendationRepository = recommendationRepository;
         this.objectMapper = objectMapper;
     }
@@ -47,6 +51,21 @@ public class RecommendationController {
         var rec = (objective == null || objective.isBlank())
             ? recommendationRepository.findFirstByCompany_IdOrderByCreatedAtDesc(companyId).orElse(null)
             : recommendationRepository.findFirstByCompany_IdAndSourceOrderByCreatedAtDesc(companyId, RecommendationObjective.toSource(objective)).orElse(null);
+        return toDto(rec);
+    }
+
+    @GetMapping("/period/{period}")
+    public AdvisorRecommendationSnapshotDto byPeriod(@PathVariable Long companyId,
+                                                     @PathVariable String period,
+                                                     @RequestParam(required = false) String objective) {
+        var user = accessService.currentUser();
+        accessService.requireCompanyAccess(user, companyId);
+        String resolvedPeriod = (period == null || period.isBlank()) ? YearMonth.now().toString() : period.trim();
+        var rec = recommendationRepository.findByCompany_IdAndPeriodAndSource(
+            companyId,
+            resolvedPeriod,
+            RecommendationObjective.toSource(objective)
+        ).orElse(null);
         return toDto(rec);
     }
 
@@ -77,6 +96,7 @@ public class RecommendationController {
         var user = accessService.currentUser();
         accessService.requireCompanyAccess(user, companyId);
         var rec = snapshotService.snapshot(companyId, period, objective);
+        periodWorkflowService.syncFromRecommendation(rec);
         return toDto(rec);
     }
 

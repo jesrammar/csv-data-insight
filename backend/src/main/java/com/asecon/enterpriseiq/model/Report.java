@@ -28,8 +28,20 @@ public class Report {
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
+    @Column(name = "version_no", nullable = false)
+    private Integer versionNo = 1;
+
     @Column(name = "storage_ref")
     private String storageRef;
+
+    @Column(name = "selected_universal_view_id")
+    private Long selectedUniversalViewId;
+
+    @Column(name = "selected_universal_view_name")
+    private String selectedUniversalViewName;
+
+    @Column(name = "selected_universal_aggregation_mode")
+    private String selectedUniversalAggregationMode;
 
     public Long getId() { return id; }
     public Company getCompany() { return company; }
@@ -42,6 +54,14 @@ public class Report {
     public void setStatus(ReportStatus status) { this.status = status; }
     public Instant getCreatedAt() { return createdAt; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
+    public Integer getVersionNo() { return versionNo; }
+    public void setVersionNo(Integer versionNo) { this.versionNo = versionNo; }
     public String getStorageRef() { return storageRef; }
     public void setStorageRef(String storageRef) { this.storageRef = storageRef; }
+    public Long getSelectedUniversalViewId() { return selectedUniversalViewId; }
+    public void setSelectedUniversalViewId(Long selectedUniversalViewId) { this.selectedUniversalViewId = selectedUniversalViewId; }
+    public String getSelectedUniversalViewName() { return selectedUniversalViewName; }
+    public void setSelectedUniversalViewName(String selectedUniversalViewName) { this.selectedUniversalViewName = selectedUniversalViewName; }
+    public String getSelectedUniversalAggregationMode() { return selectedUniversalAggregationMode; }
+    public void setSelectedUniversalAggregationMode(String selectedUniversalAggregationMode) { this.selectedUniversalAggregationMode = selectedUniversalAggregationMode; }
 }

@@ -57,6 +57,17 @@ public class AssistantController {
         String period = YearMonth.now().toString();
         String html = advisorAssistantService.buildConsultingReportHtml(companyId, company.getName());
         Report report = reportService.generateHtmlReport(company, period, html);
-        return new ReportDto(report.getId(), report.getCompany().getId(), report.getPeriod(), report.getFormat(), report.getStatus(), report.getCreatedAt());
+        return new ReportDto(
+            report.getId(),
+            report.getCompany().getId(),
+            report.getPeriod(),
+            report.getFormat(),
+            report.getStatus(),
+            report.getCreatedAt(),
+            report.getVersionNo(),
+            report.getSelectedUniversalViewId(),
+            report.getSelectedUniversalViewName(),
+            report.getSelectedUniversalAggregationMode()
+        );
     }
 }

@@ -1,4 +1,4 @@
-import type { UniversalChartData, UniversalImportLineageDto } from '../../api'
+﻿import type { UniversalChartData, UniversalImportLineageDto } from '../../api'
 
 function fmtBytes(n?: number | null) {
   if (!n || !Number.isFinite(n)) return '-'
@@ -20,6 +20,25 @@ function asStr(value: any) {
   return text.trim()
 }
 
+function aggregationLabel(value: any) {
+  const key = asStr(value).toUpperCase()
+  const labels: Record<string, string> = {
+    ROW_COUNT: 'filas',
+    DISTINCT_ENTRY_COUNT: 'asientos',
+    DISTINCT_DOCUMENT_COUNT: 'documentos',
+    DISTINCT_INVOICE_COUNT: 'facturas',
+    DISTINCT_PARTY_COUNT: 'terceros',
+    SUM_DEBIT: 'debe',
+    SUM_CREDIT: 'haber',
+    NET_BALANCE: 'saldo',
+    SUM_AMOUNT: 'importe',
+    AVG_VALUE: 'media',
+    SUM: 'suma',
+    AVG: 'media'
+  }
+  return labels[key] || asStr(value) || '-'
+}
+
 function requestSummary(meta: Record<string, any> | null | undefined) {
   const req = (meta as any)?.request
   if (!req || typeof req !== 'object') return null
@@ -32,9 +51,10 @@ function requestSummary(meta: Record<string, any> | null | undefined) {
     asStr((req as any).yColumn)
   ].filter(Boolean)
   const agg = asStr((req as any).aggregation)
+  const aggMode = asStr((req as any).aggregationMode)
   const topN = (req as any).topN
   const maxPoints = (req as any).maxPoints
-  return { type, cols, agg, topN, maxPoints }
+  return { type, cols, agg, aggMode, topN, maxPoints }
 }
 
 export default function LineagePanel({
@@ -49,6 +69,7 @@ export default function LineagePanel({
   const meta = (chart as any)?.meta as Record<string, any> | undefined
   const req = requestSummary(meta)
   const analysis = lineage?.analysis || null
+  const intake = analysis?.intakeDiagnosis || null
   const filters = Array.isArray((meta as any)?.filters) ? ((meta as any).filters as any[]) : null
 
   return (
@@ -80,7 +101,7 @@ export default function LineagePanel({
           </div>
           <div className="upload-hint mt-1">
             {analysis?.sampled ? 'Muestreado' : 'Completo'}
-            {analysis?.removedEmptyColumns ? ` · Limpieza: ${analysis.removedEmptyColumns} col vacias` : ''}
+            {analysis?.removedEmptyColumns ? ` · Limpieza: ${analysis.removedEmptyColumns} col vacías` : ''}
           </div>
         </div>
 
@@ -91,7 +112,7 @@ export default function LineagePanel({
             {analysis?.badRows != null ? ` · ${analysis.badRows} malas` : ''}
           </div>
           <div className="upload-hint mt-1">
-            {analysis?.totalRowsRead != null ? `Leidas: ${analysis.totalRowsRead}` : 'Leidas: -'}
+            {analysis?.totalRowsRead != null ? `Leídas: ${analysis.totalRowsRead}` : 'Leídas: -'}
             {analysis?.observedRows != null ? ` · Observadas: ${analysis.observedRows}` : ''}
           </div>
         </div>
@@ -103,12 +124,38 @@ export default function LineagePanel({
         </div>
       ) : null}
 
+      {intake ? (
+        <div className="grid grid-autofit-220 mt-12">
+          <div className="card soft card-pad-sm">
+            <div className="upload-hint">Tipo detectado</div>
+            <div className="fw-700">{asStr(intake.label) || asStr(intake.headline) || '-'}</div>
+            <div className="upload-hint mt-1">
+              {asStr(intake.confidenceLabel) || '-'}
+              {intake.needsConfirmation ? ' · confirmar' : ''}
+            </div>
+          </div>
+
+          <div className="card soft card-pad-sm">
+            <div className="upload-hint">Siguiente ruta</div>
+            <div className="fw-700">{asStr(intake.primaryActionLabel) || '-'}</div>
+            <div className="upload-hint mt-1">{asStr(intake.recommendedRoute) || '-'}</div>
+          </div>
+
+          <div className="card soft card-pad-sm">
+            <div className="upload-hint">Lectura oficial</div>
+            <div className="fw-700">{asStr(intake.canonicalStatus) || '-'}</div>
+            <div className="upload-hint mt-1">{asStr(intake.canonicalDetail) || asStr(intake.detail) || '-'}</div>
+          </div>
+        </div>
+      ) : null}
+
       {req ? (
         <div className="mt-12">
-          <div className="upload-hint">Config del grafico</div>
+          <div className="upload-hint">Config del gráfico</div>
           <div className="upload-hint mt-6">
             Tipo: <strong>{req.type || '-'}</strong>
-            {req.agg ? ` · Agg: ${req.agg}` : ''}
+            {req.aggMode ? ` · Modo: ${aggregationLabel(req.aggMode)}` : ''}
+            {req.agg ? ` · Agg legacy: ${aggregationLabel(req.agg)}` : ''}
             {req.topN != null ? ` · TopN: ${req.topN}` : ''}
             {req.maxPoints != null ? ` · MaxPoints: ${req.maxPoints}` : ''}
           </div>
@@ -131,3 +178,4 @@ export default function LineagePanel({
     </details>
   )
 }
+

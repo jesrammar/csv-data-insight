@@ -13,6 +13,7 @@ const TribunalDashboardPage = lazy(() => import('./pages/TribunalDashboardPage')
 const UniversalDashboardPage = lazy(() => import('./pages/UniversalDashboardPage'))
 const UniversalViewsPage = lazy(() => import('./pages/UniversalViewsPage'))
 const UniversalViewPage = lazy(() => import('./pages/UniversalViewPage'))
+const AnnualPlanningPage = lazy(() => import('./pages/AnnualPlanningPage'))
 const BudgetDashboardPage = lazy(() => import('./pages/BudgetDashboardPage'))
 const PricingPage = lazy(() => import('./pages/PricingPage'))
 const AutomationPage = lazy(() => import('./pages/AutomationPage'))
@@ -27,6 +28,8 @@ const AdminUsersPage = lazy(() => import('./pages/AdminUsersPage'))
 const PortfolioPage = lazy(() => import('./pages/PortfolioPage'))
 const GuidesPage = lazy(() => import('./pages/GuidesPage'))
 const CompanySettingsPage = lazy(() => import('./pages/CompanySettingsPage'))
+const PipelineCenterPage = lazy(() => import('./pages/PipelineCenterPage'))
+const MonthlyClosePage = lazy(() => import('./pages/MonthlyClosePage'))
 
 function RouteFallback() {
   return (
@@ -156,6 +159,14 @@ export default function App() {
             path="/budget"
             element={
               <Guard allow={!isClient}>
+                <AnnualPlanningPage />
+              </Guard>
+            }
+          />
+          <Route
+            path="/budget/dashboard"
+            element={
+              <Guard allow={!isClient}>
                 <BudgetDashboardPage />
               </Guard>
             }
@@ -237,6 +248,22 @@ export default function App() {
             element={
               <Guard allow={!isClient}>
                 <CompanySettingsPage />
+              </Guard>
+            }
+          />
+          <Route
+            path="/pipeline"
+            element={
+              <Guard allow={isAdmin || isConsultor}>
+                <PipelineCenterPage />
+              </Guard>
+            }
+          />
+          <Route
+            path="/monthly-close"
+            element={
+              <Guard allow={!isClient}>
+                <MonthlyClosePage />
               </Guard>
             }
           />

@@ -8,15 +8,19 @@ Plataforma para consultoras (p. ej. ASECON) con multiempresa, ingesta CSV/XLSX, 
 - Backend: Java 21 + Spring Boot 3 (Maven)
 - DB: PostgreSQL + Flyway
 - Frontend: React + TypeScript (Vite) + React Router + TanStack Query
-- Auth: JWT (access token + refresh token con rotación) + cartera consultor↔clientes
+- Auth: JWT (access token + refresh token con rotación) + cartera consultor↔empresas gestionadas
 - Observabilidad: Spring Actuator + Prometheus + Grafana + Alertmanager
 - Infra: Docker + docker compose
 
 ## Arquitectura (resumen)
-- Backend REST con permisos por rol (ADMIN/CONSULTOR/CLIENTE) y acceso por empresa.
+- Backend REST con permisos por rol (ADMIN/CONSULTOR/CLIENTE) y acceso por empresa gestionada.
 - Storage en filesystem (volumen `backend-storage`) para imports, universal y reportes.
 - Automatización: jobs programados (KPIs/informes/snapshots) y reintentos.
-- Auditoría: trazado de acciones relevantes (incluye admin de usuarios, cambios de enabled/empresas y acciones de auth).
+- Auditoría: trazado de acciones relevantes (incluye admin de usuarios, cambios de enabled/empresas gestionadas y acciones de auth).
+
+Decisión de dominio:
+
+- Ver [docs/adr-001-modelo-dominio-consultora.md](/C:/Users/jesus_ctqx5w2/OneDrive/Escritorio/csv-data-insight/docs/adr-001-modelo-dominio-consultora.md) para la decisión de producto/arquitectura que fija la app como plataforma para consultoras.
 
 ## CSV esperado (Caja / transacciones)
 Columnas obligatorias:

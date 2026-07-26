@@ -117,15 +117,18 @@ public class UniversalViewController {
             throw new ResponseStatusException(org.springframework.http.HttpStatus.BAD_REQUEST, "No hay dataset Universal para guardar el dashboard. Sube un fichero en Universal primero.");
         }
 
-        if (request.getName() == null || request.getName().isBlank()) {
-            request.setName("Dashboard " + Instant.now().toString().substring(0, 10));
-        }
+        String fallbackName = isBlank(request.getName())
+            ? "Dashboard " + Instant.now().toString().substring(0, 10)
+            : request.getName().trim();
+        UniversalViewRequest normalizedRequest = universalViewService.canonicalizeRequest(request, companyId, pinned.getId());
+        if (isBlank(normalizedRequest.getName())) normalizedRequest.setName(fallbackName);
+        if (isBlank(normalizedRequest.getType())) normalizedRequest.setType("TIME_SERIES");
 
         UniversalView view = new UniversalView();
         view.setCompany(company);
-        view.setName(request.getName().trim());
-        view.setType(request.getType() == null ? "TIME_SERIES" : request.getType().trim().toUpperCase());
-        view.setConfigJson(universalViewService.encodeConfig(request));
+        view.setName(normalizedRequest.getName().trim());
+        view.setType(normalizedRequest.getType() == null ? "TIME_SERIES" : normalizedRequest.getType().trim().toUpperCase());
+        view.setConfigJson(universalViewService.encodeConfig(normalizedRequest));
         view.setSourceUniversalImportId(pinned.getId());
         view.setCreatedAt(Instant.now());
         view = universalViewRepository.save(view);
@@ -141,8 +144,7 @@ public class UniversalViewController {
         accessService.requirePlanAtLeast(companyId, Plan.BRONZE);
         UniversalView view = universalViewRepository.findByIdAndCompanyId(viewId, companyId)
             .orElseThrow(() -> new ResponseStatusException(org.springframework.http.HttpStatus.NOT_FOUND, "Dashboard no encontrado"));
-        UniversalViewRequest req = universalViewService.decodeConfig(view.getConfigJson());
-        if (req.getType() == null || req.getType().isBlank()) req.setType(view.getType());
+        UniversalViewRequest req = normalizedViewRequest(companyId, view);
         Long src = importId != null ? importId : view.getSourceUniversalImportId();
         UniversalChartDataDto out = universalViewService.previewSnapshot(companyId, req, src);
         if (src == null) return out;
@@ -170,15 +172,47 @@ public class UniversalViewController {
         accessService.requirePlanAtLeast(companyId, Plan.GOLD);
         UniversalView view = universalViewRepository.findByIdAndCompanyId(viewId, companyId)
             .orElseThrow(() -> new ResponseStatusException(org.springframework.http.HttpStatus.NOT_FOUND, "Dashboard no encontrado"));
-        UniversalViewRequest req = universalViewService.decodeConfig(view.getConfigJson());
-        if (req.getType() == null || req.getType().isBlank()) req.setType(view.getType());
+        UniversalViewRequest req = normalizedViewRequest(companyId, view);
         Long src = importId != null ? importId : view.getSourceUniversalImportId();
         return universalViewService.evidence(companyId, req, focusLabel, limit, src);
+    }
+
+    private UniversalViewRequest normalizedViewRequest(Long companyId, UniversalView view) {
+        UniversalViewRequest raw = universalViewService.decodeConfig(view.getConfigJson());
+        if (isBlank(raw.getType())) raw.setType(view.getType());
+        if (isBlank(raw.getName())) raw.setName(view.getName());
+        UniversalViewRequest normalized = universalViewService.canonicalizeRequest(raw, companyId, view.getSourceUniversalImportId());
+        if (isBlank(normalized.getName())) normalized.setName(view.getName());
+
+        String normalizedJson = universalViewService.encodeConfig(normalized);
+        boolean changed = !Objects.equals(view.getConfigJson(), normalizedJson)
+            || !Objects.equals(blankToNull(view.getType()), blankToNull(normalized.getType()))
+            || !Objects.equals(blankToNull(view.getName()), blankToNull(normalized.getName()));
+        if (changed) {
+            view.setConfigJson(normalizedJson);
+            if (!isBlank(normalized.getType())) view.setType(normalized.getType().trim().toUpperCase());
+            if (!isBlank(normalized.getName())) view.setName(normalized.getName().trim());
+            universalViewRepository.save(view);
+        }
+        return normalized;
+    }
+
+    private static boolean isBlank(String value) {
+        return value == null || value.isBlank();
+    }
+
+    private static String blankToNull(String value) {
+        if (value == null) return null;
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     private UniversalViewDto toDto(UniversalView view) {
         UniversalImport imp = null;
         Long companyId = view.getCompany() == null ? null : view.getCompany().getId();
+        UniversalViewRequest normalized = companyId == null
+            ? universalViewService.decodeConfig(view.getConfigJson())
+            : normalizedViewRequest(companyId, view);
         if (companyId != null && view.getSourceUniversalImportId() != null) {
             imp = universalImportRepository.findByIdAndCompanyId(view.getSourceUniversalImportId(), companyId).orElse(null);
         }
@@ -190,7 +224,8 @@ public class UniversalViewController {
             view.getCreatedAt(),
             view.getSourceUniversalImportId(),
             imp == null ? null : imp.getFilename(),
-            imp == null || imp.getCreatedAt() == null ? null : imp.getCreatedAt().toString()
+            imp == null || imp.getCreatedAt() == null ? null : imp.getCreatedAt().toString(),
+            normalized == null ? null : normalized.getAggregationMode()
         );
     }
 }

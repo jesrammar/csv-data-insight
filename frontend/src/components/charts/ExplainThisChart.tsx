@@ -22,7 +22,7 @@ export default function ExplainThisChart({ title = 'Explica este grafico', see, 
   const bullet3 = pick(todo)
 
   return (
-    <div className={`explain-panel ${className || ''}`.trim()}>
+    <div className={`explain-panel chart-insight-primary ${className || ''}`.trim()}>
       <div className="row row-between row-center row-wrap gap-10">
         <div className="explain-title">{title}</div>
         {focusLabel ? <span className="badge">{focusLabel}</span> : null}

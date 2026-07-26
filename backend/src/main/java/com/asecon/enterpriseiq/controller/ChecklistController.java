@@ -56,7 +56,7 @@ public class ChecklistController {
         boolean cash = transactionRepository.existsByCompanyIdAndPeriod(companyId, resolved);
         boolean tribunal = tribunalImportRepository.existsByCompanyId(companyId);
         boolean universal = universalImportRepository.existsByCompanyId(companyId);
-        boolean report = reportRepository.findByCompanyIdAndPeriod(companyId, resolved).isPresent();
+        boolean report = reportRepository.existsByCompanyIdAndPeriod(companyId, resolved);
         boolean reportJobActive = automationJobRepository.existsByCompany_IdAndTypeAndStatusInAndPayloadJsonContaining(
             companyId,
             AutomationJobType.GENERATE_MONTHLY_REPORT,

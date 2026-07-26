@@ -1,52 +1,223 @@
+// @ts-nocheck
+import { useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { downloadReportPdf, generateReport, getReportContent, getReports, getUserRole } from '../api'
-import { useEffect, useState } from 'react'
+import {
+  downloadReportPdf,
+  generateReport,
+  getChecklist,
+  getImports,
+  getPeriodWorkflow,
+  getReportContent,
+  getReports,
+  getUserRole,
+  listUniversalViews,
+  type ReportDto,
+  type UniversalViewDto
+} from '../api'
 import { useCompanySelection } from '../hooks/useCompany'
 import PageHeader from '../components/ui/PageHeader'
 import Alert from '../components/ui/Alert'
 import Button from '../components/ui/Button'
 import { useToast } from '../components/ui/ToastProvider'
+import { EMPTY_ACTIVITY_TEXT, EMPTY_VALUE, formatDateTime } from '../utils/format'
+import { universalAggregationExecutiveLine, universalAggregationModeLabel } from '../utils/universalAggregation'
 import { getWorkPeriod, nowYm } from '../utils/workPeriod'
+
+function reportsPlanBadge(planRaw?: string | null) {
+  const normalized = String(planRaw || 'BRONZE').toUpperCase()
+  if (normalized === 'PLATINUM') return 'Platinum'
+  if (normalized === 'GOLD') return 'Gold'
+  return 'Bronze'
+}
 
 export default function ReportsPage() {
   const { id: companyId, plan } = useCompanySelection()
   const isClient = getUserRole() === 'CLIENTE'
   const queryClient = useQueryClient()
   const toast = useToast()
-  const { data, isLoading, error: reportsError, refetch } = useQuery({
-    queryKey: ['reports', companyId],
-    queryFn: () => getReports(companyId as number),
-    enabled: !!companyId
-  })
 
   const [period, setPeriod] = useState(() => getWorkPeriod(companyId) || nowYm())
   const [html, setHtml] = useState('')
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [showAllVersions, setShowAllVersions] = useState(false)
-  const [previewReport, setPreviewReport] = useState<{ id: number; period?: string } | null>(null)
+  const [previewReport, setPreviewReport] = useState<ReportDto | null>(null)
+  const [selectedUniversalViewId, setSelectedUniversalViewId] = useState('')
 
-  const reportsForUi = (() => {
-    const list = (data || []) as any[]
+  const workflowHref = `/monthly-close?period=${encodeURIComponent(period)}`
+
+  const { data, isLoading, error: reportsError, refetch } = useQuery({
+    queryKey: ['reports', companyId],
+    queryFn: () => getReports(companyId as number),
+    enabled: !!companyId
+  })
+
+  const { data: imports } = useQuery({
+    queryKey: ['reports-imports', companyId],
+    queryFn: () => getImports(companyId as number),
+    enabled: !!companyId
+  })
+
+  const { data: universalViews } = useQuery({
+    queryKey: ['reports-universal-views', companyId],
+    queryFn: () => listUniversalViews(companyId as number),
+    enabled: !!companyId && !isClient
+  })
+
+  const { data: checklist } = useQuery({
+    queryKey: ['reports-checklist', companyId, period],
+    queryFn: () => getChecklist(companyId as number, period),
+    enabled: !!companyId && !!period
+  })
+
+  const workflowQuery = useQuery({
+    queryKey: ['reports-workflow', companyId, period],
+    queryFn: () => getPeriodWorkflow(companyId as number, period),
+    enabled: !!companyId && !!period,
+    retry: false
+  })
+
+  const availableUniversalViews = (universalViews || []) as UniversalViewDto[]
+  const selectedUniversalView = useMemo(
+    () => availableUniversalViews.find((view) => String(view.id) === selectedUniversalViewId) || null,
+    [availableUniversalViews, selectedUniversalViewId]
+  )
+
+  const reportsForUi = useMemo(() => {
+    const list = (data || []) as ReportDto[]
     if (showAllVersions) return list
     const seen = new Set<string>()
-    const out: any[] = []
-    for (const r of list) {
-      const key = String(r?.period || '')
-      if (!key) continue
-      if (seen.has(key)) continue
+    const output: ReportDto[] = []
+    for (const report of list) {
+      const key = String(report?.period || '')
+      if (!key || seen.has(key)) continue
       seen.add(key)
-      out.push(r)
+      output.push(report)
     }
-    return out
-  })()
+    return output
+  }, [data, showAllVersions])
+
   const latestReport = reportsForUi[0] || null
   const reportsCount = Array.isArray(data) ? data.length : 0
+  const workflow = workflowQuery.data
+
+  const periodImport = useMemo(() => {
+    return ((imports || []) as any[])
+      .filter((item: any) => String(item?.period || '') === String(period || ''))
+      .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0] || null
+  }, [imports, period])
+
+  const currentPeriodReport = useMemo(() => {
+    return ((data || []) as any[]).find((item: any) => String(item?.period || '') === String(period || '')) || null
+  }, [data, period])
+
+  const checklistDone = (checklist?.items || []).filter((item: any) => item.done).length
+  const checklistTotal = (checklist?.items || []).length
+
+  const periodState = useMemo(() => {
+    const importReady = !!periodImport && ['OK', 'WARNING'].includes(String(periodImport.status || ''))
+    const reviewReady = checklistTotal > 0 ? checklistDone === checklistTotal : !!currentPeriodReport
+    const pdfReady = !!currentPeriodReport
+
+    return {
+      importStep: !periodImport
+        ? { title: 'Sin carga vÃ¡lida', detail: 'Este periodo todavÃ­a no tiene una ingesta registrada.' }
+        : importReady
+          ? { title: `Import ${periodImport.status}`, detail: 'La base del periodo ya estÃ¡ lista para generar entregable.' }
+          : { title: `Import ${periodImport.status}`, detail: 'Corrige el import antes de emitir el informe.' },
+      reviewStep: reviewReady
+        ? { title: 'Lectura preparada', detail: 'El periodo ya tiene validaciÃ³n suficiente para cerrar entregable.' }
+        : {
+            title: 'Lectura pendiente',
+            detail: checklistTotal
+              ? `${checklistDone}/${checklistTotal} comprobaciones completadas para este periodo.`
+              : 'Valida la lectura del periodo antes de generar el PDF.'
+          },
+      pdfStep: pdfReady
+        ? { title: 'PDF generado', detail: `Ya existe un informe disponible para ${period}.` }
+        : { title: 'PDF pendiente', detail: 'TodavÃ­a no has generado el entregable de este periodo.' }
+    }
+  }, [checklistDone, checklistTotal, currentPeriodReport, period, periodImport])
+
+  const reportFocus = useMemo(() => {
+    if (!companyId) {
+      return {
+        title: 'Selecciona una empresa',
+        detail: 'El entregable siempre se opera por empresa gestionada.',
+        cta: null as string | null,
+        action: null as 'view' | 'download' | 'generate' | null,
+        href: null as string | null
+      }
+    }
+    if (currentPeriodReport) {
+      return {
+        title: 'Entregable listo',
+        detail: `El informe vigente de ${period} ya estÃ¡ disponible para revisiÃ³n o descarga.`,
+        cta: 'Abrir vista previa',
+        action: 'view' as const,
+        href: null
+      }
+    }
+    if (isClient) {
+      return {
+        title: 'Pendiente de publicaciÃ³n',
+        detail: 'Tu consultorÃ­a todavÃ­a no ha publicado el entregable de este periodo.',
+        cta: null,
+        action: null,
+        href: null
+      }
+    }
+    if (workflow?.status === 'EXCEPTIONS') {
+      return {
+        title: 'Falta corregir el periodo',
+        detail: workflow.statusDetail || workflow.notes || 'Antes de emitir el informe, corrige las incidencias del workflow.',
+        cta: 'Abrir cierre',
+        action: null,
+        href: workflowHref
+      }
+    }
+    if (!periodImport) {
+      return {
+        title: 'Falta base del periodo',
+        detail: 'Sin una carga vÃ¡lida no tiene sentido emitir entregable.',
+        cta: 'Cargar datos',
+        action: null,
+        href: '/imports'
+      }
+    }
+    if (workflow?.status === 'REPORT_READY' || workflow?.status === 'CLOSED') {
+      return {
+        title: 'Listo para emitir o revisar',
+        detail: workflow.statusDetail || workflow.notes || 'El workflow ya ha dejado el periodo listo para entregable.',
+        cta: 'Generar informe',
+        action: 'generate' as const,
+        href: null
+      }
+    }
+    return {
+      title: workflow?.statusTitle || 'Sigue el workflow oficial',
+      detail: workflow?.statusDetail || workflow?.notes || 'La forma mÃ¡s fiable de llegar al PDF es seguir el cierre mensual del periodo.',
+      cta: 'Abrir cierre',
+      action: null,
+      href: workflowHref
+    }
+  }, [companyId, currentPeriodReport, isClient, period, periodImport, workflow, workflowHref])
+
+  const reportSupportOpen = !currentPeriodReport || workflow?.status === 'EXCEPTIONS'
 
   useEffect(() => {
     if (!companyId) return
     setPeriod(getWorkPeriod(companyId) || nowYm())
+    setSelectedUniversalViewId('')
   }, [companyId])
+
+  useEffect(() => {
+    if (!selectedUniversalViewId) return
+    if (!availableUniversalViews.some((view) => String(view.id) === selectedUniversalViewId)) {
+      setSelectedUniversalViewId('')
+    }
+  }, [availableUniversalViews, selectedUniversalViewId])
 
   function renderPanelState(title: string, detail?: string, tone: 'default' | 'loading' | 'locked' = 'default', className = 'mt-3') {
     return (
@@ -57,9 +228,8 @@ export default function ReportsPage() {
     )
   }
 
-  function periodLabelForReport(reportId: number) {
-    const rep = reportsForUi.find((item: any) => item.id === reportId)
-    return rep?.period
+  function findReport(reportId: number) {
+    return (((data || []) as ReportDto[]).find((item) => item.id === reportId) || null) as ReportDto | null
   }
 
   async function handleGenerate() {
@@ -67,22 +237,21 @@ export default function ReportsPage() {
     setError('')
     setSuccess('')
     try {
-      await generateReport(companyId, period)
+      const created = await generateReport(companyId, period, selectedUniversalView ? selectedUniversalView.id : null)
       await queryClient.invalidateQueries({ queryKey: ['reports', companyId] })
 
       try {
-        const list = await getReports(companyId)
-        const rep = (list || []).find((r: any) => String(r?.period || '') === period) || (list || [])[0]
-        if (rep?.id) {
-          const content = await getReportContent(companyId, rep.id)
+        if (created?.id) {
+          const content = await getReportContent(companyId, created.id)
           setHtml(content)
-          setPreviewReport({ id: rep.id, period: rep.period })
+          setPreviewReport(created)
         }
       } catch {
         // ignore preview refresh errors after successful generation
       }
 
-      setSuccess('Informe generado. Ya puedes revisarlo en pantalla o descargarlo en PDF.')
+      const universalMessage = created?.selectedUniversalViewName ? ` Vista Universal: ${created.selectedUniversalViewName}.` : ''
+      setSuccess(`Informe generado. Ya puedes revisarlo en pantalla o descargarlo en PDF.${universalMessage}`)
       toast.push({ tone: 'success', title: 'Informe', message: `Generado para ${period}.` })
     } catch (err: any) {
       setError(err.message)
@@ -95,12 +264,12 @@ export default function ReportsPage() {
     try {
       const content = await getReportContent(companyId, reportId)
       setHtml(content)
-      setPreviewReport({ id: reportId, period: periodLabelForReport(reportId) })
+      setPreviewReport(findReport(reportId))
     } catch (err: any) {
-      const msg = String(err?.message || err || 'No se pudo abrir el informe.')
+      const msg = String(err?.message || err || 'No se pudo abrir.')
       setError(
-        msg.toLowerCase().includes('retención') || msg.toLowerCase().includes('no está disponible')
-          ? 'Este informe fue limpiado por la retención de ficheros. Genera uno nuevo para ese periodo.'
+        msg.toLowerCase().includes('retencion') || msg.toLowerCase().includes('no esta disponible')
+          ? 'Este informe fue limpiado por la retenciÃ³n de ficheros. Genera uno nuevo para ese periodo.'
           : msg
       )
       toast.push({ tone: 'danger', title: 'Error', message: 'No se pudo abrir el informe.' })
@@ -112,19 +281,19 @@ export default function ReportsPage() {
     try {
       const blob = await downloadReportPdf(companyId, reportId)
       const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `enterpriseiq-report-${periodLabel || reportId}.pdf`
-      document.body.appendChild(a)
-      a.click()
-      a.remove()
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `enterpriseiq-report-${periodLabel || reportId}.pdf`
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
       URL.revokeObjectURL(url)
       toast.push({ tone: 'success', title: 'PDF', message: 'Descarga iniciada.' })
     } catch (err: any) {
       const msg = String(err?.message || err || 'No se pudo descargar el PDF.')
       setError(
-        msg.toLowerCase().includes('retención') || msg.toLowerCase().includes('no está disponible')
-          ? 'Este informe fue limpiado por la retención de ficheros. Genera uno nuevo para ese periodo.'
+        msg.toLowerCase().includes('retencion') || msg.toLowerCase().includes('no esta disponible')
+          ? 'Este informe fue limpiado por la retenciÃ³n de ficheros. Genera uno nuevo para ese periodo.'
           : msg
       )
       toast.push({ tone: 'danger', title: 'Error', message: 'No se pudo descargar el PDF.' })
@@ -132,217 +301,297 @@ export default function ReportsPage() {
   }
 
   return (
-    <div>
+    <div className="reports-page">
       <PageHeader
         title={isClient ? 'Informes' : 'Entregables mensuales'}
-        subtitle={
-          isClient
-            ? 'Entregables listos para revisar o descargar.'
-            : 'Genera informes listos para compartir con cliente o exportar a PDF.'
-        }
-        actions={<span className="badge">{(plan || 'BRONZE').toUpperCase()}</span>}
+        subtitle={isClient ? 'Una sola vista para revisar o descargar el entregable vigente.' : 'Genera, revisa y descarga el entregable vigente del periodo.'}
+        actions={<span className="badge">{reportsPlanBadge(plan)}</span>}
       />
 
-      <div className="card section soft">
-        <div className="mini-row row-baseline">
-          <h3 className="m-0">Ruta recomendada</h3>
-          <span className="upload-hint">Genera, revisa y comparte siguiendo este orden.</span>
+      {!companyId ? <Alert tone="warning">Selecciona una empresa.</Alert> : null}
+      {error ? <Alert tone="danger" className="mb-3">{error}</Alert> : null}
+      {success ? <Alert tone="success" className="mb-3">{success}</Alert> : null}
+
+      <div className="card section soft reports-period-shell">
+        <div className="mini-row row-between row-center row-wrap gap-8">
+          <div>
+            <h3 className="m-0">Entregable del periodo</h3>
+            <div className="upload-hint mt-8">
+              Periodo activo: <span className="badge">{period}</span>
+            </div>
+          </div>
+          {workflow?.statusTitle ? <span className="badge">{workflow.statusTitle.replace('Workflow ', '')}</span> : null}
         </div>
-        <div className="grid grid-autofit-220 mt-12">
-          <div className="card soft card-pad-sm">
-            <div className="upload-hint">{isClient ? '1. Espera el informe' : '1. Genera'}</div>
-            <div className="fw-800 mt-1">{isClient ? 'Tu consultora lo prepara' : companyId ? `Periodo ${period}` : 'Selecciona empresa'}</div>
-            <div className="upload-hint mt-1">
-              {isClient
-                ? 'Cuando esté listo aparecerá en el historial para abrirlo.'
-                : companyId
-                  ? 'Genera el entregable del periodo de trabajo con un clic.'
-                  : 'Activa primero una empresa para empezar el flujo.'}
-            </div>
-          </div>
-          <div className="card soft card-pad-sm">
-            <div className="upload-hint">2. Revisa</div>
-            <div className="fw-800 mt-1">{previewReport?.period || latestReport?.period || 'Sin vista previa'}</div>
-            <div className="upload-hint mt-1">
-              {html
-                ? 'La vista HTML ya está abierta abajo para validar el contenido.'
-                : latestReport
-                  ? 'Abre el último informe para comprobarlo antes de compartirlo.'
-                  : 'Cuando exista un informe, podrás abrirlo desde el historial.'}
-            </div>
-          </div>
-          <div className="card soft card-pad-sm">
-            <div className="upload-hint">3. Comparte</div>
-            <div className="fw-800 mt-1">{reportsCount} {reportsCount === 1 ? 'informe' : 'informes'}</div>
-            <div className="upload-hint mt-1">
-              {previewReport
-                ? 'Si todo está correcto, descarga el PDF y compártelo con el cliente.'
-                : 'El cierre natural del flujo es descargar el PDF definitivo.'}
-            </div>
-            {previewReport ? (
-              <div className="mt-2">
-                <Button variant="ghost" size="sm" onClick={() => handleDownloadPdf(previewReport.id, previewReport.period)}>
+        <div className="card soft card-pad-sm mt-12 reports-flow-card">
+          <div className="fw-800">{reportFocus.title}</div>
+          <div className="upload-hint mt-8">{reportFocus.detail}</div>
+          {reportFocus.cta ? (
+            <div className="row row-wrap gap-8 mt-12">
+              {reportFocus.href ? (
+                <Link className="badge" to={reportFocus.href}>
+                  {reportFocus.cta}
+                </Link>
+              ) : reportFocus.action === 'view' && currentPeriodReport ? (
+                <Button size="sm" variant="secondary" onClick={() => handleView(currentPeriodReport.id)}>
+                  {reportFocus.cta}
+                </Button>
+              ) : reportFocus.action === 'generate' ? (
+                <Button size="sm" variant="secondary" onClick={handleGenerate} disabled={!companyId}>
+                  {reportFocus.cta}
+                </Button>
+              ) : null}
+              {currentPeriodReport ? (
+                <Button size="sm" variant="ghost" onClick={() => handleDownloadPdf(currentPeriodReport.id, currentPeriodReport.period)}>
                   Descargar PDF
                 </Button>
-              </div>
-            ) : null}
-          </div>
-        </div>
-      </div>
-
-      {!isClient ? (
-        <div className="section">
-          <div className="mini-row row-baseline mb-12">
-            <h3 className="m-0">Genera</h3>
-            <span className="upload-hint">Crea el entregable del periodo de trabajo.</span>
-          </div>
-          <div className="card">
-            <h3 className="h3-reset">Generación</h3>
-            {!companyId ? renderPanelState('Falta seleccionar empresa', 'Elige una empresa arriba para generar y revisar informes.') : null}
-            <div className="upload-row">
-              <input value={period} onChange={(e) => setPeriod(e.target.value)} placeholder="YYYY-MM" inputMode="numeric" />
-              <Button onClick={handleGenerate} disabled={!companyId}>
-                Generar informe
-              </Button>
-            </div>
-            {error ? (
-              <div className="mt-12">
-                <Alert tone="danger">{error}</Alert>
-              </div>
-            ) : null}
-            {success ? (
-              <div className="mt-12">
-                <Alert tone="success">{success}</Alert>
-              </div>
-            ) : null}
-          </div>
-        </div>
-      ) : (
-        <div className="section">
-          <div className="mini-row row-baseline mb-12">
-            <h3 className="m-0">Revisa</h3>
-            <span className="upload-hint">Tu consultora publica aquí los informes listos para cliente.</span>
-          </div>
-          <div className="card">
-            <Alert tone="info" title="Solo lectura">
-              Tu consultora prepara los informes. Aquí puedes revisarlos cuando estén listos.
-            </Alert>
-            <div className="mt-12">
-              <Button variant="ghost" size="sm" onClick={() => queryClient.invalidateQueries({ queryKey: ['reports', companyId] })}>
-                Refrescar
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      <div className="section">
-        <div className="mini-row row-baseline mb-12">
-          <h3 className="m-0">Revisa y comparte</h3>
-          <span className="upload-hint">Abre la vista previa y descarga el PDF definitivo desde el historial.</span>
-        </div>
-        <div className="card">
-          <h3 className="h3-reset">{isClient ? 'Disponibles' : 'Historial'}</h3>
-          {!companyId ? (
-            renderPanelState('Sin empresa seleccionada', 'Selecciona una empresa para ver su historial de informes.', 'default', 'mt-12')
-          ) : isLoading ? (
-            renderPanelState('Cargando informes', 'Estoy recuperando el historial para este cliente.', 'loading', 'mt-12')
-          ) : reportsError ? (
-            <div className="mt-12">
-              <Alert tone="danger" title="No se pudo cargar el historial">
-                <div className="row row-wrap gap-8 row-center">
-                  <span>{String((reportsError as any)?.message || 'Inténtalo de nuevo en unos segundos.')}</span>
-                  <Button variant="ghost" size="sm" onClick={() => refetch()}>
-                    Reintentar
-                  </Button>
-                </div>
-              </Alert>
-            </div>
-          ) : !data?.length ? (
-            renderPanelState(
-              isClient ? 'Aún no tienes informes disponibles' : 'Todavía no hay informes generados',
-              isClient
-                ? 'Tu consultora los verá aquí cuando estén listos para revisar o descargar.'
-                : 'Genera el primer informe del periodo para empezar a compartir entregables.',
-              'default',
-              'mt-12'
-            )
-          ) : (
-            <>
-              {!isClient ? (
-                <div className="upload-hint row row-center row-wrap gap-10 mb-10">
-                  <label className="row row-center gap-8">
-                    <input type="checkbox" checked={showAllVersions} onChange={(e) => setShowAllVersions(e.target.checked)} />
-                    Mostrar versiones antiguas
-                  </label>
-                  <span>Por defecto se muestra solo el último informe de cada periodo.</span>
-                </div>
               ) : null}
-
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Periodo</th>
-                    <th>Generado</th>
-                    <th>Estado</th>
-                    <th>Acciones</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {reportsForUi.map((rep: any) => (
-                    <tr key={rep.id}>
-                      <td>
-                        <div className="fw-700">{rep.period}</div>
-                        {!isClient ? <div className="upload-hint">ID: {rep.id}</div> : null}
-                      </td>
-                      <td className="upload-hint">{rep.createdAt ? new Date(rep.createdAt).toLocaleString() : '-'}</td>
-                      <td>{rep.status}</td>
-                      <td>
-                        <div className="row row-wrap gap-8">
-                          <Button variant="secondary" size="sm" onClick={() => handleView(rep.id)}>
-                            Vista previa
-                          </Button>
-                          <Button variant="ghost" size="sm" onClick={() => handleDownloadPdf(rep.id, rep.period)}>
-                            Descargar PDF
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </>
-          )}
+            </div>
+          ) : null}
         </div>
       </div>
+
+      <details className="reports-support-details" open={reportSupportOpen}>
+        <summary>
+          <div>
+            <div className="fw-700">Contexto y versiones</div>
+            <div className="upload-hint">Estado del periodo, emisiÃ³n manual e histÃ³rico solo cuando hace falta profundizar.</div>
+          </div>
+          <div className="row row-center row-wrap gap-8">
+            <span className={`badge ${currentPeriodReport ? 'ok' : 'warn'}`}>{currentPeriodReport ? 'PDF listo' : 'PDF pendiente'}</span>
+            <span className="badge">{reportsCount} PDF</span>
+          </div>
+        </summary>
+        <div className="reports-support-body">
+          <div className="card section soft reports-period-shell">
+            <div className="mini-row row-baseline">
+              <h3 className="m-0">Lectura corta del periodo</h3>
+              <span className="upload-hint">Solo el contexto mÃ­nimo para decidir si emitir, revisar o volver al workflow.</span>
+            </div>
+            <div className="upload-hint mt-8">
+              Periodo activo: <span className="badge">{period}</span>
+            </div>
+            <div className="grid grid-autofit-220 mt-12 reports-period-grid">
+              <div className="card soft card-pad-sm reports-flow-card">
+                <div className="upload-hint">1. Datos</div>
+                <div className="fw-800 mt-1">{periodState.importStep.title}</div>
+                <div className="upload-hint mt-1">{periodState.importStep.detail}</div>
+                {!isClient ? (
+                  <div className="mt-2">
+                    <Link className="badge" to="/imports">
+                      Revisar imports
+                    </Link>
+                  </div>
+                ) : null}
+              </div>
+              <div className="card soft card-pad-sm reports-flow-card">
+                <div className="upload-hint">2. ValidaciÃ³n</div>
+                <div className="fw-800 mt-1">{periodState.reviewStep.title}</div>
+                <div className="upload-hint mt-1">{periodState.reviewStep.detail}</div>
+                {!isClient ? (
+                  <div className="mt-2">
+                    <Link className="badge" to={workflowHref}>
+                      Abrir cierre
+                    </Link>
+                  </div>
+                ) : null}
+              </div>
+              <div className="card soft card-pad-sm reports-flow-card">
+                <div className="upload-hint">3. PDF</div>
+                <div className="fw-800 mt-1">{periodState.pdfStep.title}</div>
+                <div className="upload-hint mt-1">{periodState.pdfStep.detail}</div>
+                {currentPeriodReport ? (
+                  <div className="mt-2">
+                    <Button variant="ghost" size="sm" onClick={() => handleDownloadPdf(currentPeriodReport.id, currentPeriodReport.period)}>
+                      Descargar PDF
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </div>
+
+          {!isClient ? (
+            <div className="card section reports-emit-shell">
+              <div className="mini-row row-baseline mb-12">
+                <h3 className="m-0">EmisiÃ³n manual</h3>
+                <span className="upload-hint">Ãšsala solo cuando quieras forzar o rehacer el entregable del periodo.</span>
+              </div>
+              {!companyId ? renderPanelState('Falta seleccionar empresa gestionada', 'Elige una empresa gestionada arriba para generar y revisar informes.') : null}
+              {companyId ? (
+                availableUniversalViews.length ? (
+                  <div className="report-view-picker">
+                    <div className="upload-hint">Vista Universal del entregable</div>
+                    <select value={selectedUniversalViewId} onChange={(event) => setSelectedUniversalViewId(event.target.value)}>
+                      <option value="">AutomÃ¡tica: Ãºltima guardada</option>
+                      {availableUniversalViews.map((view) => (
+                        <option key={view.id} value={view.id}>
+                          {`${view.name} Â· ${universalAggregationModeLabel(view.aggregationMode)}`}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="upload-hint">
+                      {selectedUniversalView
+                        ? `${universalAggregationExecutiveLine(selectedUniversalView.aggregationMode)} EntrarÃ¡ "${selectedUniversalView.name}".`
+                        : 'Si no eliges una concreta, el entregable usarÃ¡ la Ãºltima vista Universal guardada.'}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="upload-hint">No hay vistas Universal guardadas. El entregable se generarÃ¡ solo con cierre, KPIs y snapshot consultivo.</div>
+                )
+              ) : null}
+              <div className="upload-row">
+                <input value={period} onChange={(event) => setPeriod(event.target.value)} placeholder="YYYY-MM" inputMode="numeric" />
+                <Button onClick={handleGenerate} disabled={!companyId}>
+                  Generar informe
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="card section reports-emit-shell">
+              <Alert tone="info" title="Solo lectura">
+                Tu consultora prepara y valida los informes. AquÃ­ puedes revisarlos cuando estÃ©n listos para compartir.
+              </Alert>
+              <div className="mt-12">
+                <Button variant="ghost" size="sm" onClick={() => queryClient.invalidateQueries({ queryKey: ['reports', companyId] })}>
+                  Refrescar
+                </Button>
+              </div>
+            </div>
+          )}
+
+          <div className="card section">
+            <div className="mini-row row-baseline mb-12">
+              <h3 className="m-0">{isClient ? 'Disponibles' : 'Historial'}</h3>
+              <span className="upload-hint">Versiones y descargas cuando necesites revisar o recuperar un entregable anterior.</span>
+            </div>
+            {!companyId ? (
+              renderPanelState('Sin empresa', 'Selecciona una empresa.', 'default', 'mt-12')
+            ) : isLoading ? (
+              renderPanelState('Cargando informes', 'Estoy recuperando el historial para esta empresa gestionada.', 'loading', 'mt-12')
+            ) : reportsError ? (
+              <div className="mt-12">
+                <Alert tone="danger" title="No se pudo cargar">
+                  <div className="row row-wrap gap-8 row-center">
+                    <span>{String((reportsError as any)?.message || 'IntÃ©ntalo de nuevo en unos segundos.')}</span>
+                    <Button variant="ghost" size="sm" onClick={() => refetch()}>
+                      Reintentar
+                    </Button>
+                  </div>
+                </Alert>
+              </div>
+            ) : !data?.length ? (
+              renderPanelState(
+                isClient ? 'AÃºn no tienes informes disponibles' : EMPTY_ACTIVITY_TEXT,
+                isClient
+                  ? 'Tu consultora los publicarÃ¡ aquÃ­ cuando el cierre del periodo quede listo para revisar o descargar.'
+                  : 'Genera el primer entregable del periodo para dejar trazabilidad de la lectura y compartirla con el cliente final.',
+                'default',
+                'mt-12'
+              )
+            ) : (
+              <>
+                {!isClient ? (
+                  <div className="upload-hint row row-center row-wrap gap-10 mb-10">
+                    <label className="row row-center gap-8">
+                      <input type="checkbox" checked={showAllVersions} onChange={(event) => setShowAllVersions(event.target.checked)} />
+                      Mostrar historial completo
+                    </label>
+                    <span>Por defecto se muestra solo la Ãºltima versiÃ³n de cada periodo.</span>
+                  </div>
+                ) : null}
+
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Periodo</th>
+                      <th>Generado</th>
+                      <th>Estado</th>
+                      <th>Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {reportsForUi.map((report: ReportDto) => (
+                      <tr key={report.id}>
+                        <td>
+                          <div className="fw-700">{report.period}</div>
+                          {!isClient ? <div className="upload-hint">ID: {report.id} Â· v{report.versionNo || 1}</div> : null}
+                          {!isClient && report.selectedUniversalViewName ? (
+                            <div className="upload-hint">
+                              Universal: {report.selectedUniversalViewName}
+                              {report.selectedUniversalAggregationMode ? ` Â· ${universalAggregationModeLabel(report.selectedUniversalAggregationMode)}` : ''}
+                            </div>
+                          ) : null}
+                        </td>
+                        <td className="upload-hint">{report.createdAt ? formatDateTime(report.createdAt) : EMPTY_VALUE}</td>
+                        <td>{report.status}</td>
+                        <td>
+                          <div className="row row-wrap gap-8">
+                            <Button variant="secondary" size="sm" onClick={() => handleView(report.id)}>
+                              Vista previa
+                            </Button>
+                            <Button variant="ghost" size="sm" onClick={() => handleDownloadPdf(report.id, report.period)}>
+                              Descargar PDF
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </>
+            )}
+          </div>
+        </div>
+      </details>
 
       {html ? (
-        <div className="section">
-          <div className="mini-row row-baseline mb-12">
-            <h3 className="m-0">Vista previa</h3>
-            <span className="upload-hint">Última revisión antes de compartir el PDF con cliente.</span>
-          </div>
-          <div className="card">
-            <div className="mini-row row-baseline mb-10">
-              <h3 className="h3-reset m-0">Vista HTML</h3>
-              {previewReport ? (
-                <Button variant="ghost" size="sm" onClick={() => handleDownloadPdf(previewReport.id, previewReport.period)}>
-                  Descargar PDF
-                </Button>
-              ) : null}
+        <details className="reports-preview-details" open>
+          <summary>
+            <div>
+              <div className="fw-700">Vista previa del entregable</div>
+              <div className="upload-hint">Abre, descarga u oculta la revisiÃ³n del PDF sin mÃ¡s ruido alrededor.</div>
             </div>
-            <div className="upload-hint mb-10">
-              Esto es una vista previa del informe. Revisa contenido, formato y mensajes clave antes de compartirlo.
+            <div className="row row-center row-wrap gap-8">
+              <span className="badge">{previewReport?.period || period}</span>
+              <span className="badge">HTML</span>
             </div>
-            <iframe
-              className="report-frame"
-              title="Reporte"
-              sandbox=""
-              referrerPolicy="no-referrer"
-              srcDoc={html}
-            />
+          </summary>
+          <div className="reports-preview-body">
+            <div className="card reports-preview-shell">
+              <div className="mini-row row-baseline mb-10 reports-preview-toolbar">
+                <div>
+                  <div className="upload-hint">PrevisualizaciÃ³n lista para revisar antes de compartir.</div>
+                  {previewReport?.selectedUniversalViewName ? (
+                    <div className="upload-hint mt-8">
+                      Universal: {previewReport.selectedUniversalViewName}
+                      {previewReport.selectedUniversalAggregationMode ? ` Â· ${universalAggregationModeLabel(previewReport.selectedUniversalAggregationMode)}` : ''}
+                    </div>
+                  ) : null}
+                </div>
+                <div className="row row-wrap gap-8">
+                  {previewReport ? (
+                    <Button variant="ghost" size="sm" onClick={() => handleDownloadPdf(previewReport.id, previewReport.period)}>
+                      Descargar PDF
+                    </Button>
+                  ) : null}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setHtml('')
+                      setPreviewReport(null)
+                    }}
+                  >
+                    Ocultar
+                  </Button>
+                </div>
+              </div>
+              <div className="report-frame-shell">
+                <iframe className="report-frame" title="Reporte" sandbox="" referrerPolicy="no-referrer" srcDoc={html} />
+              </div>
+            </div>
           </div>
-        </div>
+        </details>
       ) : null}
     </div>
   )

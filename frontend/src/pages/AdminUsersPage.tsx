@@ -131,8 +131,8 @@ export default function AdminUsersPage() {
   return (
     <div>
       <PageHeader
-        title="Admin · Usuarios"
-        subtitle="Crea consultores/clientes y asigna las empresas que pueden ver. (ADMIN interno)"
+        title="Admin · Usuarios y accesos"
+        subtitle="Crea consultores o clientes finales y asigna la cartera de empresas gestionadas que cada uno puede ver. (ADMIN interno de consultora)"
         actions={
           <Button
             variant="ghost"
@@ -163,7 +163,7 @@ export default function AdminUsersPage() {
           <h3 className="h3-reset">Crear usuario</h3>
           <Grid>
             <Field label="Email">
-              <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="consultor@cliente.com" />
+              <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="consultor@consultora.com o cliente@empresa.com" />
             </Field>
             <Field label="Contraseña">
               <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="password" />
@@ -177,7 +177,7 @@ export default function AdminUsersPage() {
           </Grid>
 
           <div className="mt-3">
-            <div className="upload-hint mb-2">Empresas asignadas (si está vacío, no verá ninguna)</div>
+            <div className="upload-hint mb-2">Empresas gestionadas asignadas (si está vacío, no verá ninguna)</div>
             <Grid>
               {companiesList.map((c) => (
                 <label key={c.id} className="card soft card-pad-sm row row-center gap-2">
@@ -231,10 +231,10 @@ export default function AdminUsersPage() {
                         <td className="upload-hint">{companyNames || '—'}</td>
                         <td className="text-right">
                           {String(u.role || '').toUpperCase() === 'ADMIN' ? (
-                            <span className="upload-hint">ADMIN (interno)</span>
+                            <span className="upload-hint">ADMIN de consultora</span>
                           ) : (
                             <Button variant="ghost" size="sm" onClick={() => startEdit(u)}>
-                              Asignar empresas
+                              Asignar cartera
                             </Button>
                           )}
                         </td>
@@ -269,7 +269,7 @@ export default function AdminUsersPage() {
             </Grid>
           </div>
 
-          <div className="upload-hint mt-3 mb-2">Empresas asignadas</div>
+          <div className="upload-hint mt-3 mb-2">Empresas gestionadas asignadas</div>
           <Grid>
             {companiesList.map((c) => (
               <label key={c.id} className="card soft card-pad-sm row row-center gap-2">

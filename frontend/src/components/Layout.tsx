@@ -1,12 +1,16 @@
-import { useEffect } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { getCompanies, getCompanySettings, getUserRole, logout } from '../api'
 import CompanySelector from './CompanySelector'
 import Button from './ui/Button'
 import Icon from './ui/Icon'
-import { useCompanySelection } from '../hooks/useCompany'
+import { setActiveCompanySelection, useCompanySelection } from '../hooks/useCompany'
 import { getWorkPeriod, nowYm, setWorkPeriod } from '../utils/workPeriod'
+
+function routeMatches(pathname: string, prefixes: string[]) {
+  return prefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`))
+}
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate()
@@ -37,6 +41,31 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const isClient = role === 'CLIENTE'
   const isAdmin = role === 'ADMIN'
   const isConsultor = role === 'CONSULTOR'
+  const activePeriod = companyId ? getWorkPeriod(companyId) || nowYm() : nowYm()
+  const monthlyCloseHref = `/monthly-close?period=${encodeURIComponent(activePeriod)}`
+
+  const pathname = location.pathname
+  const analysisRouteActive = useMemo(
+    () =>
+      routeMatches(pathname, [
+        '/imports',
+        '/dashboard',
+        '/cash',
+        '/tribunal',
+        '/universal',
+        '/pipeline',
+        '/advisor',
+        '/automation',
+        '/tools',
+        '/guides',
+        '/portfolio',
+        '/settings/company'
+      ]),
+    [pathname]
+  )
+  const adminRouteActive = useMemo(() => routeMatches(pathname, ['/admin']), [pathname])
+  const [analysisOpen, setAnalysisOpen] = useState(() => analysisRouteActive)
+  const [adminOpen, setAdminOpen] = useState(() => adminRouteActive)
 
   useEffect(() => {
     const list = (companies || []) as any[]
@@ -52,12 +81,43 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   }, [companies])
 
   useEffect(() => {
+    const list = (companies || []) as any[]
+    if (!list.length) return
+
+    const params = new URLSearchParams(location.search)
+    const routeCompanyId = Number(params.get('companyId') || '')
+    const routePeriod = String(params.get('period') || '').trim()
+    if (!routeCompanyId || Number.isNaN(routeCompanyId)) return
+
+    const targetCompany = list.find((company) => Number(company.id) === routeCompanyId)
+    if (!targetCompany) return
+
+    const currentRawId = localStorage.getItem('companyId')
+    const currentId = currentRawId ? Number(currentRawId) : null
+    if (currentId !== routeCompanyId) {
+      setActiveCompanySelection(routeCompanyId, String(targetCompany.plan || 'BRONZE'))
+    }
+
+    if (routePeriod) {
+      const currentPeriod = getWorkPeriod(routeCompanyId)
+      if (currentPeriod !== routePeriod) setWorkPeriod(routeCompanyId, routePeriod)
+    }
+  }, [companies, location.search])
+
+  useEffect(() => {
     document.body.classList.toggle('body-client', isClient)
     return () => document.body.classList.remove('body-client')
   }, [isClient])
 
   useEffect(() => {
-    // UI density modes removed (always use default spacing).
+    if (analysisRouteActive) setAnalysisOpen(true)
+  }, [analysisRouteActive])
+
+  useEffect(() => {
+    if (adminRouteActive) setAdminOpen(true)
+  }, [adminRouteActive])
+
+  useEffect(() => {
     document.body.classList.remove('density-compact')
     localStorage.removeItem('uiDensity')
   }, [])
@@ -82,7 +142,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       <aside className="side-nav">
         <div className="brand-stack">
           <div className="brand">EnterpriseIQ</div>
-          <span className="brand-sub">ASECON Advisory Suite</span>
+          <span className="brand-sub">ASECON CONSULTING FLOW</span>
         </div>
 
         <nav className="side-links">
@@ -112,61 +172,105 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             </>
           ) : (
             <>
-              <div className="nav-section">Principal</div>
+              <div className="nav-section">Ruta consultora</div>
               <NavLink to="/overview" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
                 <Icon name="overview" />
                 Vista ejecutiva
               </NavLink>
-              <NavLink to="/dashboard" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-                <Icon name="dashboard" />
-                Caja
-              </NavLink>
-              <NavLink to="/imports" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-                <Icon name="imports" />
-                Cargar datos
+              <NavLink to={monthlyCloseHref} className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+                <Icon name="overview" />
+                Cierre mensual
               </NavLink>
               <NavLink to="/reports" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
                 <Icon name="reports" />
                 Entregables
               </NavLink>
-
-              <div className="nav-section mt-12">
-                Más
-              </div>
-              <NavLink to="/guides" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-                <Icon name="help" />
-                Guías de carga
-              </NavLink>
-              <NavLink to="/tools" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-                <Icon name="advisor" />
-                Herramientas
-              </NavLink>
-              <NavLink to="/settings/company" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-                <Icon name="settings" />
-                Ajustes empresa
+              <NavLink to="/budget" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+                <Icon name="overview" />
+                Plan anual
               </NavLink>
 
-              {isConsultor ? (
-                <NavLink to="/portfolio" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-                  <Icon name="overview" />
-                  Cartera
-                </NavLink>
-              ) : null}
+              <details className="nav-group mt-12" open={analysisOpen} onToggle={(event) => setAnalysisOpen(event.currentTarget.open)}>
+                <summary className="nav-section nav-section-toggle">
+                  <span>Analisis</span>
+                  <span className="nav-section-caret">{analysisOpen ? '-' : '+'}</span>
+                </summary>
+                <div className="nav-group-body">
+                  <NavLink to="/imports" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+                    <Icon name="imports" />
+                    Cargar datos
+                  </NavLink>
+                  <NavLink to="/dashboard" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+                    <Icon name="dashboard" />
+                    Caja
+                  </NavLink>
+                  <NavLink to="/universal" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+                    <Icon name="dashboard" />
+                    Universal
+                  </NavLink>
+                  <NavLink to="/tribunal" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+                    <Icon name="dashboard" />
+                    Tribunal
+                  </NavLink>
+                  <NavLink to="/pipeline" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+                    <Icon name="overview" />
+                    Pipeline
+                  </NavLink>
+                </div>
+              </details>
+
+              <details className="nav-group mt-3">
+                <summary className="nav-section nav-section-toggle">
+                  <span>Mas</span>
+                  <span className="nav-section-caret">+</span>
+                </summary>
+                <div className="nav-group-body">
+                  <NavLink to="/advisor" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+                    <Icon name="overview" />
+                    Seguimiento
+                  </NavLink>
+                  {isConsultor ? (
+                    <NavLink to="/portfolio" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+                      <Icon name="overview" />
+                      Cartera
+                    </NavLink>
+                  ) : null}
+                  <NavLink to="/settings/company" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+                    <Icon name="settings" />
+                    Ajustes empresa
+                  </NavLink>
+                  <NavLink to="/guides" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+                    <Icon name="help" />
+                    Guias
+                  </NavLink>
+                  <NavLink to="/tools" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+                    <Icon name="overview" />
+                    Herramientas
+                  </NavLink>
+                  <NavLink to="/automation" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+                    <Icon name="overview" />
+                    Automatizacion
+                  </NavLink>
+                </div>
+              </details>
 
               {isAdmin ? (
-                <>
-                  <div className="nav-section mt-3">
-                    Admin
+                <details className="nav-group mt-3" open={adminOpen} onToggle={(event) => setAdminOpen(event.currentTarget.open)}>
+                  <summary className="nav-section nav-section-toggle">
+                    <span>Admin</span>
+                    <span className="nav-section-caret">{adminOpen ? '-' : '+'}</span>
+                  </summary>
+                  <div className="nav-group-body">
+                    <NavLink to="/admin/users" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+                      <Icon name="admin" />
+                      Usuarios y cartera
+                    </NavLink>
+                    <NavLink to="/admin/storage" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+                      <Icon name="admin" />
+                      Storage cleanup
+                    </NavLink>
                   </div>
-                  <NavLink to="/admin/users" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-                    <Icon name="admin" />
-                    Usuarios y empresas
-                  </NavLink>
-                  <NavLink to="/admin/storage" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-                    <Icon name="admin" />
-                    Storage cleanup
-                  </NavLink>
-                </>
+                </details>
               ) : null}
             </>
           )}
@@ -179,20 +283,15 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         <header className="top-bar">
           <div className="top-left">
             <div className="status-dot" />
-            <span className="top-title">{isClient ? 'Panel operativo' : 'Control financiero operativo'}</span>
-            <span className={`pill ${isClient ? 'pill-client' : 'pill-consultant'}`}>{isClient ? 'Cliente' : 'Consultoría'}</span>
+            <span className="top-title">{isClient ? 'Panel del cliente' : 'Ruta consultora'}</span>
+            <span className={`pill ${isClient ? 'pill-client' : 'pill-consultant'}`}>{isClient ? 'Cliente' : 'Consultoria'}</span>
             {companiesPending ? <span className="pill">Cargando empresas...</span> : null}
-            {companiesError ? (
-              <span className="pill pill-danger">
-                Error cargando empresas
-              </span>
-            ) : null}
+            {companiesError ? <span className="pill pill-danger">Error cargando empresas</span> : null}
           </div>
           <div className="nav-actions">
-            {!isClient ? <span className="pill">ASECON Platform</span> : null}
             <CompanySelector companies={companies || []} />
             {!isClient ? (
-              <Button variant="ghost" size="sm" onClick={() => navigate('/settings/company')} disabled={!companyId} title="Ajustes por empresa">
+              <Button variant="ghost" size="sm" onClick={() => navigate('/settings/company')} disabled={!companyId} title="Ajustes por empresa gestionada">
                 <Icon name="settings" /> Ajustes
               </Button>
             ) : null}
@@ -206,7 +305,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 Reintentar
               </Button>
             ) : null}
-            <Button variant="ghost" size="sm" onClick={handleLogout} title="Cerrar sesión">
+            <Button variant="ghost" size="sm" onClick={handleLogout} title="Cerrar sesion">
               <Icon name="logout" /> Salir
             </Button>
           </div>

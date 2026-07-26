@@ -11,14 +11,23 @@ public class ReportDto {
     private ReportFormat format;
     private ReportStatus status;
     private Instant createdAt;
+    private Integer versionNo;
+    private Long selectedUniversalViewId;
+    private String selectedUniversalViewName;
+    private String selectedUniversalAggregationMode;
 
-    public ReportDto(Long id, Long companyId, String period, ReportFormat format, ReportStatus status, Instant createdAt) {
+    public ReportDto(Long id, Long companyId, String period, ReportFormat format, ReportStatus status, Instant createdAt, Integer versionNo,
+                     Long selectedUniversalViewId, String selectedUniversalViewName, String selectedUniversalAggregationMode) {
         this.id = id;
         this.companyId = companyId;
         this.period = period;
         this.format = format;
         this.status = status;
         this.createdAt = createdAt;
+        this.versionNo = versionNo;
+        this.selectedUniversalViewId = selectedUniversalViewId;
+        this.selectedUniversalViewName = selectedUniversalViewName;
+        this.selectedUniversalAggregationMode = selectedUniversalAggregationMode;
     }
 
     public Long getId() { return id; }
@@ -27,4 +36,8 @@ public class ReportDto {
     public ReportFormat getFormat() { return format; }
     public ReportStatus getStatus() { return status; }
     public Instant getCreatedAt() { return createdAt; }
+    public Integer getVersionNo() { return versionNo; }
+    public Long getSelectedUniversalViewId() { return selectedUniversalViewId; }
+    public String getSelectedUniversalViewName() { return selectedUniversalViewName; }
+    public String getSelectedUniversalAggregationMode() { return selectedUniversalAggregationMode; }
 }

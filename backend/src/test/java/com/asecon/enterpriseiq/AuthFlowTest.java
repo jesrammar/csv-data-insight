@@ -3,12 +3,15 @@ package com.asecon.enterpriseiq;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.Map;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import jakarta.servlet.http.Cookie;
@@ -26,6 +29,39 @@ class AuthFlowTest {
 
     @Autowired
     private ObjectMapper objectMapper;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private PasswordEncoder passwordEncoder;
+
+    @BeforeEach
+    void seedAuthFixture() {
+        jdbcTemplate.update("delete from user_companies where user_id = ?", 9001L);
+        jdbcTemplate.update("delete from users where id = ?", 9001L);
+        jdbcTemplate.update("delete from companies where id = ?", 9001L);
+
+        jdbcTemplate.update(
+            "insert into companies (id, name, plan) values (?, ?, ?)",
+            9001L,
+            "Auth Test Company",
+            "GOLD"
+        );
+        jdbcTemplate.update(
+            "insert into users (id, email, password_hash, role, enabled) values (?, ?, ?, ?, ?)",
+            9001L,
+            "admin@asecon.local",
+            passwordEncoder.encode("password"),
+            "ADMIN",
+            true
+        );
+        jdbcTemplate.update(
+            "insert into user_companies (user_id, company_id) values (?, ?)",
+            9001L,
+            9001L
+        );
+    }
 
     @Test
     void login_refresh_rotates_refresh_token() throws Exception {

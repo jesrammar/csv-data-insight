@@ -1,4 +1,4 @@
-import EChart from './EChart'
+﻿import EChart from './EChart'
 import { formatChartValue, formatCompactNumber } from '../../utils/chartFormat'
 import ChartNarrative from './ChartNarrative'
 import { appendCashDrivers, buildCashFlowNarrative } from '../../utils/chartNarrative'
@@ -57,8 +57,9 @@ export default function CashFlowBiChart({ kpis, onSelectPeriod, drivers = null, 
   }
 
   return (
-    <div className="chart-wrap">
+    <div className="chart-wrap chart-wrap-executive chart-wrap-hero">
       <EChart
+      className="chart-shell-hero chart-shell-story"
       height={320}
       onClick={(params) => {
         if (!onSelectPeriod) return
@@ -140,9 +141,16 @@ export default function CashFlowBiChart({ kpis, onSelectPeriod, drivers = null, 
         ]
       }}
       />
-      <ChartNarrative title={`Lectura rápida · ${focusPeriod || '—'}`} see={narrative.see} why={narrative.why} todo={narrative.todo} />
+      <ChartNarrative
+        title={`Lectura rápida · ${focusPeriod || '—'}`}
+        see={narrative.see}
+        why={narrative.why}
+        todo={narrative.todo}
+        className="chart-narrative-executive"
+      />
       {onSelectPeriod ? <div className="upload-hint mt-8">Tip: haz click en un periodo para ver el detalle de transacciones.</div> : null}
     </div>
   )
 }
+
 
