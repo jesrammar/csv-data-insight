@@ -10,6 +10,8 @@ public record BudgetLongPreviewDto(
     List<String> monthKeys,
     String labelHeader,
     long totalRowsProduced,
-    List<BudgetLongNormalizer.LongRow> sampleRows
+    List<BudgetLongNormalizer.LongRow> sampleRows,
+    boolean requiresConfirmation,
+    List<String> mappingNotes
 ) {}
 

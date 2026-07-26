@@ -60,6 +60,36 @@ public class ImportJob {
     @Column(name = "content_type")
     private String contentType;
 
+    @Column(name = "content_hash", length = 64)
+    private String contentHash;
+
+    @Column(name = "normalized_hash", length = 64)
+    private String normalizedHash;
+
+    @Column(name = "version_no", nullable = false)
+    private Integer versionNo = 1;
+
+    @Column(name = "supersedes_import_id")
+    private Long supersedesImportId;
+
+    @Column(name = "duplicate_of_import_id")
+    private Long duplicateOfImportId;
+
+    @Column(name = "blocking_code")
+    private String blockingCode;
+
+    @Column(name = "blocking_reason")
+    private String blockingReason;
+
+    @Column(name = "rows_received")
+    private Integer rowsReceived;
+
+    @Column(name = "rows_valid")
+    private Integer rowsValid;
+
+    @Column(name = "applied_at")
+    private Instant appliedAt;
+
     public Long getId() { return id; }
     public Company getCompany() { return company; }
     public void setCompany(Company company) { this.company = company; }
@@ -93,4 +123,24 @@ public class ImportJob {
     public void setOriginalFilename(String originalFilename) { this.originalFilename = originalFilename; }
     public String getContentType() { return contentType; }
     public void setContentType(String contentType) { this.contentType = contentType; }
+    public String getContentHash() { return contentHash; }
+    public void setContentHash(String contentHash) { this.contentHash = contentHash; }
+    public String getNormalizedHash() { return normalizedHash; }
+    public void setNormalizedHash(String normalizedHash) { this.normalizedHash = normalizedHash; }
+    public Integer getVersionNo() { return versionNo; }
+    public void setVersionNo(Integer versionNo) { this.versionNo = versionNo; }
+    public Long getSupersedesImportId() { return supersedesImportId; }
+    public void setSupersedesImportId(Long supersedesImportId) { this.supersedesImportId = supersedesImportId; }
+    public Long getDuplicateOfImportId() { return duplicateOfImportId; }
+    public void setDuplicateOfImportId(Long duplicateOfImportId) { this.duplicateOfImportId = duplicateOfImportId; }
+    public String getBlockingCode() { return blockingCode; }
+    public void setBlockingCode(String blockingCode) { this.blockingCode = blockingCode; }
+    public String getBlockingReason() { return blockingReason; }
+    public void setBlockingReason(String blockingReason) { this.blockingReason = blockingReason; }
+    public Integer getRowsReceived() { return rowsReceived; }
+    public void setRowsReceived(Integer rowsReceived) { this.rowsReceived = rowsReceived; }
+    public Integer getRowsValid() { return rowsValid; }
+    public void setRowsValid(Integer rowsValid) { this.rowsValid = rowsValid; }
+    public Instant getAppliedAt() { return appliedAt; }
+    public void setAppliedAt(Instant appliedAt) { this.appliedAt = appliedAt; }
 }

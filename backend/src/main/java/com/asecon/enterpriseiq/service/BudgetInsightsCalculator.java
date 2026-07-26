@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVParser;
 import org.apache.commons.csv.CSVRecord;
@@ -46,7 +47,7 @@ public final class BudgetInsightsCalculator {
 
     public static BudgetLongInsightsDto compute(String filename, Instant createdAt, byte[] normalizedUniversalCsvBytes, int maxSourceRows) {
         if (normalizedUniversalCsvBytes == null || normalizedUniversalCsvBytes.length == 0) {
-            return new BudgetLongInsightsDto(filename, createdAt, 0, BigDecimal.ZERO, null, null, BigDecimal.ZERO, List.of(), List.of(), List.of());
+            return new BudgetLongInsightsDto(filename, createdAt, null, null, 0, BigDecimal.ZERO, null, null, BigDecimal.ZERO, List.of(), List.of(), List.of(), List.of());
         }
         if (maxSourceRows < 1) maxSourceRows = 1_000;
         if (maxSourceRows > 50_000) maxSourceRows = 50_000;
@@ -55,6 +56,11 @@ public final class BudgetInsightsCalculator {
         int eol = head.indexOf('\n');
         if (eol >= 0) head = head.substring(0, eol);
         char delimiter = detectDelimiter(head);
+
+        BudgetLongInsightsDto canonicalResult = computeCanonicalLong(filename, createdAt, normalizedUniversalCsvBytes, delimiter, maxSourceRows);
+        if (canonicalResult != null) {
+            return canonicalResult;
+        }
 
         Map<String, String> monthHeader = new LinkedHashMap<>();
         String labelHeader;
@@ -82,15 +88,15 @@ public final class BudgetInsightsCalculator {
             }
             long present = monthHeader.keySet().stream().filter(MONTH_LABELS::containsKey).count();
             if (present < 6) {
-                return new BudgetLongInsightsDto(filename, createdAt, 0, BigDecimal.ZERO, null, null, BigDecimal.ZERO, List.of(), List.of(), List.of());
+                return new BudgetLongInsightsDto(filename, createdAt, null, null, 0, BigDecimal.ZERO, null, null, BigDecimal.ZERO, List.of(), List.of(), List.of(), List.of());
             }
 
             labelHeader = detectLabelHeader(parser, headers, monthHeader);
             if (labelHeader == null) {
-                return new BudgetLongInsightsDto(filename, createdAt, 0, BigDecimal.ZERO, null, null, BigDecimal.ZERO, List.of(), List.of(), List.of());
+                return new BudgetLongInsightsDto(filename, createdAt, null, null, 0, BigDecimal.ZERO, null, null, BigDecimal.ZERO, List.of(), List.of(), List.of(), List.of());
             }
         } catch (Exception ex) {
-            return new BudgetLongInsightsDto(filename, createdAt, 0, BigDecimal.ZERO, null, null, BigDecimal.ZERO, List.of(), List.of(), List.of());
+            return new BudgetLongInsightsDto(filename, createdAt, null, null, 0, BigDecimal.ZERO, null, null, BigDecimal.ZERO, List.of(), List.of(), List.of(), List.of());
         }
 
         Map<String, BigDecimal> monthTotals = new LinkedHashMap<>();
@@ -122,7 +128,7 @@ public final class BudgetInsightsCalculator {
                 ParsedLabel parsed = parsePartidaLabel(labelRaw);
                 if (parsed.code() == null) continue; // only ITEM rows (avoid totals/text)
 
-                ItemKey key = new ItemKey(parsed.code(), parsed.label());
+                ItemKey key = new ItemKey(parsed.code(), parsed.label(), "UNKNOWN");
                 ItemAgg agg = items.computeIfAbsent(key, k -> new ItemAgg());
 
                 for (String mk : monthTotals.keySet()) {
@@ -145,6 +151,91 @@ public final class BudgetInsightsCalculator {
             }
         }
 
+        return buildResult(filename, createdAt, monthTotals, items, false);
+    }
+
+    private static BudgetLongInsightsDto computeCanonicalLong(String filename,
+                                                              Instant createdAt,
+                                                              byte[] csvBytes,
+                                                              char delimiter,
+                                                              int maxSourceRows) {
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(new ByteArrayInputStream(csvBytes), StandardCharsets.UTF_8))) {
+            CSVParser parser = CSVFormat.DEFAULT.builder()
+                .setDelimiter(delimiter)
+                .setHeader()
+                .setSkipHeaderRecord(true)
+                .setAllowMissingColumnNames(true)
+                .setIgnoreEmptyLines(true)
+                .setIgnoreSurroundingSpaces(true)
+                .setTrim(true)
+                .build()
+                .parse(reader);
+
+            List<String> headers = new ArrayList<>(parser.getHeaderMap().keySet());
+            boolean hasCanonicalAmounts = headers.contains("budget_amount") || headers.contains("amount");
+            if (!(headers.contains("month_key") && headers.contains("label") && hasCanonicalAmounts)) {
+                return null;
+            }
+
+            Map<String, BigDecimal> monthTotals = new LinkedHashMap<>();
+            Map<ItemKey, ItemAgg> items = new LinkedHashMap<>();
+
+            int rows = 0;
+            for (CSVRecord record : parser) {
+                rows++;
+                if (rows > maxSourceRows) break;
+
+                String rowType = clean(get(record, "row_type"));
+                if (rowType != null && !"DETAIL".equalsIgnoreCase(rowType)) continue;
+
+                String monthKey = clean(get(record, "month_key"));
+                String label = clean(get(record, "label"));
+                String semanticKind = firstNonBlank(
+                    clean(get(record, "financial_nature")),
+                    clean(get(record, "semantic_kind"))
+                );
+                String sectionKind = upper(clean(get(record, "section_kind")));
+                String mappingStatus = upper(clean(get(record, "mapping_status")));
+                BigDecimal amount = firstNonNull(
+                    parseMoney(cleanAllowZero(get(record, "budget_amount"))),
+                    parseMoney(cleanAllowZero(get(record, "amount"))),
+                    parseMoney(cleanAllowZero(get(record, "actual_amount"))),
+                    parseMoney(cleanAllowZero(get(record, "forecast_amount"))),
+                    parseMoney(cleanAllowZero(get(record, "variance_amount")))
+                );
+                if (monthKey == null || label == null || amount == null || !isDriverSemantic(semanticKind)) continue;
+                if (!sectionKind.isBlank() && !"P_AND_L".equals(sectionKind)) continue;
+                if ("REVIEW".equals(mappingStatus)) continue;
+
+                monthTotals.putIfAbsent(monthKey, BigDecimal.ZERO);
+                String code = clean(get(record, "code"));
+                ItemKey key = new ItemKey(code, label, upper(semanticKind));
+                ItemAgg agg = items.computeIfAbsent(key, k -> new ItemAgg());
+                agg.months.merge(monthKey, amount, BigDecimal::add);
+            }
+
+            if (items.isEmpty() || monthTotals.isEmpty()) {
+                return new BudgetLongInsightsDto(filename, createdAt, null, null, 0, BigDecimal.ZERO, null, null, BigDecimal.ZERO, List.of(), List.of(), List.of(), List.of());
+            }
+
+            for (var entry : items.entrySet()) {
+                for (String mk : monthTotals.keySet()) {
+                    BigDecimal value = entry.getValue().months.getOrDefault(mk, BigDecimal.ZERO);
+                    monthTotals.put(mk, monthTotals.get(mk).add(value));
+                }
+            }
+
+            return buildResult(filename, createdAt, monthTotals, items, true);
+        } catch (Exception ex) {
+            return null;
+        }
+    }
+
+    private static BudgetLongInsightsDto buildResult(String filename,
+                                                     Instant createdAt,
+                                                     Map<String, BigDecimal> monthTotals,
+                                                     Map<ItemKey, ItemAgg> items,
+                                                     boolean canonical) {
         BigDecimal totalAbsAnnual = BigDecimal.ZERO;
         List<ItemComputed> computed = new ArrayList<>();
         for (var e : items.entrySet()) {
@@ -157,7 +248,13 @@ public final class BudgetInsightsCalculator {
             }
             BigDecimal abs = annual.abs();
             totalAbsAnnual = totalAbsAnnual.add(abs);
-            computed.add(new ItemComputed(e.getKey(), annual, abs, zeroMonths));
+            computed.add(new ItemComputed(
+                e.getKey(),
+                annual,
+                abs,
+                zeroMonths,
+                BudgetCanonicalClassifier.classifyZeroInterpretation(e.getKey().semanticKind, e.getKey().label, orderedValues(e.getValue().months, monthTotals))
+            ));
         }
 
         final BigDecimal totalAbsAnnualFinal = totalAbsAnnual;
@@ -168,30 +265,57 @@ public final class BudgetInsightsCalculator {
             .map(c -> new BudgetItemInsightDto(
                 c.key.code,
                 c.key.label,
+                c.key.label,
+                c.key.semanticKind,
+                null,
+                null,
                 c.annual.setScale(2, RoundingMode.HALF_UP),
                 c.zeroMonths,
-                sharePct(c.absAnnual, totalAbsAnnualFinal)
+                sharePct(c.absAnnual, totalAbsAnnualFinal),
+                c.zeroInterpretation,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null
             ))
             .toList();
 
         List<BudgetItemInsightDto> zeroHeavy = computed.stream()
             .filter(c -> c.zeroMonths >= 8)
+            .filter(c -> !"NO_ACTIVITY".equals(c.zeroInterpretation))
+            .filter(c -> !"NOT_APPLICABLE".equals(c.zeroInterpretation))
             .sorted(Comparator.<ItemComputed>comparingInt(c -> c.zeroMonths).reversed()
                 .thenComparing(ItemComputed::absAnnual, Comparator.reverseOrder()))
             .limit(15)
             .map(c -> new BudgetItemInsightDto(
                 c.key.code,
                 c.key.label,
+                c.key.label,
+                c.key.semanticKind,
+                null,
+                null,
                 c.annual.setScale(2, RoundingMode.HALF_UP),
                 c.zeroMonths,
-                sharePct(c.absAnnual, totalAbsAnnualFinal)
+                sharePct(c.absAnnual, totalAbsAnnualFinal),
+                c.zeroInterpretation,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null
             ))
             .toList();
 
         BigDecimal top3Abs = computed.stream().limit(3).map(ItemComputed::absAnnual).reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal concentrationTop3 = sharePct(top3Abs, totalAbsAnnualFinal);
 
-        // seasonality: best/worst month by total
         String bestMonth = null;
         String worstMonth = null;
         BigDecimal best = null;
@@ -209,6 +333,8 @@ public final class BudgetInsightsCalculator {
         return new BudgetLongInsightsDto(
             filename,
             createdAt,
+            null,
+            null,
             items.size(),
             totalAbsAnnual.setScale(2, RoundingMode.HALF_UP),
             bestMonth,
@@ -216,7 +342,8 @@ public final class BudgetInsightsCalculator {
             concentrationTop3,
             monthTotalDtos,
             topDrivers,
-            zeroHeavy
+            zeroHeavy,
+            List.of()
         );
     }
 
@@ -229,9 +356,41 @@ public final class BudgetInsightsCalculator {
             .setScale(2, RoundingMode.HALF_UP);
     }
 
-    private record ItemKey(String code, String label) {}
+    private static BigDecimal firstNonNull(BigDecimal... values) {
+        if (values == null) return null;
+        for (BigDecimal value : values) {
+            if (value != null) return value;
+        }
+        return null;
+    }
+
+    private static String firstNonBlank(String... values) {
+        if (values == null) return null;
+        for (String value : values) {
+            if (value != null && !value.isBlank()) return value;
+        }
+        return null;
+    }
+
+    private static boolean isDriverSemantic(String semanticKind) {
+        return Set.of("REVENUE", "OPEX", "CAPEX").contains(upper(semanticKind));
+    }
+
+    private static List<BigDecimal> orderedValues(Map<String, BigDecimal> values, Map<String, BigDecimal> monthTotals) {
+        List<BigDecimal> out = new ArrayList<>();
+        for (String monthKey : monthTotals.keySet()) {
+            out.add(values.getOrDefault(monthKey, BigDecimal.ZERO));
+        }
+        return out;
+    }
+
+    private static String upper(String value) {
+        return value == null ? "UNKNOWN" : value.trim().toUpperCase(Locale.ROOT);
+    }
+
+    private record ItemKey(String code, String label, String semanticKind) {}
     private static final class ItemAgg { final Map<String, BigDecimal> months = new LinkedHashMap<>(); }
-    private record ItemComputed(ItemKey key, BigDecimal annual, BigDecimal absAnnual, int zeroMonths) {}
+    private record ItemComputed(ItemKey key, BigDecimal annual, BigDecimal absAnnual, int zeroMonths, String zeroInterpretation) {}
 
     private static String detectLabelHeader(CSVParser parser, List<String> headers, Map<String, String> monthHeader) {
         List<String> candidates = headers.stream()

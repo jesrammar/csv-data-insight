@@ -9,27 +9,47 @@
   <img src="https://img.shields.io/badge/Observability-Prometheus%20%2B%20Grafana-111827?style=for-the-badge&logo=prometheus&logoColor=E6522C" alt="Observability" />
 </p>
 
-Plataforma orientada a consultoría y analítica operativa con **backend en Spring Boot**, **frontend en React**, **PostgreSQL + Flyway**, **JWT con refresh token**, **ingesta CSV/XLSX**, **reportes PDF/HTML** y un stack de **observabilidad y operación** preparado para despliegue.
+Plataforma orientada a consultoria y analitica operativa con **backend en Spring Boot**, **frontend en React**, **PostgreSQL + Flyway**, **JWT con refresh token**, **ingesta CSV/XLSX**, **reportes PDF/HTML** y un stack de **observabilidad y operacion** preparado para despliegue.
 
-> Nota: la versión antigua permanece en `legacy/csv-data-insight/`. La aplicación actual está en `backend/` + `frontend/`.
+> Nota: la version antigua permanece en `legacy/csv-data-insight/`. La aplicacion actual esta en `backend/` + `frontend/`.
 
-## Qué resuelve
+## Que resuelve
 
-- Centraliza datos y operación para entornos multiempresa con distintos roles de acceso.
-- Convierte ficheros CSV/XLSX en información útil: KPIs, alertas, análisis tabular, presupuestos y entregables.
-- Añade una base operable para despliegue real: autenticación, auditoría, observabilidad, backups y restore.
+- Centraliza datos y operacion para entornos multiempresa con distintos roles de acceso.
+- Convierte ficheros CSV/XLSX en informacion util: KPIs, alertas, analisis tabular, presupuestos y entregables.
+- Anade una base operable para despliegue real: autenticacion, auditoria, observabilidad, backups y restore.
 
 ## Capacidades principales
 
 - Multiempresa con roles `ADMIN`, `CONSULTOR` y `CLIENTE`.
 - Ingesta de `CSV` y `XLSX` con procesamiento por dominio.
-- Módulo **Caja** para KPIs, tendencias y alertas.
-- Módulo **Universal** para análisis tabular y detección de problemas/insights.
-- Módulo **Presupuesto** con normalización a formato largo e insights accionables.
+- Modulo **Caja** para KPIs, tendencias y alertas.
+- Modulo **Universal** para analisis tabular y deteccion de problemas e insights.
+- Modulo **Presupuesto** con normalizacion a formato largo e insights accionables.
 - Entregables en **HTML** y **PDF**.
-- Auditoría de acciones relevantes y automatización de tareas programadas.
+- Auditoria de acciones relevantes y automatizacion de tareas programadas.
 
-## Arquitectura y stack
+## Stack
+
+- Backend: Java 21 + Spring Boot 3 (Maven)
+- DB: PostgreSQL + Flyway
+- Frontend: React + TypeScript (Vite) + React Router + TanStack Query
+- Auth: JWT (access token + refresh token con rotacion) + cartera consultor-empresas gestionadas
+- Observabilidad: Spring Actuator + Prometheus + Grafana + Alertmanager
+- Infra: Docker + docker compose
+
+## Arquitectura (resumen)
+
+- Backend REST con permisos por rol (`ADMIN`, `CONSULTOR`, `CLIENTE`) y acceso por empresa gestionada.
+- Storage en filesystem (volumen `backend-storage`) para imports, Universal y reportes.
+- Automatizacion con jobs programados (KPIs, informes, snapshots) y reintentos.
+- Auditoria de acciones relevantes, incluyendo administracion de usuarios y eventos de autenticacion.
+
+Decision de dominio:
+
+- Ver [docs/adr-001-modelo-dominio-consultora.md](docs/adr-001-modelo-dominio-consultora.md) para la decision de producto y arquitectura que fija la app como plataforma para consultoras.
+
+## Arquitectura y stack tecnico
 
 ### Backend
 
@@ -54,30 +74,30 @@ Plataforma orientada a consultoría y analítica operativa con **backend en Spri
 - `TanStack Query`
 - `ECharts`
 
-### Infra y operación
+### Infra y operacion
 
 - `Docker` + `docker compose`
 - `Grafana`
 - `Prometheus`
 - `Alertmanager`
 - Storage persistente en volumen `backend-storage`
-- Despliegue productivo con imágenes `GHCR`
+- Despliegue productivo con imagenes `GHCR`
 
-## Qué demuestra técnicamente
+## Que demuestra tecnicamente
 
-- Diseño de una aplicación full-stack con backend principal en **Spring Boot**.
-- Modelo de seguridad con autenticación JWT, refresh token y control por rol/empresa.
+- Diseno de una aplicacion full-stack con backend principal en **Spring Boot**.
+- Modelo de seguridad con autenticacion JWT, refresh token y control por rol y empresa.
 - Persistencia relacional con migraciones versionadas mediante Flyway.
-- Operación más allá del CRUD: observabilidad, alertas, runbooks, backups y restore.
-- Procesamiento de datos y generación de entregables como parte del dominio del producto.
+- Operacion mas alla del CRUD: observabilidad, alertas, runbooks, backups y restore.
+- Procesamiento de datos y generacion de entregables como parte del dominio del producto.
 
 ## Estructura del repositorio
 
-- `backend/`: API, seguridad, persistencia, lógica de negocio y métricas.
+- `backend/`: API, seguridad, persistencia, logica de negocio y metricas.
 - `frontend/`: interfaz React + TypeScript.
-- `docs/`: runbooks y documentación operativa.
-- `ops/`: configuración de Prometheus, Grafana, Alertmanager y backups.
-- `legacy/`: versión previa del proyecto.
+- `docs/`: runbooks y documentacion operativa.
+- `ops/`: configuracion de Prometheus, Grafana, Alertmanager y backups.
+- `legacy/`: version previa del proyecto.
 
 ## Arranque en local
 
@@ -90,7 +110,7 @@ Servicios principales en desarrollo:
 - Backend: `http://localhost:8081`
 - Frontend: `http://localhost:5174`
 - PostgreSQL: `localhost:5433`
-- Métricas backend: `http://localhost:8082/actuator/prometheus`
+- Metricas backend: `http://localhost:8082/actuator/prometheus`
 
 ## Credenciales seed de desarrollo
 
@@ -100,19 +120,19 @@ Solo para entorno `dev` definido en `docker-compose.yml`:
 - `consultor@asecon.local` / `password`
 - `cliente@acme.local` / `password`
 
-En producción no se cargan seeds automáticamente.
+En produccion no se cargan seeds automaticamente.
 
-## Producción y operación
+## Produccion y operacion
 
-La configuración de producción usa `docker-compose.prod.yml` con:
+La configuracion de produccion usa `docker-compose.prod.yml` con:
 
-- imágenes `GHCR` para backend y frontend,
-- PostgreSQL persistente,
-- backend con puerto privado,
-- Prometheus, Grafana y Alertmanager,
-- secretos y parámetros controlados mediante variables de entorno.
+- imagenes `GHCR` para backend y frontend
+- PostgreSQL persistente
+- backend con puerto privado
+- Prometheus, Grafana y Alertmanager
+- secretos y parametros controlados mediante variables de entorno
 
-Documentación operativa disponible en:
+Documentacion operativa disponible en:
 
 - [Runbook de observabilidad](docs/runbook-observabilidad.md)
 - [Backups y restore](docs/backup-restore.md)
@@ -126,9 +146,9 @@ Stack operativo incluido en el repositorio:
 - Grafana: `http://localhost:3000`
 - Alertmanager: `http://localhost:9093`
 
-El proyecto incluye dashboards, alertas y guías de actuación para incidencias y restore.
+El proyecto incluye dashboards, alertas y guias de actuacion para incidencias y restore.
 
-## Formato mínimo de importación CSV
+## Formato minimo de importacion CSV
 
 Columnas obligatorias para transacciones de caja:
 
@@ -143,4 +163,4 @@ Columnas opcionales:
 
 ## Contexto
 
-`EnterpriseIQ` forma parte de mi portfolio como proyecto que refuerza backend con **Spring Boot**, persistencia relacional, seguridad, observabilidad, despliegue y operación realista de producto.
+`EnterpriseIQ` forma parte de mi portfolio como proyecto que refuerza backend con **Spring Boot**, persistencia relacional, seguridad, observabilidad, despliegue y operacion realista de producto.

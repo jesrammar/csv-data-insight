@@ -1,11 +1,11 @@
 package com.asecon.enterpriseiq.service;
 
 import com.asecon.enterpriseiq.model.Plan;
+import com.asecon.enterpriseiq.repo.AdvisorRecommendationRepository;
 import com.asecon.enterpriseiq.repo.AlertRepository;
 import com.asecon.enterpriseiq.repo.CompanyRepository;
 import com.asecon.enterpriseiq.repo.KpiMonthlyRepository;
 import com.asecon.enterpriseiq.repo.ReportRepository;
-import com.asecon.enterpriseiq.repo.AdvisorRecommendationRepository;
 import java.io.IOException;
 import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
@@ -43,14 +43,14 @@ public class ReportAutomationService {
     public void generateMonthly(Long companyId, String period) throws IOException {
         String resolvedPeriod = normalizePeriod(period);
         var company = companyRepository.findById(companyId).orElseThrow();
-        String html;
         if (company.getPlan() != null && company.getPlan().isAtLeast(Plan.PLATINUM)) {
-            html = advisorAssistantService.buildConsultingReportHtml(companyId, company.getName());
-        } else {
-            String summary = "Informe mensual generado automáticamente con KPIs, tendencia y alertas del periodo.";
-            html = reportService.buildHtmlTemplate(company, resolvedPeriod, summary);
+            String html = advisorAssistantService.buildConsultingReportHtml(companyId, company.getName());
+            reportService.generateHtmlReport(company, resolvedPeriod, html);
+            return;
         }
-        reportService.generateHtmlReport(company, resolvedPeriod, html);
+        String summary = "Informe mensual generado automÃ¡ticamente con KPIs, tendencia y alertas del periodo.";
+        ReportService.PreparedMonthlyReport prepared = reportService.prepareMonthlyHtmlReport(company, resolvedPeriod, summary, null);
+        reportService.generateHtmlReport(company, resolvedPeriod, prepared);
     }
 
     private String buildBasicMonthly(Long companyId, String companyName, String period) {
@@ -96,7 +96,7 @@ public class ReportAutomationService {
         <body>
           <div>
             <h1>Informe mensual</h1>
-            <div class="muted">Empresa: %s · Periodo: %s</div>
+            <div class="muted">Empresa: %s Â· Periodo: %s</div>
           </div>
 
           <div class="grid">
@@ -137,4 +137,3 @@ public class ReportAutomationService {
         return raw.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
     }
 }
-

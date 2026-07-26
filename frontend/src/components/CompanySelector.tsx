@@ -3,6 +3,13 @@ import { notifyCompanyChange } from '../hooks/useCompany'
 
 type Company = { id: number; name: string; plan: string }
 
+function planLabel(planRaw: string) {
+  const plan = String(planRaw || 'BRONZE').toUpperCase()
+  if (plan === 'PLATINUM') return 'Platinum · Auto'
+  if (plan === 'GOLD') return 'Gold · Pro'
+  return 'Bronze · Base'
+}
+
 export default function CompanySelector({ companies }: { companies: Company[] }) {
   const [selected, setSelected] = useState<number | undefined>(() => {
     const value = localStorage.getItem('companyId')
@@ -33,14 +40,14 @@ export default function CompanySelector({ companies }: { companies: Company[] })
 
   return (
     <div className="company-selector">
-      <span className={`badge ${planTone}`}>{plan}</span>
+      <span className={`badge ${planTone}`}>{planLabel(plan)}</span>
       <select
-        aria-label="Seleccionar empresa"
+        aria-label="Seleccionar empresa gestionada"
         value={selected ?? ''}
         disabled={companies.length === 0}
         onChange={(e) => setSelected(Number(e.target.value))}
       >
-        {companies.length === 0 ? <option value="">Sin empresas</option> : null}
+        {companies.length === 0 ? <option value="">Sin empresas asignadas</option> : null}
         {companies.map((c) => (
           <option key={c.id} value={c.id}>
             {c.name}

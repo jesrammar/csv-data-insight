@@ -1,8 +1,11 @@
 package com.asecon.enterpriseiq.service;
 
 import com.asecon.enterpriseiq.dto.UniversalChartDataDto;
+import com.asecon.enterpriseiq.dto.UniversalColumnDto;
+import com.asecon.enterpriseiq.dto.UniversalDetectedEntityDto;
 import com.asecon.enterpriseiq.dto.UniversalEvidenceDto;
 import com.asecon.enterpriseiq.dto.UniversalFilter;
+import com.asecon.enterpriseiq.dto.UniversalSummaryDto;
 import com.asecon.enterpriseiq.dto.UniversalViewRequest;
 import com.asecon.enterpriseiq.model.UniversalImport;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -21,12 +24,14 @@ import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.SplittableRandom;
 import java.util.TreeSet;
 import java.util.regex.Matcher;
@@ -82,6 +87,11 @@ public class UniversalViewService {
         }
     }
 
+    public UniversalViewRequest canonicalizeRequest(UniversalViewRequest request, Long companyId, Long importId) {
+        UniversalImport imp = resolveImport(companyId, importId);
+        return canonicalizeRequest(request, decodeSummary(imp));
+    }
+
     public UniversalChartDataDto preview(Long companyId, UniversalViewRequest request) {
         if (request == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Config vacío.");
         String type = normType(request.getType());
@@ -117,25 +127,28 @@ public class UniversalViewService {
             List<String> headers = new ArrayList<>(parser.getHeaderMap().keySet());
             if (headers.isEmpty()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Dataset sin cabeceras.");
 
+            UniversalSummaryDto summary = decodeSummary(latestImp);
+            SemanticContext semantic = semanticContext(summary);
+            UniversalViewRequest normalizedRequest = canonicalizeRequest(request, summary);
             UniversalChartDataDto out;
             if ("TIME_SERIES".equals(type)) {
-                out = buildTimeSeries(parser, headers, request);
+                out = buildTimeSeries(parser, headers, normalizedRequest, semantic);
             } else if ("CATEGORY_BAR".equals(type)) {
-                out = buildCategoryBar(parser, headers, request);
+                out = buildCategoryBar(parser, headers, normalizedRequest, semantic);
             } else if ("KPI_CARDS".equals(type)) {
-                out = buildKpiCards(parser, headers, request);
+                out = buildKpiCards(parser, headers, normalizedRequest, semantic);
             } else if ("SCATTER".equals(type)) {
-                out = buildScatter(parser, headers, request);
+                out = buildScatter(parser, headers, normalizedRequest, semantic);
             } else if ("HEATMAP".equals(type)) {
-                out = buildHeatmap(parser, headers, request);
+                out = buildHeatmap(parser, headers, normalizedRequest, semantic);
             } else if ("PIVOT_MONTHLY".equals(type)) {
-                out = buildPivotMonthly(parser, headers, request);
+                out = buildPivotMonthly(parser, headers, normalizedRequest, semantic);
             } else {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Tipo no soportado.");
             }
 
             Map<String, Object> meta = out.meta() == null ? new LinkedHashMap<>() : new LinkedHashMap<>(out.meta());
-            meta.putIfAbsent("request", requestLineage(request));
+            meta.putIfAbsent("request", requestLineage(normalizedRequest));
             if (latestImp != null) {
                 meta.putIfAbsent("sourceFilename", latestImp.getFilename());
                 meta.putIfAbsent("sourceImportedAt", latestImp.getCreatedAt() == null ? null : latestImp.getCreatedAt().toString());
@@ -157,6 +170,7 @@ public class UniversalViewService {
 
         byte[] bytes;
         boolean fellBackToLatest = false;
+        UniversalImport imp = null;
         try {
             bytes = universalImportFileService.normalizedCsv(companyId, sourceUniversalImportId);
         } catch (ResponseStatusException ex) {
@@ -170,18 +184,19 @@ public class UniversalViewService {
             }
         }
         if (bytes == null || bytes.length == 0) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No hay dataset Universal.");
-
-        UniversalChartDataDto out = previewBytes(bytes, request);
-        Map<String, Object> meta = out.meta() == null ? new LinkedHashMap<>() : new LinkedHashMap<>(out.meta());
-        meta.putIfAbsent("request", requestLineage(request));
-
-        UniversalImport imp = null;
-        if (!fellBackToLatest) {
-            imp = sourceUniversalImportId == null
+        imp = fellBackToLatest
+            ? universalImportFileService.latest(companyId).orElse(null)
+            : (sourceUniversalImportId == null
                 ? universalImportFileService.latest(companyId).orElse(null)
-                : universalImportFileService.find(companyId, sourceUniversalImportId).orElse(null);
-        } else {
-            imp = universalImportFileService.latest(companyId).orElse(null);
+                : universalImportFileService.find(companyId, sourceUniversalImportId).orElse(null));
+
+        UniversalSummaryDto summary = decodeSummary(imp);
+        UniversalViewRequest normalizedRequest = canonicalizeRequest(request, summary);
+        UniversalChartDataDto out = previewBytes(bytes, normalizedRequest, summary);
+        Map<String, Object> meta = out.meta() == null ? new LinkedHashMap<>() : new LinkedHashMap<>(out.meta());
+        meta.putIfAbsent("request", requestLineage(normalizedRequest));
+
+        if (fellBackToLatest) {
             meta.putIfAbsent("pinnedImportId", sourceUniversalImportId);
             meta.putIfAbsent("fellBackToLatest", true);
             meta.putIfAbsent("warnings", List.of("El dataset original de este dashboard ya no está disponible. Se muestra el último dataset subido."));
@@ -198,8 +213,10 @@ public class UniversalViewService {
     }
 
     public byte[] problemsCsv(Long companyId, UniversalViewRequest request, int limit, Long importId) {
+        UniversalSummaryDto summary = decodeSummary(resolveImport(companyId, importId));
         if (request == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Config vacío.");
-        String type = normType(request.getType());
+        UniversalViewRequest normalizedRequest = canonicalizeRequest(request, summary);
+        String type = normType(normalizedRequest.getType());
         if (type == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Tipo de dashboard inválido.");
         if (limit < 1) limit = 1;
         if (limit > 200) limit = 200;
@@ -224,8 +241,8 @@ public class UniversalViewService {
                 .build()
                 .parse(reader);
 
-            List<UniversalFilter> filters = normalizeFilters(parser, request);
-            ProblemColumns pc = problemColumns(type, request);
+            List<UniversalFilter> filters = normalizeFilters(parser, normalizedRequest);
+            ProblemColumns pc = problemColumns(type, normalizedRequest);
             if (pc == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Tipo no soportado.");
             if (pc.dateCol != null) requireMapped(parser, pc.dateCol);
             if (pc.valueCol != null) requireMapped(parser, pc.valueCol);
@@ -265,7 +282,9 @@ public class UniversalViewService {
 
     public UniversalEvidenceDto evidence(Long companyId, UniversalViewRequest request, String focusLabel, int limit, Long importId) {
         if (request == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Config vacío.");
-        String type = normType(request.getType());
+        UniversalSummaryDto summary = decodeSummary(resolveImport(companyId, importId));
+        UniversalViewRequest normalizedRequest = canonicalizeRequest(request, summary);
+        String type = normType(normalizedRequest.getType());
         if (type == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Tipo de dashboard inválido.");
         if (limit < 10) limit = 10;
         if (limit > 200) limit = 200;
@@ -300,9 +319,9 @@ public class UniversalViewService {
 
             List<String> headers = new ArrayList<>(parser.getHeaderMap().keySet());
             if (headers.isEmpty()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Dataset sin cabeceras.");
-            List<UniversalFilter> filters = normalizeFilters(parser, request);
+            List<UniversalFilter> filters = normalizeFilters(parser, normalizedRequest);
 
-            EvidenceSpec spec = evidenceSpec(type, request, focusLabel);
+            EvidenceSpec spec = evidenceSpec(type, normalizedRequest, focusLabel);
             if (spec == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Evidencia no soportada para este tipo.");
             for (String h : spec.requiredColumns) requireMapped(parser, h);
 
@@ -335,7 +354,7 @@ public class UniversalViewService {
 
             Map<String, Object> meta = new LinkedHashMap<>();
             meta.put("type", type);
-            meta.put("request", requestLineage(request));
+            meta.put("request", requestLineage(normalizedRequest));
             meta.put("filters", filtersToLineage(filters));
             meta.put("focusLabel", focusLabel == null ? "" : focusLabel);
             meta.put("rowsScanned", scanned);
@@ -379,12 +398,15 @@ public class UniversalViewService {
     private EvidenceSpec evidenceSpec(String type, UniversalViewRequest req, String focusLabel) {
         String t = normType(type);
         if (t == null) return null;
+        boolean requireValue = modeNeedsValueColumn(req);
 
         if ("TIME_SERIES".equals(t)) {
             String dateCol = clean(req.getDateColumn());
             String valCol = clean(req.getValueColumn());
-            if (isBlank(dateCol) || isBlank(valCol)) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Selecciona columna fecha y valor.");
+            if (isBlank(dateCol) || (requireValue && isBlank(valCol))) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, requireValue
+                    ? "Selecciona columna fecha y valor."
+                    : "Selecciona columna fecha.");
             }
             if (isBlank(focusLabel)) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Falta focusLabel (YYYY-MM).");
@@ -392,36 +414,44 @@ public class UniversalViewService {
             YearMonth ym = parseYearMonth(String.valueOf(focusLabel).trim());
             if (ym == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "focusLabel inválido. Usa YYYY-MM.");
             String ymKey = ym.toString();
+            List<String> requiredColumns = requireValue ? List.of(dateCol, valCol) : List.of(dateCol);
+            List<String> importantColumns = requireValue ? List.of(dateCol, valCol) : List.of(dateCol);
             return new EvidenceSpec(
-                List.of(dateCol, valCol),
-                List.of(dateCol, valCol),
-                true,
-                valCol,
+                requiredColumns,
+                importantColumns,
+                requireValue,
+                requireValue ? valCol : null,
                 (r) -> {
                     YearMonth k = parseYearMonth(clean(get(r, dateCol)));
                     return k != null && ymKey.equals(k.toString());
                 },
-                Map.of("dateColumn", dateCol, "valueColumn", valCol, "bucket", ymKey)
+                requireValue
+                    ? Map.of("dateColumn", dateCol, "valueColumn", valCol, "bucket", ymKey)
+                    : Map.of("dateColumn", dateCol, "bucket", ymKey)
             );
         }
 
         if ("CATEGORY_BAR".equals(t)) {
             String catCol = clean(req.getCategoryColumn());
             String valCol = clean(req.getValueColumn());
-            if (isBlank(catCol) || isBlank(valCol)) {
+            if (isBlank(catCol) || (requireValue && isBlank(valCol))) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Selecciona columna categoría y valor.");
             }
             if (isBlank(focusLabel)) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Falta focusLabel (categoría).");
             }
             String key = String.valueOf(focusLabel).trim();
+            List<String> requiredColumns = requireValue ? List.of(catCol, valCol) : List.of(catCol);
+            List<String> importantColumns = requireValue ? List.of(catCol, valCol) : List.of(catCol);
             return new EvidenceSpec(
-                List.of(catCol, valCol),
-                List.of(catCol, valCol),
-                true,
-                valCol,
+                requiredColumns,
+                importantColumns,
+                requireValue,
+                requireValue ? valCol : null,
                 (r) -> Objects.equals(clean(get(r, catCol)), key),
-                Map.of("categoryColumn", catCol, "valueColumn", valCol, "category", key)
+                requireValue
+                    ? Map.of("categoryColumn", catCol, "valueColumn", valCol, "category", key)
+                    : Map.of("categoryColumn", catCol, "category", key)
             );
         }
 
@@ -482,7 +512,7 @@ public class UniversalViewService {
             String xCol = clean(req.getXColumn());
             String yCol = clean(req.getYColumn());
             String valCol = clean(req.getValueColumn());
-            if (isBlank(xCol) || isBlank(yCol) || isBlank(valCol)) {
+            if (isBlank(xCol) || isBlank(yCol) || (requireValue && isBlank(valCol))) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Selecciona columnas X, Y y Valor.");
             }
             if (isBlank(focusLabel)) {
@@ -494,13 +524,17 @@ public class UniversalViewService {
             String xLabel = raw.substring(0, sep).trim();
             String yLabel = raw.substring(sep + 2).trim();
             if (isBlank(xLabel) || isBlank(yLabel)) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "focusLabel inválido para heatmap.");
+            List<String> requiredColumns = requireValue ? List.of(xCol, yCol, valCol) : List.of(xCol, yCol);
+            List<String> importantColumns = requireValue ? List.of(xCol, yCol, valCol) : List.of(xCol, yCol);
             return new EvidenceSpec(
-                List.of(xCol, yCol, valCol),
-                List.of(xCol, yCol, valCol),
-                true,
-                valCol,
+                requiredColumns,
+                importantColumns,
+                requireValue,
+                requireValue ? valCol : null,
                 (r) -> Objects.equals(clean(get(r, xCol)), xLabel) && Objects.equals(clean(get(r, yCol)), yLabel),
-                Map.of("xColumn", xCol, "yColumn", yCol, "valueColumn", valCol, "xLabel", xLabel, "yLabel", yLabel)
+                requireValue
+                    ? Map.of("xColumn", xCol, "yColumn", yCol, "valueColumn", valCol, "xLabel", xLabel, "yLabel", yLabel)
+                    : Map.of("xColumn", xCol, "yColumn", yCol, "xLabel", xLabel, "yLabel", yLabel)
             );
         }
 
@@ -508,7 +542,7 @@ public class UniversalViewService {
             String dateCol = clean(req.getDateColumn());
             String catCol = clean(req.getCategoryColumn());
             String valCol = clean(req.getValueColumn());
-            if (isBlank(dateCol) || isBlank(catCol) || isBlank(valCol)) {
+            if (isBlank(dateCol) || isBlank(catCol) || (requireValue && isBlank(valCol))) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Selecciona columna fecha, categoría y valor.");
             }
             if (isBlank(focusLabel)) {
@@ -524,16 +558,20 @@ public class UniversalViewService {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "focusLabel inválido para pivote. Usa 'categoria||YYYY-MM'.");
             }
             String ymKey = ym.toString();
+            List<String> requiredColumns = requireValue ? List.of(dateCol, catCol, valCol) : List.of(dateCol, catCol);
+            List<String> importantColumns = requireValue ? List.of(dateCol, catCol, valCol) : List.of(dateCol, catCol);
             return new EvidenceSpec(
-                List.of(dateCol, catCol, valCol),
-                List.of(dateCol, catCol, valCol),
-                true,
-                valCol,
+                requiredColumns,
+                importantColumns,
+                requireValue,
+                requireValue ? valCol : null,
                 (r) -> {
                     YearMonth k = parseYearMonth(clean(get(r, dateCol)));
                     return k != null && ymKey.equals(k.toString()) && Objects.equals(clean(get(r, catCol)), cat);
                 },
-                Map.of("dateColumn", dateCol, "categoryColumn", catCol, "valueColumn", valCol, "category", cat, "bucket", ymKey)
+                requireValue
+                    ? Map.of("dateColumn", dateCol, "categoryColumn", catCol, "valueColumn", valCol, "category", cat, "bucket", ymKey)
+                    : Map.of("dateColumn", dateCol, "categoryColumn", catCol, "category", cat, "bucket", ymKey)
             );
         }
 
@@ -574,13 +612,14 @@ public class UniversalViewService {
     private record ProblemColumns(String dateCol, String valueCol, String xCol, String yCol) {}
 
     private static ProblemColumns problemColumns(String type, UniversalViewRequest req) {
+        String valueColumn = modeNeedsValueColumn(req) ? clean(req.getValueColumn()) : null;
         return switch (type) {
-            case "TIME_SERIES" -> new ProblemColumns(clean(req.getDateColumn()), clean(req.getValueColumn()), null, null);
-            case "CATEGORY_BAR" -> new ProblemColumns(null, clean(req.getValueColumn()), null, null);
-            case "KPI_CARDS" -> new ProblemColumns(null, clean(req.getValueColumn()), null, null);
-            case "PIVOT_MONTHLY" -> new ProblemColumns(clean(req.getDateColumn()), clean(req.getValueColumn()), null, null);
+            case "TIME_SERIES" -> new ProblemColumns(clean(req.getDateColumn()), valueColumn, null, null);
+            case "CATEGORY_BAR" -> new ProblemColumns(null, valueColumn, null, null);
+            case "KPI_CARDS" -> new ProblemColumns(null, valueColumn, null, null);
+            case "PIVOT_MONTHLY" -> new ProblemColumns(clean(req.getDateColumn()), valueColumn, null, null);
             case "SCATTER" -> new ProblemColumns(null, null, clean(req.getXColumn()), clean(req.getYColumn()));
-            case "HEATMAP" -> new ProblemColumns(null, clean(req.getValueColumn()), clean(req.getXColumn()), clean(req.getYColumn()));
+            case "HEATMAP" -> new ProblemColumns(null, valueColumn, clean(req.getXColumn()), clean(req.getYColumn()));
             default -> null;
         };
     }
@@ -623,10 +662,474 @@ public class UniversalViewService {
         return v;
     }
 
+    private record SemanticContext(
+        Map<String, UniversalColumnDto> columnsByName,
+        Map<String, UniversalDetectedEntityDto> entitiesByType,
+        String rowGranularity,
+        String entryKeyColumn,
+        String documentKeyColumn,
+        String invoiceKeyColumn,
+        String partyKeyColumn,
+        String debitColumn,
+        String creditColumn,
+        String signedAmountColumn
+    ) {
+        UniversalColumnDto column(String name) {
+            if (name == null || columnsByName == null) return null;
+            return columnsByName.get(name.trim().toLowerCase(Locale.ROOT));
+        }
+    }
+
+    private record AggregationSelection(
+        String mode,
+        String legacyAggregation,
+        String measureColumn,
+        String secondaryMeasureColumn,
+        String distinctKeyColumn,
+        String dedupKeyColumn,
+        String unitLabel,
+        List<String> warnings
+    ) {}
+
+    private static final class AggregateState {
+        int rowsMatched;
+        int numericCount;
+        int missingKeyCount;
+        int invalidNumberCount;
+        int dedupConflictCount;
+        BigDecimal sum = BigDecimal.ZERO;
+        BigDecimal min;
+        BigDecimal max;
+        final Set<String> distinctKeys = new HashSet<>();
+        final Map<String, BigDecimal> dedupValues = new LinkedHashMap<>();
+    }
+
+    private UniversalImport resolveImport(Long companyId, Long importId) {
+        if (companyId == null || universalImportFileService == null) return null;
+        try {
+            if (importId == null) {
+                return universalImportFileService.latest(companyId).orElse(null);
+            }
+            return universalImportFileService.find(companyId, importId)
+                .orElseGet(() -> universalImportFileService.latest(companyId).orElse(null));
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    UniversalViewRequest canonicalizeRequest(UniversalViewRequest request, UniversalSummaryDto summary) {
+        return canonicalizeRequest(request, semanticContext(summary));
+    }
+
+    private static UniversalViewRequest canonicalizeRequest(UniversalViewRequest request, SemanticContext semantic) {
+        UniversalViewRequest out = copyRequest(request);
+        String type = normType(out.getType());
+        if (type == null) return out;
+        out.setType(type);
+
+        AggregationSelection selection = resolveAggregationSelection(type, out, semantic);
+        out.setAggregationMode(selection.mode());
+        out.setAggregation(selection.legacyAggregation());
+        if (!isBlank(selection.measureColumn())) out.setValueColumn(selection.measureColumn());
+        return out;
+    }
+
+    private static UniversalViewRequest copyRequest(UniversalViewRequest request) {
+        UniversalViewRequest out = new UniversalViewRequest();
+        if (request == null) return out;
+        out.setName(clean(request.getName()));
+        out.setType(clean(request.getType()));
+        out.setDateColumn(clean(request.getDateColumn()));
+        out.setValueColumn(clean(request.getValueColumn()));
+        out.setCategoryColumn(clean(request.getCategoryColumn()));
+        out.setXColumn(clean(request.getXColumn()));
+        out.setYColumn(clean(request.getYColumn()));
+        out.setAggregation(clean(request.getAggregation()));
+        out.setAggregationMode(clean(request.getAggregationMode()));
+        out.setFilterColumn(clean(request.getFilterColumn()));
+        out.setFilterValue(clean(request.getFilterValue()));
+        if (request.getFilters() != null) {
+            List<UniversalFilter> filters = new ArrayList<>();
+            for (UniversalFilter filter : request.getFilters()) {
+                if (filter == null) continue;
+                UniversalFilter copy = new UniversalFilter();
+                copy.setColumn(clean(filter.getColumn()));
+                copy.setOp(clean(filter.getOp()));
+                copy.setValue(clean(filter.getValue()));
+                filters.add(copy);
+            }
+            out.setFilters(filters);
+        }
+        out.setTopN(request.getTopN());
+        out.setMaxPoints(request.getMaxPoints());
+        return out;
+    }
+
+    private UniversalSummaryDto decodeSummary(UniversalImport imp) {
+        if (imp == null || isBlank(imp.getSummaryJson())) return null;
+        try {
+            return objectMapper.readValue(imp.getSummaryJson(), UniversalSummaryDto.class);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private static SemanticContext semanticContext(UniversalSummaryDto summary) {
+        if (summary == null) {
+            return new SemanticContext(Map.of(), Map.of(), null, null, null, null, null, null, null, null);
+        }
+
+        Map<String, UniversalColumnDto> columnsByName = new HashMap<>();
+        if (summary.columns() != null) {
+            for (UniversalColumnDto column : summary.columns()) {
+                String name = clean(column == null ? null : column.name());
+                if (name != null) columnsByName.put(name.toLowerCase(Locale.ROOT), column);
+            }
+        }
+
+        Map<String, UniversalDetectedEntityDto> entitiesByType = new HashMap<>();
+        if (summary.detectedEntities() != null) {
+            for (UniversalDetectedEntityDto entity : summary.detectedEntities()) {
+                String type = upper(entity == null ? null : entity.entityType());
+                if (type != null) entitiesByType.put(type, entity);
+            }
+        }
+
+        return new SemanticContext(
+            columnsByName,
+            entitiesByType,
+            clean(summary.rowGranularity()),
+            entityKey(summary, "ENTRY"),
+            entityKey(summary, "DOCUMENT"),
+            entityKey(summary, "INVOICE"),
+            entityKey(summary, "PARTY"),
+            firstSemanticColumn(summary, "DEBIT_AMOUNT"),
+            firstSemanticColumn(summary, "CREDIT_AMOUNT"),
+            firstSemanticColumn(summary, "SIGNED_AMOUNT")
+        );
+    }
+
+    private static String entityKey(UniversalSummaryDto summary, String entityType) {
+        if (summary == null || summary.detectedEntities() == null) return null;
+        String wanted = upper(entityType);
+        for (UniversalDetectedEntityDto entity : summary.detectedEntities()) {
+            if (entity == null) continue;
+            if (Objects.equals(wanted, upper(entity.entityType()))) return clean(entity.keyColumn());
+        }
+        return null;
+    }
+
+    private static String firstSemanticColumn(UniversalSummaryDto summary, String... semanticTypes) {
+        if (summary == null || summary.columns() == null || semanticTypes == null) return null;
+        for (String semanticType : semanticTypes) {
+            String wanted = upper(semanticType);
+            for (UniversalColumnDto column : summary.columns()) {
+                if (column == null) continue;
+                if (Objects.equals(wanted, upper(column.semanticType()))) return clean(column.name());
+            }
+        }
+        return null;
+    }
+
+    private static String firstNonBlank(String... values) {
+        if (values == null) return null;
+        for (String value : values) {
+            String cleaned = clean(value);
+            if (cleaned != null) return cleaned;
+        }
+        return null;
+    }
+
+    private static String aggregationUnit(String mode) {
+        return switch (upper(mode)) {
+            case "ROW_COUNT" -> "filas";
+            case "DISTINCT_ENTRY_COUNT" -> "asientos";
+            case "DISTINCT_DOCUMENT_COUNT" -> "documentos";
+            case "DISTINCT_INVOICE_COUNT" -> "facturas";
+            case "DISTINCT_PARTY_COUNT" -> "terceros";
+            case "SUM_DEBIT" -> "debe";
+            case "SUM_CREDIT" -> "haber";
+            case "NET_BALANCE" -> "saldo";
+            case "AVG_VALUE" -> "media";
+            default -> "importe";
+        };
+    }
+
+    private static String normAggregationMode(String raw) {
+        String value = upper(raw);
+        if (value == null) return null;
+        return switch (value) {
+            case "ROW_COUNT", "DISTINCT_ENTRY_COUNT", "DISTINCT_DOCUMENT_COUNT", "DISTINCT_INVOICE_COUNT", "DISTINCT_PARTY_COUNT",
+                "SUM_DEBIT", "SUM_CREDIT", "NET_BALANCE", "SUM_AMOUNT", "AVG_VALUE" -> value;
+            case "SUM_VALUE" -> "SUM_AMOUNT";
+            default -> null;
+        };
+    }
+
+    private static boolean supportsDistinctValue(UniversalColumnDto column) {
+        if (column == null || column.validAggregations() == null) return false;
+        for (String aggregation : column.validAggregations()) {
+            if (Objects.equals("SUM_DISTINCT_VALUE", upper(aggregation))) return true;
+        }
+        return false;
+    }
+
+    private static boolean isIssueDateColumn(SemanticContext ctx, String columnName) {
+        UniversalColumnDto column = ctx == null ? null : ctx.column(columnName);
+        if (column == null) return false;
+        if (column.validAggregations() != null) {
+            for (String aggregation : column.validAggregations()) {
+                if (Objects.equals("DISTINCT_INVOICE_COUNT", upper(aggregation))) return true;
+            }
+        }
+        String normalized = clean(columnName);
+        return normalized != null && normalized.toLowerCase(Locale.ROOT).contains("emision");
+    }
+
+    private static BigDecimal parseDecimalOrZero(String raw, AggregateState state) {
+        String cleaned = clean(raw);
+        if (cleaned == null) return BigDecimal.ZERO;
+        BigDecimal parsed = parseDecimal(cleaned);
+        if (parsed == null) {
+            if (state != null) state.invalidNumberCount++;
+            return BigDecimal.ZERO;
+        }
+        return parsed;
+    }
+
+    private static void updateMinMax(AggregateState state, BigDecimal value) {
+        if (state == null || value == null) return;
+        if (state.min == null || value.compareTo(state.min) < 0) state.min = value;
+        if (state.max == null || value.compareTo(state.max) > 0) state.max = value;
+    }
+
+    private static String upper(String value) {
+        if (value == null) return null;
+        String cleaned = value.trim();
+        return cleaned.isBlank() ? null : cleaned.toUpperCase(Locale.ROOT);
+    }
+
+    private static AggregationSelection resolveAggregationSelection(String chartType, UniversalViewRequest req, SemanticContext ctx) {
+        String explicitMode = normAggregationMode(req == null ? null : req.getAggregationMode());
+        boolean strict = explicitMode != null;
+        String mode = explicitMode;
+        List<String> warnings = new ArrayList<>();
+
+        if ("SCATTER".equals(chartType)) {
+            if (explicitMode != null) {
+                warnings.add("El modo " + explicitMode + " no aplica a scatter: este gráfico sigue mostrando puntos fila a fila.");
+            }
+            return new AggregationSelection("ROW_COUNT", "sum", null, null, null, null, "puntos", warnings);
+        }
+
+        if (mode == null) {
+            String legacy = normAgg(req == null ? null : req.getAggregation());
+            String rawValueColumn = clean(req == null ? null : req.getValueColumn());
+            UniversalColumnDto valueProfile = ctx == null ? null : ctx.column(rawValueColumn);
+            String semanticType = upper(valueProfile == null ? null : valueProfile.semanticType());
+            if ("avg".equals(legacy)) {
+                mode = "AVG_VALUE";
+            } else if ("DEBIT_AMOUNT".equals(semanticType)) {
+                mode = "SUM_DEBIT";
+            } else if ("CREDIT_AMOUNT".equals(semanticType)) {
+                mode = "SUM_CREDIT";
+            } else if ("SIGNED_AMOUNT".equals(semanticType)) {
+                mode = "NET_BALANCE";
+            } else if (rawValueColumn != null) {
+                mode = "SUM_AMOUNT";
+            } else if (!isBlank(req == null ? null : req.getDateColumn()) && ctx != null && ctx.invoiceKeyColumn() != null && isIssueDateColumn(ctx, req.getDateColumn())) {
+                mode = "DISTINCT_INVOICE_COUNT";
+            } else {
+                mode = "ROW_COUNT";
+            }
+        }
+
+        String measureColumn = clean(req == null ? null : req.getValueColumn());
+        String secondaryMeasureColumn = null;
+        String distinctKeyColumn = null;
+        String dedupKeyColumn = null;
+        String unitLabel = aggregationUnit(mode);
+
+        switch (mode) {
+            case "ROW_COUNT" -> {
+                return new AggregationSelection(mode, "sum", null, null, null, null, unitLabel, warnings);
+            }
+            case "DISTINCT_ENTRY_COUNT" -> distinctKeyColumn = ctx == null ? null : ctx.entryKeyColumn();
+            case "DISTINCT_DOCUMENT_COUNT" -> distinctKeyColumn = ctx == null ? null : ctx.documentKeyColumn();
+            case "DISTINCT_INVOICE_COUNT" -> distinctKeyColumn = ctx == null ? null : ctx.invoiceKeyColumn();
+            case "DISTINCT_PARTY_COUNT" -> distinctKeyColumn = ctx == null ? null : ctx.partyKeyColumn();
+            case "SUM_DEBIT" -> {
+                measureColumn = firstNonBlank(ctx == null ? null : ctx.debitColumn(), measureColumn);
+                if (isBlank(measureColumn)) {
+                    if (strict) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No encuentro una columna semántica de debe para aplicar SUM_DEBIT.");
+                    measureColumn = clean(req == null ? null : req.getValueColumn());
+                }
+            }
+            case "SUM_CREDIT" -> {
+                measureColumn = firstNonBlank(ctx == null ? null : ctx.creditColumn(), measureColumn);
+                if (isBlank(measureColumn)) {
+                    if (strict) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No encuentro una columna semántica de haber para aplicar SUM_CREDIT.");
+                    measureColumn = clean(req == null ? null : req.getValueColumn());
+                }
+            }
+            case "NET_BALANCE" -> {
+                UniversalColumnDto selected = ctx == null ? null : ctx.column(measureColumn);
+                if ("SIGNED_AMOUNT".equals(upper(selected == null ? null : selected.semanticType()))) {
+                    secondaryMeasureColumn = null;
+                } else if (!isBlank(ctx == null ? null : ctx.signedAmountColumn())) {
+                    measureColumn = ctx.signedAmountColumn();
+                } else if (!isBlank(ctx == null ? null : ctx.debitColumn()) || !isBlank(ctx == null ? null : ctx.creditColumn())) {
+                    measureColumn = firstNonBlank(ctx == null ? null : ctx.debitColumn(), measureColumn);
+                    secondaryMeasureColumn = ctx == null ? null : ctx.creditColumn();
+                }
+                if (isBlank(measureColumn)) {
+                    if (strict) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No encuentro columnas de saldo/debe/haber para aplicar NET_BALANCE.");
+                    measureColumn = clean(req == null ? null : req.getValueColumn());
+                }
+            }
+            case "AVG_VALUE", "SUM_AMOUNT" -> {
+                measureColumn = firstNonBlank(measureColumn, ctx == null ? null : ctx.signedAmountColumn(), ctx == null ? null : ctx.debitColumn(), ctx == null ? null : ctx.creditColumn());
+                if (isBlank(measureColumn)) {
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Selecciona una columna de valor para calcular importe o media.");
+                }
+                UniversalColumnDto valueProfile = ctx == null ? null : ctx.column(measureColumn);
+                if ("SUM_AMOUNT".equals(mode) && supportsDistinctValue(valueProfile)) {
+                    dedupKeyColumn = firstNonBlank(ctx == null ? null : ctx.invoiceKeyColumn(), ctx == null ? null : ctx.documentKeyColumn(), ctx == null ? null : ctx.entryKeyColumn());
+                    if (!isBlank(dedupKeyColumn)) {
+                        warnings.add("El importe se deduplica por " + dedupKeyColumn + " para evitar doble conteo por granularidad.");
+                    }
+                }
+            }
+            default -> {
+                warnings.add("Modo no reconocido. Se usa conteo de filas.");
+                return new AggregationSelection("ROW_COUNT", "sum", null, null, null, null, aggregationUnit("ROW_COUNT"), warnings);
+            }
+        }
+
+        if (mode.startsWith("DISTINCT_") && isBlank(distinctKeyColumn)) {
+            if (strict) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No encuentro la clave necesaria para aplicar " + mode + ".");
+            }
+            warnings.add("No encuentro clave semántica para " + mode + ". Se usa conteo de filas.");
+            return new AggregationSelection("ROW_COUNT", "sum", null, null, null, null, aggregationUnit("ROW_COUNT"), warnings);
+        }
+
+        String legacyAggregation = "AVG_VALUE".equals(mode) ? "avg" : "sum";
+        return new AggregationSelection(mode, legacyAggregation, measureColumn, secondaryMeasureColumn, distinctKeyColumn, dedupKeyColumn, unitLabel, warnings);
+    }
+
+    private static boolean accumulateState(CSVRecord record, AggregationSelection selection, AggregateState state) {
+        if (record == null || selection == null || state == null) return false;
+        String mode = upper(selection.mode());
+
+        switch (mode) {
+            case "ROW_COUNT" -> {
+                state.rowsMatched++;
+                return true;
+            }
+            case "DISTINCT_ENTRY_COUNT", "DISTINCT_DOCUMENT_COUNT", "DISTINCT_INVOICE_COUNT", "DISTINCT_PARTY_COUNT" -> {
+                String key = clean(get(record, selection.distinctKeyColumn()));
+                if (key == null) {
+                    state.missingKeyCount++;
+                    return false;
+                }
+                state.rowsMatched++;
+                state.distinctKeys.add(key);
+                return true;
+            }
+            case "SUM_DEBIT", "SUM_CREDIT" -> {
+                BigDecimal value = parseDecimalOrZero(get(record, selection.measureColumn()), state);
+                state.rowsMatched++;
+                state.numericCount++;
+                state.sum = state.sum.add(value);
+                updateMinMax(state, value);
+                return true;
+            }
+            case "NET_BALANCE" -> {
+                BigDecimal value;
+                if (!isBlank(selection.secondaryMeasureColumn())) {
+                    BigDecimal left = parseDecimalOrZero(get(record, selection.measureColumn()), state);
+                    BigDecimal right = parseDecimalOrZero(get(record, selection.secondaryMeasureColumn()), state);
+                    value = left.subtract(right);
+                } else {
+                    String raw = clean(get(record, selection.measureColumn()));
+                    BigDecimal parsed = parseDecimal(raw);
+                    if (parsed == null) {
+                        if (raw != null) state.invalidNumberCount++;
+                        return false;
+                    }
+                    value = parsed;
+                }
+                state.rowsMatched++;
+                state.numericCount++;
+                state.sum = state.sum.add(value);
+                updateMinMax(state, value);
+                return true;
+            }
+            case "AVG_VALUE", "SUM_AMOUNT" -> {
+                String raw = clean(get(record, selection.measureColumn()));
+                BigDecimal parsed = parseDecimal(raw);
+                if (parsed == null) {
+                    if (raw != null) state.invalidNumberCount++;
+                    return false;
+                }
+                state.rowsMatched++;
+                state.numericCount++;
+                updateMinMax(state, parsed);
+                if (!isBlank(selection.dedupKeyColumn())) {
+                    String dedupKey = clean(get(record, selection.dedupKeyColumn()));
+                    if (dedupKey == null) {
+                        state.missingKeyCount++;
+                        return false;
+                    }
+                    BigDecimal existing = state.dedupValues.putIfAbsent(dedupKey, parsed);
+                    if (existing != null && existing.compareTo(parsed) != 0) state.dedupConflictCount++;
+                } else {
+                    state.sum = state.sum.add(parsed);
+                }
+                return true;
+            }
+            default -> {
+                state.rowsMatched++;
+                return true;
+            }
+        }
+    }
+
+    private static BigDecimal computeStateValue(AggregationSelection selection, AggregateState state) {
+        if (selection == null || state == null) return BigDecimal.ZERO;
+        String mode = upper(selection.mode());
+        return switch (mode) {
+            case "ROW_COUNT" -> BigDecimal.valueOf(state.rowsMatched);
+            case "DISTINCT_ENTRY_COUNT", "DISTINCT_DOCUMENT_COUNT", "DISTINCT_INVOICE_COUNT", "DISTINCT_PARTY_COUNT" -> BigDecimal.valueOf(state.distinctKeys.size());
+            case "AVG_VALUE" -> state.numericCount <= 0
+                ? BigDecimal.ZERO
+                : state.sum.divide(BigDecimal.valueOf(Math.max(1, state.numericCount)), 6, RoundingMode.HALF_UP);
+            case "SUM_AMOUNT" -> {
+                if (state.dedupValues.isEmpty()) yield state.sum;
+                BigDecimal total = BigDecimal.ZERO;
+                for (BigDecimal value : state.dedupValues.values()) total = total.add(value == null ? BigDecimal.ZERO : value);
+                yield total;
+            }
+            default -> state.sum;
+        };
+    }
+
+    private static boolean modeNeedsValueColumn(UniversalViewRequest req) {
+        String mode = normAggregationMode(req == null ? null : req.getAggregationMode());
+        return mode == null || "SUM_AMOUNT".equals(mode) || "AVG_VALUE".equals(mode);
+    }
+
     // package-private for tests
     UniversalChartDataDto previewBytes(byte[] bytes, UniversalViewRequest request) {
+        return previewBytes(bytes, request, null);
+    }
+
+    // package-private for tests
+    UniversalChartDataDto previewBytes(byte[] bytes, UniversalViewRequest request, UniversalSummaryDto summary) {
+        UniversalViewRequest normalizedRequest = canonicalizeRequest(request, summary);
         if (request == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Config vacío.");
-        String type = normType(request.getType());
+        String type = normType(normalizedRequest.getType());
         if (type == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Tipo de dashboard inválido.");
         if (bytes == null || bytes.length == 0) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No hay dataset Universal.");
 
@@ -649,13 +1152,13 @@ public class UniversalViewService {
 
             List<String> headers = new ArrayList<>(parser.getHeaderMap().keySet());
             if (headers.isEmpty()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Dataset sin cabeceras.");
-
-            if ("TIME_SERIES".equals(type)) return buildTimeSeries(parser, headers, request);
-            if ("CATEGORY_BAR".equals(type)) return buildCategoryBar(parser, headers, request);
-            if ("KPI_CARDS".equals(type)) return buildKpiCards(parser, headers, request);
-            if ("SCATTER".equals(type)) return buildScatter(parser, headers, request);
-            if ("HEATMAP".equals(type)) return buildHeatmap(parser, headers, request);
-            if ("PIVOT_MONTHLY".equals(type)) return buildPivotMonthly(parser, headers, request);
+            SemanticContext semantic = semanticContext(summary);
+            if ("TIME_SERIES".equals(type)) return buildTimeSeries(parser, headers, normalizedRequest, semantic);
+            if ("CATEGORY_BAR".equals(type)) return buildCategoryBar(parser, headers, normalizedRequest, semantic);
+            if ("KPI_CARDS".equals(type)) return buildKpiCards(parser, headers, normalizedRequest, semantic);
+            if ("SCATTER".equals(type)) return buildScatter(parser, headers, normalizedRequest, semantic);
+            if ("HEATMAP".equals(type)) return buildHeatmap(parser, headers, normalizedRequest, semantic);
+            if ("PIVOT_MONTHLY".equals(type)) return buildPivotMonthly(parser, headers, normalizedRequest, semantic);
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Tipo no soportado.");
         } catch (ResponseStatusException ex) {
             throw ex;
@@ -1154,6 +1657,463 @@ public class UniversalViewService {
         return new UniversalChartDataDto("PIVOT_MONTHLY", months, series, meta);
     }
 
+    private UniversalChartDataDto buildTimeSeries(CSVParser parser, List<String> headers, UniversalViewRequest req, SemanticContext semantic) {
+        String dateCol = clean(req.getDateColumn());
+        if (isBlank(dateCol)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Selecciona una columna fecha.");
+        }
+        requireMapped(parser, dateCol);
+        AggregationSelection selection = resolveAggregationSelection("TIME_SERIES", req, semantic);
+        if (!isBlank(selection.measureColumn())) requireMapped(parser, selection.measureColumn());
+        if (!isBlank(selection.secondaryMeasureColumn())) requireMapped(parser, selection.secondaryMeasureColumn());
+        if (!isBlank(selection.distinctKeyColumn())) requireMapped(parser, selection.distinctKeyColumn());
+        if (!isBlank(selection.dedupKeyColumn())) requireMapped(parser, selection.dedupKeyColumn());
+
+        List<UniversalFilter> filters = normalizeFilters(parser, req);
+        Map<String, AggregateState> buckets = new LinkedHashMap<>();
+        int rows = 0;
+        int used = 0;
+        int badDates = 0;
+        List<String> badDateSamples = new ArrayList<>();
+        for (CSVRecord record : parser) {
+            rows++;
+            if (rows > MAX_ROWS) break;
+            if (!matchesFilters(record, filters)) continue;
+            String dateRaw = clean(get(record, dateCol));
+            if (dateRaw == null) continue;
+            YearMonth ym = parseYearMonth(dateRaw);
+            if (ym == null) {
+                badDates++;
+                if (badDateSamples.size() < 3) badDateSamples.add(dateRaw);
+                continue;
+            }
+
+            AggregateState state = buckets.computeIfAbsent(ym.toString(), key -> new AggregateState());
+            if (accumulateState(record, selection, state)) used++;
+        }
+
+        if (used == 0) {
+            throw new ResponseStatusException(
+                HttpStatus.BAD_REQUEST,
+                explainNoRows("serie temporal", dateCol, selection.measureColumn(), badDates, badDateSamples, 0, List.of())
+            );
+        }
+
+        List<String> labels = new ArrayList<>(buckets.keySet());
+        labels.sort(String::compareTo);
+        List<Number> data = new ArrayList<>(labels.size());
+        int badNums = 0;
+        int missingKeys = 0;
+        int dedupConflicts = 0;
+        for (String label : labels) {
+            AggregateState state = buckets.get(label);
+            badNums += state == null ? 0 : state.invalidNumberCount;
+            missingKeys += state == null ? 0 : state.missingKeyCount;
+            dedupConflicts += state == null ? 0 : state.dedupConflictCount;
+            BigDecimal value = computeStateValue(selection, state == null ? new AggregateState() : state);
+            data.add(value.setScale(2, RoundingMode.HALF_UP));
+        }
+
+        Map<String, Object> series = Map.of("name", selection.unitLabel(), "data", data);
+        List<String> warnings = new ArrayList<>(selection.warnings() == null ? List.of() : selection.warnings());
+        addWarnIf(warnings, rows > MAX_ROWS, "Dataset recortado: se analizaron " + rows + " filas (lÃ­mite " + MAX_ROWS + ").");
+        addWarnIf(warnings, badDates > 0, "Fechas no parseables en '" + dateCol + "': " + badDates + sampleSuffix(badDateSamples) + ".");
+        addWarnIf(warnings, badNums > 0, "NÃºmeros no parseables en '" + firstNonBlank(selection.measureColumn(), selection.secondaryMeasureColumn()) + "': " + badNums + ".");
+        addWarnIf(warnings, missingKeys > 0, "Filas sin clave suficiente para " + selection.mode() + ": " + missingKeys + ".");
+        addWarnIf(warnings, dedupConflicts > 0, "Hay " + dedupConflicts + " claves con importes distintos al deduplicar; se conserva la primera observaciÃ³n por clave.");
+
+        Map<String, Object> meta = new LinkedHashMap<>();
+        meta.put("aggregation", selection.legacyAggregation());
+        meta.put("aggregationMode", selection.mode());
+        meta.put("aggregationUnit", selection.unitLabel());
+        meta.put("rowsUsed", used);
+        meta.put("rowsScanned", rows);
+        meta.put("truncated", rows > MAX_ROWS);
+        meta.put("filters", filtersToLineage(filters));
+        meta.put("dateColumn", dateCol);
+        meta.put("valueColumn", selection.measureColumn());
+        meta.put("distinctKeyColumn", selection.distinctKeyColumn());
+        meta.put("dedupKeyColumn", selection.dedupKeyColumn());
+        meta.put("badDateCount", badDates);
+        meta.put("badNumberCount", badNums);
+        meta.put("missingKeyCount", missingKeys);
+        if (rows > 0) {
+            meta.put("badDatePct", roundPct(badDates, rows));
+            meta.put("badNumberPct", roundPct(badNums, rows));
+        }
+        if (!warnings.isEmpty()) meta.put("warnings", warnings);
+        return new UniversalChartDataDto("TIME_SERIES", labels, List.of(series), meta);
+    }
+
+    private UniversalChartDataDto buildCategoryBar(CSVParser parser, List<String> headers, UniversalViewRequest req, SemanticContext semantic) {
+        String catCol = clean(req.getCategoryColumn());
+        if (isBlank(catCol)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Selecciona una columna categoría.");
+        }
+        requireMapped(parser, catCol);
+        AggregationSelection selection = resolveAggregationSelection("CATEGORY_BAR", req, semantic);
+        if (!isBlank(selection.measureColumn())) requireMapped(parser, selection.measureColumn());
+        if (!isBlank(selection.secondaryMeasureColumn())) requireMapped(parser, selection.secondaryMeasureColumn());
+        if (!isBlank(selection.distinctKeyColumn())) requireMapped(parser, selection.distinctKeyColumn());
+        if (!isBlank(selection.dedupKeyColumn())) requireMapped(parser, selection.dedupKeyColumn());
+
+        List<UniversalFilter> filters = normalizeFilters(parser, req);
+        Map<String, AggregateState> buckets = new LinkedHashMap<>();
+        int rows = 0;
+        int used = 0;
+        for (CSVRecord record : parser) {
+            rows++;
+            if (rows > MAX_ROWS) break;
+            if (!matchesFilters(record, filters)) continue;
+            String category = clean(get(record, catCol));
+            if (category == null) continue;
+            AggregateState state = buckets.computeIfAbsent(category, key -> new AggregateState());
+            if (accumulateState(record, selection, state)) used++;
+        }
+
+        if (used == 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No hay filas válidas para graficar (revisa categoría/unidad).");
+        }
+
+        List<Map.Entry<String, AggregateState>> ordered = new ArrayList<>(buckets.entrySet());
+        ordered.sort((a, b) -> computeStateValue(selection, b.getValue()).compareTo(computeStateValue(selection, a.getValue())));
+        if (ordered.size() > 12) ordered = ordered.subList(0, 12);
+
+        List<String> labels = ordered.stream().map(Map.Entry::getKey).toList();
+        List<Number> data = new ArrayList<>(labels.size());
+        int badNums = 0;
+        int missingKeys = 0;
+        int dedupConflicts = 0;
+        for (Map.Entry<String, AggregateState> entry : ordered) {
+            AggregateState state = entry.getValue();
+            badNums += state == null ? 0 : state.invalidNumberCount;
+            missingKeys += state == null ? 0 : state.missingKeyCount;
+            dedupConflicts += state == null ? 0 : state.dedupConflictCount;
+            data.add(computeStateValue(selection, state).setScale(2, RoundingMode.HALF_UP));
+        }
+
+        Map<String, Object> series = Map.of("name", selection.unitLabel(), "data", data);
+        List<String> warnings = new ArrayList<>(selection.warnings() == null ? List.of() : selection.warnings());
+        addWarnIf(warnings, rows > MAX_ROWS, "Dataset recortado: se analizaron " + rows + " filas (lÃ­mite " + MAX_ROWS + ").");
+        addWarnIf(warnings, badNums > 0, "NÃºmeros no parseables en '" + firstNonBlank(selection.measureColumn(), selection.secondaryMeasureColumn()) + "': " + badNums + ".");
+        addWarnIf(warnings, missingKeys > 0, "Filas sin clave suficiente para " + selection.mode() + ": " + missingKeys + ".");
+        addWarnIf(warnings, dedupConflicts > 0, "Hay " + dedupConflicts + " claves con importes distintos al deduplicar; se conserva la primera observaciÃ³n por clave.");
+
+        Map<String, Object> meta = new LinkedHashMap<>();
+        meta.put("aggregation", selection.legacyAggregation());
+        meta.put("aggregationMode", selection.mode());
+        meta.put("aggregationUnit", selection.unitLabel());
+        meta.put("rowsUsed", used);
+        meta.put("rowsScanned", rows);
+        meta.put("truncated", rows > MAX_ROWS);
+        meta.put("filters", filtersToLineage(filters));
+        meta.put("categoryColumn", catCol);
+        meta.put("valueColumn", selection.measureColumn());
+        meta.put("distinctKeyColumn", selection.distinctKeyColumn());
+        meta.put("dedupKeyColumn", selection.dedupKeyColumn());
+        meta.put("badNumberCount", badNums);
+        meta.put("missingKeyCount", missingKeys);
+        if (rows > 0) meta.put("badNumberPct", roundPct(badNums, rows));
+        if (!warnings.isEmpty()) meta.put("warnings", warnings);
+        return new UniversalChartDataDto("CATEGORY_BAR", labels, List.of(series), meta);
+    }
+
+    private UniversalChartDataDto buildKpiCards(CSVParser parser, List<String> headers, UniversalViewRequest req, SemanticContext semantic) {
+        AggregationSelection selection = resolveAggregationSelection("KPI_CARDS", req, semantic);
+        if (!isBlank(selection.measureColumn())) requireMapped(parser, selection.measureColumn());
+        if (!isBlank(selection.secondaryMeasureColumn())) requireMapped(parser, selection.secondaryMeasureColumn());
+        if (!isBlank(selection.distinctKeyColumn())) requireMapped(parser, selection.distinctKeyColumn());
+        if (!isBlank(selection.dedupKeyColumn())) requireMapped(parser, selection.dedupKeyColumn());
+
+        List<UniversalFilter> filters = normalizeFilters(parser, req);
+        AggregateState total = new AggregateState();
+        int rows = 0;
+        int used = 0;
+        for (CSVRecord record : parser) {
+            rows++;
+            if (rows > MAX_ROWS) break;
+            if (!matchesFilters(record, filters)) continue;
+            if (accumulateState(record, selection, total)) used++;
+        }
+
+        if (used == 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No hay filas válidas para calcular KPIs (revisa filtros o unidad).");
+        }
+
+        BigDecimal primary = computeStateValue(selection, total).setScale(2, RoundingMode.HALF_UP);
+        List<String> labels = new ArrayList<>();
+        List<Number> data = new ArrayList<>();
+        labels.add(selection.unitLabel());
+        data.add(primary);
+        labels.add("filas_origen");
+        data.add(used);
+        if (("SUM_AMOUNT".equals(selection.mode()) || "AVG_VALUE".equals(selection.mode())) && total.numericCount > 0) {
+            labels.add("media_fila");
+            data.add(total.sum.divide(BigDecimal.valueOf(Math.max(1, total.numericCount)), 6, RoundingMode.HALF_UP).setScale(2, RoundingMode.HALF_UP));
+        }
+        if (total.min != null) {
+            labels.add("min");
+            data.add(total.min.setScale(2, RoundingMode.HALF_UP));
+        }
+        if (total.max != null) {
+            labels.add("max");
+            data.add(total.max.setScale(2, RoundingMode.HALF_UP));
+        }
+
+        List<String> warnings = new ArrayList<>(selection.warnings() == null ? List.of() : selection.warnings());
+        addWarnIf(warnings, rows > MAX_ROWS, "Dataset recortado: se analizaron " + rows + " filas (lÃ­mite " + MAX_ROWS + ").");
+        addWarnIf(warnings, total.invalidNumberCount > 0, "NÃºmeros no parseables en '" + firstNonBlank(selection.measureColumn(), selection.secondaryMeasureColumn()) + "': " + total.invalidNumberCount + ".");
+        addWarnIf(warnings, total.missingKeyCount > 0, "Filas sin clave suficiente para " + selection.mode() + ": " + total.missingKeyCount + ".");
+        addWarnIf(warnings, total.dedupConflictCount > 0, "Hay " + total.dedupConflictCount + " claves con importes distintos al deduplicar; se conserva la primera observaciÃ³n por clave.");
+
+        Map<String, Object> meta = new LinkedHashMap<>();
+        meta.put("aggregation", selection.legacyAggregation());
+        meta.put("aggregationMode", selection.mode());
+        meta.put("aggregationUnit", selection.unitLabel());
+        meta.put("rowsUsed", used);
+        meta.put("rowsScanned", rows);
+        meta.put("truncated", rows > MAX_ROWS);
+        meta.put("filters", filtersToLineage(filters));
+        meta.put("valueColumn", selection.measureColumn());
+        meta.put("distinctKeyColumn", selection.distinctKeyColumn());
+        meta.put("dedupKeyColumn", selection.dedupKeyColumn());
+        meta.put("badNumberCount", total.invalidNumberCount);
+        meta.put("missingKeyCount", total.missingKeyCount);
+        if (rows > 0) meta.put("badNumberPct", roundPct(total.invalidNumberCount, rows));
+        if (!warnings.isEmpty()) meta.put("warnings", warnings);
+        return new UniversalChartDataDto("KPI_CARDS", labels, List.of(Map.of("name", selection.unitLabel(), "data", data)), meta);
+    }
+
+    private UniversalChartDataDto buildScatter(CSVParser parser, List<String> headers, UniversalViewRequest req, SemanticContext semantic) {
+        UniversalChartDataDto base = buildScatter(parser, headers, req);
+        Map<String, Object> meta = base.meta() == null ? new LinkedHashMap<>() : new LinkedHashMap<>(base.meta());
+        AggregationSelection selection = resolveAggregationSelection("SCATTER", req, semantic);
+        meta.put("aggregation", selection.legacyAggregation());
+        meta.put("aggregationMode", selection.mode());
+        meta.put("aggregationUnit", selection.unitLabel());
+        List<String> warnings = new ArrayList<>();
+        Object existingWarnings = meta.get("warnings");
+        if (existingWarnings instanceof List<?> list) {
+            for (Object warning : list) warnings.add(String.valueOf(warning));
+        }
+        warnings.addAll(selection.warnings() == null ? List.of() : selection.warnings());
+        if (!warnings.isEmpty()) meta.put("warnings", warnings);
+        return new UniversalChartDataDto(base.type(), base.labels(), base.series(), meta);
+    }
+
+    private UniversalChartDataDto buildHeatmap(CSVParser parser, List<String> headers, UniversalViewRequest req, SemanticContext semantic) {
+        String xCol = clean(req.getXColumn());
+        String yCol = clean(req.getYColumn());
+        if (isBlank(xCol) || isBlank(yCol)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Selecciona columnas X e Y.");
+        }
+        requireMapped(parser, xCol);
+        requireMapped(parser, yCol);
+        AggregationSelection selection = resolveAggregationSelection("HEATMAP", req, semantic);
+        if (!isBlank(selection.measureColumn())) requireMapped(parser, selection.measureColumn());
+        if (!isBlank(selection.secondaryMeasureColumn())) requireMapped(parser, selection.secondaryMeasureColumn());
+        if (!isBlank(selection.distinctKeyColumn())) requireMapped(parser, selection.distinctKeyColumn());
+        if (!isBlank(selection.dedupKeyColumn())) requireMapped(parser, selection.dedupKeyColumn());
+
+        List<UniversalFilter> filters = normalizeFilters(parser, req);
+        Map<String, AggregateState> xTotals = new HashMap<>();
+        Map<String, AggregateState> yTotals = new HashMap<>();
+        Map<String, Map<String, AggregateState>> matrix = new HashMap<>();
+
+        int rows = 0;
+        int used = 0;
+        for (CSVRecord record : parser) {
+            rows++;
+            if (rows > MAX_ROWS) break;
+            if (!matchesFilters(record, filters)) continue;
+            String x = clean(get(record, xCol));
+            String y = clean(get(record, yCol));
+            if (x == null || y == null) continue;
+
+            AggregateState cell = matrix.computeIfAbsent(y, key -> new HashMap<>()).computeIfAbsent(x, key -> new AggregateState());
+            AggregateState xState = xTotals.computeIfAbsent(x, key -> new AggregateState());
+            AggregateState yState = yTotals.computeIfAbsent(y, key -> new AggregateState());
+            boolean accepted = accumulateState(record, selection, cell);
+            if (accepted) {
+                accumulateState(record, selection, xState);
+                accumulateState(record, selection, yState);
+                used++;
+            }
+        }
+
+        if (used == 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No hay filas válidas para heatmap (revisa ejes, filtros o unidad).");
+        }
+
+        Map<String, BigDecimal> xValues = new HashMap<>();
+        Map<String, BigDecimal> yValues = new HashMap<>();
+        int badNums = 0;
+        int missingKeys = 0;
+        int dedupConflicts = 0;
+        for (Map.Entry<String, AggregateState> entry : xTotals.entrySet()) {
+            xValues.put(entry.getKey(), computeStateValue(selection, entry.getValue()));
+            badNums += entry.getValue().invalidNumberCount;
+            missingKeys += entry.getValue().missingKeyCount;
+            dedupConflicts += entry.getValue().dedupConflictCount;
+        }
+        for (Map.Entry<String, AggregateState> entry : yTotals.entrySet()) {
+            yValues.put(entry.getKey(), computeStateValue(selection, entry.getValue()));
+        }
+
+        List<String> xLabels = topKeysByValue(xValues, HEATMAP_MAX_X);
+        List<String> yLabels = topKeysByValue(yValues, HEATMAP_MAX_Y);
+        Map<String, Integer> xIndex = new HashMap<>();
+        Map<String, Integer> yIndex = new HashMap<>();
+        for (int i = 0; i < xLabels.size(); i++) xIndex.put(xLabels.get(i), i);
+        for (int i = 0; i < yLabels.size(); i++) yIndex.put(yLabels.get(i), i);
+
+        List<List<Number>> points = new ArrayList<>();
+        for (String y : yLabels) {
+            Map<String, AggregateState> row = matrix.getOrDefault(y, Map.of());
+            for (String x : xLabels) {
+                AggregateState state = row.get(x);
+                if (state == null) continue;
+                BigDecimal value = computeStateValue(selection, state).setScale(2, RoundingMode.HALF_UP);
+                points.add(List.of(xIndex.get(x), yIndex.get(y), value));
+            }
+        }
+
+        List<String> warnings = new ArrayList<>(selection.warnings() == null ? List.of() : selection.warnings());
+        addWarnIf(warnings, rows > MAX_ROWS, "Dataset recortado: se analizaron " + rows + " filas (lÃ­mite " + MAX_ROWS + ").");
+        addWarnIf(warnings, badNums > 0, "NÃºmeros no parseables en '" + firstNonBlank(selection.measureColumn(), selection.secondaryMeasureColumn()) + "': " + badNums + ".");
+        addWarnIf(warnings, missingKeys > 0, "Filas sin clave suficiente para " + selection.mode() + ": " + missingKeys + ".");
+        addWarnIf(warnings, dedupConflicts > 0, "Hay " + dedupConflicts + " claves con importes distintos al deduplicar; se conserva la primera observaciÃ³n por clave.");
+
+        Map<String, Object> meta = new LinkedHashMap<>();
+        meta.put("aggregation", selection.legacyAggregation());
+        meta.put("aggregationMode", selection.mode());
+        meta.put("aggregationUnit", selection.unitLabel());
+        meta.put("rowsUsed", used);
+        meta.put("rowsScanned", rows);
+        meta.put("truncated", rows > MAX_ROWS);
+        meta.put("filters", filtersToLineage(filters));
+        meta.put("xColumn", xCol);
+        meta.put("yColumn", yCol);
+        meta.put("valueColumn", selection.measureColumn());
+        meta.put("distinctKeyColumn", selection.distinctKeyColumn());
+        meta.put("dedupKeyColumn", selection.dedupKeyColumn());
+        meta.put("yLabels", yLabels);
+        meta.put("badNumberCount", badNums);
+        meta.put("missingKeyCount", missingKeys);
+        if (rows > 0) meta.put("badNumberPct", roundPct(badNums, rows));
+        if (!warnings.isEmpty()) meta.put("warnings", warnings);
+        return new UniversalChartDataDto("HEATMAP", xLabels, List.of(Map.of("name", selection.unitLabel(), "data", points)), meta);
+    }
+
+    private UniversalChartDataDto buildPivotMonthly(CSVParser parser, List<String> headers, UniversalViewRequest req, SemanticContext semantic) {
+        String dateCol = clean(req.getDateColumn());
+        String catCol = clean(req.getCategoryColumn());
+        if (isBlank(dateCol) || isBlank(catCol)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Selecciona columna fecha y categoría.");
+        }
+        requireMapped(parser, dateCol);
+        requireMapped(parser, catCol);
+        AggregationSelection selection = resolveAggregationSelection("PIVOT_MONTHLY", req, semantic);
+        if (!isBlank(selection.measureColumn())) requireMapped(parser, selection.measureColumn());
+        if (!isBlank(selection.secondaryMeasureColumn())) requireMapped(parser, selection.secondaryMeasureColumn());
+        if (!isBlank(selection.distinctKeyColumn())) requireMapped(parser, selection.distinctKeyColumn());
+        if (!isBlank(selection.dedupKeyColumn())) requireMapped(parser, selection.dedupKeyColumn());
+
+        List<UniversalFilter> filters = normalizeFilters(parser, req);
+        int topN = clamp(req.getTopN(), 1, 30, DEFAULT_TOP_N);
+        Map<YearMonth, Map<String, AggregateState>> matrix = new HashMap<>();
+        Map<String, AggregateState> categoryTotals = new HashMap<>();
+
+        int rows = 0;
+        int used = 0;
+        int badDates = 0;
+        List<String> badDateSamples = new ArrayList<>();
+        for (CSVRecord record : parser) {
+            rows++;
+            if (rows > MAX_ROWS) break;
+            if (!matchesFilters(record, filters)) continue;
+
+            String dateRaw = clean(get(record, dateCol));
+            YearMonth ym = parseYearMonth(dateRaw);
+            if (ym == null) {
+                badDates++;
+                if (badDateSamples.size() < 3 && dateRaw != null) badDateSamples.add(dateRaw);
+                continue;
+            }
+
+            String category = clean(get(record, catCol));
+            if (category == null) continue;
+            AggregateState cell = matrix.computeIfAbsent(ym, key -> new HashMap<>()).computeIfAbsent(category, key -> new AggregateState());
+            AggregateState total = categoryTotals.computeIfAbsent(category, key -> new AggregateState());
+            if (accumulateState(record, selection, cell)) {
+                accumulateState(record, selection, total);
+                used++;
+            }
+        }
+
+        if (used == 0) {
+            throw new ResponseStatusException(
+                HttpStatus.BAD_REQUEST,
+                explainNoRows("pivote", dateCol, selection.measureColumn(), badDates, badDateSamples, 0, List.of())
+            );
+        }
+
+        List<String> months = matrix.keySet().stream().filter(Objects::nonNull).map(YearMonth::toString).sorted().toList();
+        Map<String, BigDecimal> categoryValues = new HashMap<>();
+        int badNums = 0;
+        int missingKeys = 0;
+        int dedupConflicts = 0;
+        for (Map.Entry<String, AggregateState> entry : categoryTotals.entrySet()) {
+            categoryValues.put(entry.getKey(), computeStateValue(selection, entry.getValue()));
+            badNums += entry.getValue().invalidNumberCount;
+            missingKeys += entry.getValue().missingKeyCount;
+            dedupConflicts += entry.getValue().dedupConflictCount;
+        }
+        List<String> categories = topKeysByValue(categoryValues, topN);
+
+        List<Map<String, Object>> series = new ArrayList<>();
+        for (String category : categories) {
+            List<Number> data = new ArrayList<>(months.size());
+            for (String month : months) {
+                AggregateState state = matrix.getOrDefault(YearMonth.parse(month), Map.of()).get(category);
+                BigDecimal value = computeStateValue(selection, state == null ? new AggregateState() : state);
+                data.add(value.setScale(2, RoundingMode.HALF_UP));
+            }
+            series.add(Map.of("name", category, "data", data));
+        }
+
+        List<String> warnings = new ArrayList<>(selection.warnings() == null ? List.of() : selection.warnings());
+        addWarnIf(warnings, rows > MAX_ROWS, "Dataset recortado: se analizaron " + rows + " filas (lÃ­mite " + MAX_ROWS + ").");
+        addWarnIf(warnings, badDates > 0, "Fechas no parseables en '" + dateCol + "': " + badDates + sampleSuffix(badDateSamples) + ".");
+        addWarnIf(warnings, badNums > 0, "NÃºmeros no parseables en '" + firstNonBlank(selection.measureColumn(), selection.secondaryMeasureColumn()) + "': " + badNums + ".");
+        addWarnIf(warnings, missingKeys > 0, "Filas sin clave suficiente para " + selection.mode() + ": " + missingKeys + ".");
+        addWarnIf(warnings, dedupConflicts > 0, "Hay " + dedupConflicts + " claves con importes distintos al deduplicar; se conserva la primera observaciÃ³n por clave.");
+
+        Map<String, Object> meta = new LinkedHashMap<>();
+        meta.put("aggregation", selection.legacyAggregation());
+        meta.put("aggregationMode", selection.mode());
+        meta.put("aggregationUnit", selection.unitLabel());
+        meta.put("rowsUsed", used);
+        meta.put("rowsScanned", rows);
+        meta.put("truncated", rows > MAX_ROWS);
+        meta.put("filters", filtersToLineage(filters));
+        meta.put("dateColumn", dateCol);
+        meta.put("categoryColumn", catCol);
+        meta.put("valueColumn", selection.measureColumn());
+        meta.put("distinctKeyColumn", selection.distinctKeyColumn());
+        meta.put("dedupKeyColumn", selection.dedupKeyColumn());
+        meta.put("topN", topN);
+        meta.put("badDateCount", badDates);
+        meta.put("badNumberCount", badNums);
+        meta.put("missingKeyCount", missingKeys);
+        if (rows > 0) {
+            meta.put("badDatePct", roundPct(badDates, rows));
+            meta.put("badNumberPct", roundPct(badNums, rows));
+        }
+        if (!warnings.isEmpty()) meta.put("warnings", warnings);
+        return new UniversalChartDataDto("PIVOT_MONTHLY", months, series, meta);
+    }
+
     private static void requireMapped(CSVParser parser, String header) {
         if (parser.getHeaderMap() == null || !parser.getHeaderMap().containsKey(header)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Columna no encontrada: " + header);
@@ -1227,6 +2187,7 @@ public class UniversalViewService {
         String xCol = clean(req.getXColumn());
         String yCol = clean(req.getYColumn());
         String aggregation = clean(req.getAggregation());
+        String aggregationMode = normAggregationMode(req.getAggregationMode());
 
         if (dateCol != null) out.put("dateColumn", dateCol);
         if (valueCol != null) out.put("valueColumn", valueCol);
@@ -1234,6 +2195,7 @@ public class UniversalViewService {
         if (xCol != null) out.put("xColumn", xCol);
         if (yCol != null) out.put("yColumn", yCol);
         if (aggregation != null) out.put("aggregation", aggregation);
+        if (aggregationMode != null) out.put("aggregationMode", aggregationMode);
 
         if (req.getTopN() != null) out.put("topN", req.getTopN());
         if (req.getMaxPoints() != null) out.put("maxPoints", req.getMaxPoints());
@@ -1606,5 +2568,6 @@ public class UniversalViewService {
         return Math.round(v * 100.0) / 100.0;
     }
 }
+
 
 

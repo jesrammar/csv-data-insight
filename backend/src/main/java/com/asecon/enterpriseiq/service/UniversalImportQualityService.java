@@ -1,5 +1,6 @@
 package com.asecon.enterpriseiq.service;
 
+import com.asecon.enterpriseiq.dto.UniversalColumnDto;
 import com.asecon.enterpriseiq.dto.UniversalImportQualityDto;
 import com.asecon.enterpriseiq.dto.UniversalSummaryDto;
 import com.asecon.enterpriseiq.model.UniversalImport;
@@ -47,40 +48,45 @@ public class UniversalImportQualityService {
 
         Set<String> dateCols = new HashSet<>();
         Set<String> numberCols = new HashSet<>();
+        long structuralNullCells = 0L;
         if (summary != null && summary.columns() != null) {
-            summary.columns().forEach((c) -> {
-                if (c == null || c.name() == null) return;
-                String t = c.detectedType() == null ? "" : c.detectedType().trim().toLowerCase(Locale.ROOT);
-                if ("date".equals(t)) dateCols.add(c.name());
-                if ("number".equals(t)) numberCols.add(c.name());
-            });
+            for (UniversalColumnDto column : summary.columns()) {
+                if (column == null || column.name() == null) continue;
+                String detectedType = column.detectedType() == null ? "" : column.detectedType().trim().toLowerCase(Locale.ROOT);
+                if ("date".equals(detectedType)) dateCols.add(column.name());
+                if ("number".equals(detectedType)) numberCols.add(column.name());
+                String nullSemantics = column.nullSemantics() == null ? "" : column.nullSemantics().trim().toUpperCase(Locale.ROOT);
+                if ("STRUCTURAL".equals(nullSemantics) || "NOT_APPLICABLE".equals(nullSemantics)) {
+                    structuralNullCells += Math.max(0L, column.nullCount());
+                }
+            }
         }
 
         byte[] bytes = universalImportFileService.normalizedCsv(companyId, imp.getId());
         if (bytes == null || bytes.length == 0) throw new ResponseStatusException(HttpStatus.GONE, "CSV normalizado no disponible");
 
         char delimiter = detectDelimiter(bytes);
-        Stats s = scan(bytes, delimiter, dateCols, numberCols);
-        List<UniversalImportQualityDto.Issue> issues = buildIssues(s);
-        int score = computeScore(s, issues);
+        Stats stats = scan(bytes, delimiter, dateCols, numberCols);
+        List<UniversalImportQualityDto.Issue> issues = buildIssues(stats, structuralNullCells);
+        int score = computeScore(stats, issues, structuralNullCells);
         String level = computeLevel(score, issues);
 
         return new UniversalImportQualityDto(
             imp.getId(),
             imp.getFilename(),
-            s.rowsScanned,
-            s.columns,
-            s.irregularRows,
-            s.nullCells,
-            s.totalCells,
-            s.dateParseErrors,
-            s.numberParseErrors,
-            s.minDate == null ? null : s.minDate.toString(),
-            s.maxDate == null ? null : s.maxDate.toString(),
+            stats.rowsScanned,
+            stats.columns,
+            stats.irregularRows,
+            stats.nullCells,
+            stats.totalCells,
+            stats.dateParseErrors,
+            stats.numberParseErrors,
+            stats.minDate == null ? null : stats.minDate.toString(),
+            stats.maxDate == null ? null : stats.maxDate.toString(),
             score,
             level,
             issues,
-            s.examples
+            stats.examples
         );
     }
 
@@ -98,7 +104,7 @@ public class UniversalImportQualityService {
     }
 
     private static Stats scan(byte[] bytes, char delimiter, Set<String> dateCols, Set<String> numberCols) {
-        Stats s = new Stats();
+        Stats stats = new Stats();
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(new ByteArrayInputStream(bytes), StandardCharsets.UTF_8))) {
             CSVParser parser = CSVFormat.DEFAULT.builder()
                 .setDelimiter(delimiter)
@@ -113,42 +119,42 @@ public class UniversalImportQualityService {
 
             List<String> headers = new ArrayList<>(parser.getHeaderMap().keySet());
             if (headers.isEmpty()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Dataset sin cabeceras.");
-            s.columns = headers.size();
+            stats.columns = headers.size();
 
-            for (CSVRecord r : parser) {
-                s.rowsScanned++;
-                if (s.rowsScanned > MAX_ROWS) break;
-                if (r.size() != headers.size()) s.irregularRows++;
+            for (CSVRecord record : parser) {
+                stats.rowsScanned++;
+                if (stats.rowsScanned > MAX_ROWS) break;
+                if (record.size() != headers.size()) stats.irregularRows++;
 
-                for (String h : headers) {
-                    String raw = r.isMapped(h) ? r.get(h) : "";
-                    String v = raw == null ? "" : raw.trim();
-                    s.totalCells++;
-                    if (v.isBlank()) {
-                        s.nullCells++;
+                for (String header : headers) {
+                    String raw = record.isMapped(header) ? record.get(header) : "";
+                    String value = raw == null ? "" : raw.trim();
+                    stats.totalCells++;
+                    if (value.isBlank()) {
+                        stats.nullCells++;
                         continue;
                     }
 
-                    if (dateCols != null && dateCols.contains(h)) {
-                        LocalDate d = UniversalViewService.parseFlexibleDate(v);
-                        if (d == null) {
-                            s.dateParseErrors++;
-                            addExample(s, "Fecha inválida (" + h + "): " + truncate(v, 28));
+                    if (dateCols.contains(header)) {
+                        LocalDate date = UniversalViewService.parseFlexibleDate(value);
+                        if (date == null) {
+                            stats.dateParseErrors++;
+                            addExample(stats, "Fecha invalida (" + header + "): " + truncate(value, 28));
                         } else {
-                            if (s.minDate == null || d.isBefore(s.minDate)) s.minDate = d;
-                            if (s.maxDate == null || d.isAfter(s.maxDate)) s.maxDate = d;
+                            if (stats.minDate == null || date.isBefore(stats.minDate)) stats.minDate = date;
+                            if (stats.maxDate == null || date.isAfter(stats.maxDate)) stats.maxDate = date;
                         }
-                    } else if (numberCols != null && numberCols.contains(h)) {
-                        BigDecimal n = UniversalViewService.parseDecimal(v);
-                        if (n == null) {
-                            s.numberParseErrors++;
-                            addExample(s, "Número inválido (" + h + "): " + truncate(v, 28));
+                    } else if (numberCols.contains(header)) {
+                        BigDecimal number = UniversalViewService.parseDecimal(value);
+                        if (number == null) {
+                            stats.numberParseErrors++;
+                            addExample(stats, "Numero invalido (" + header + "): " + truncate(value, 28));
                         }
                     }
                 }
             }
 
-            return s;
+            return stats;
         } catch (ResponseStatusException ex) {
             throw ex;
         } catch (Exception ex) {
@@ -156,63 +162,73 @@ public class UniversalImportQualityService {
         }
     }
 
-    private static List<UniversalImportQualityDto.Issue> buildIssues(Stats s) {
+    private static List<UniversalImportQualityDto.Issue> buildIssues(Stats stats, long structuralNullCells) {
         List<UniversalImportQualityDto.Issue> out = new ArrayList<>();
-        if (s.rowsScanned <= 0) {
-            out.add(new UniversalImportQualityDto.Issue("HIGH", "EMPTY", "Sin filas", "No se detectaron filas válidas en el CSV normalizado."));
+        if (stats.rowsScanned <= 0) {
+            out.add(new UniversalImportQualityDto.Issue("HIGH", "EMPTY", "Sin filas", "No se detectaron filas validas en el CSV normalizado."));
             return out;
         }
 
-        double irregularRate = (double) s.irregularRows / (double) Math.max(1L, s.rowsScanned);
-        double nullRate = (double) s.nullCells / (double) Math.max(1L, s.totalCells);
-        double dateErrRate = (double) s.dateParseErrors / (double) Math.max(1L, s.rowsScanned);
-        double numErrRate = (double) s.numberParseErrors / (double) Math.max(1L, s.rowsScanned);
+        double irregularRate = (double) stats.irregularRows / (double) Math.max(1L, stats.rowsScanned);
+        long effectiveNullCells = Math.max(0L, stats.nullCells - Math.max(0L, structuralNullCells));
+        double nullRate = (double) effectiveNullCells / (double) Math.max(1L, stats.totalCells);
+        double dateErrRate = (double) stats.dateParseErrors / (double) Math.max(1L, stats.rowsScanned);
+        double numErrRate = (double) stats.numberParseErrors / (double) Math.max(1L, stats.rowsScanned);
 
-        if (irregularRate >= 0.02) {
-            out.add(new UniversalImportQualityDto.Issue("HIGH", "IRREGULAR", "CSV irregular", "Hay filas con número de columnas distinto a la cabecera. Re-exporta a CSV UTF-8 o sube el XLSX original."));
-        } else if (irregularRate > 0.0) {
+        if (irregularRate >= 0.02d) {
+            out.add(new UniversalImportQualityDto.Issue("HIGH", "IRREGULAR", "CSV irregular", "Hay filas con numero de columnas distinto a la cabecera. Reexporta a CSV UTF-8 o sube el XLSX original."));
+        } else if (irregularRate > 0.0d) {
             out.add(new UniversalImportQualityDto.Issue("MEDIUM", "IRREGULAR", "CSV irregular leve", "Algunas filas tienen columnas inconsistentes; puede afectar agregaciones."));
         }
 
-        if (dateErrRate >= 0.12) {
+        if (dateErrRate >= 0.12d) {
             out.add(new UniversalImportQualityDto.Issue("HIGH", "DATE_PARSE", "Fechas no parseables", "Muchos valores en columnas tipo fecha no se pueden leer. Normaliza a YYYY-MM-DD."));
-        } else if (dateErrRate >= 0.03) {
+        } else if (dateErrRate >= 0.03d) {
             out.add(new UniversalImportQualityDto.Issue("MEDIUM", "DATE_PARSE", "Fechas con errores", "Hay errores de parsing de fecha; revisa formatos mixtos."));
         }
 
-        if (numErrRate >= 0.12) {
-            out.add(new UniversalImportQualityDto.Issue("HIGH", "NUMBER_PARSE", "Números no parseables", "Muchos valores en columnas numéricas no se pueden leer. Revisa separadores y símbolos."));
-        } else if (numErrRate >= 0.03) {
-            out.add(new UniversalImportQualityDto.Issue("MEDIUM", "NUMBER_PARSE", "Números con errores", "Hay errores de parsing numérico; revisa comas/puntos."));
+        if (numErrRate >= 0.12d) {
+            out.add(new UniversalImportQualityDto.Issue("HIGH", "NUMBER_PARSE", "Numeros no parseables", "Muchos valores en columnas numericas no se pueden leer. Revisa separadores y simbolos."));
+        } else if (numErrRate >= 0.03d) {
+            out.add(new UniversalImportQualityDto.Issue("MEDIUM", "NUMBER_PARSE", "Numeros con errores", "Hay errores de parsing numerico; revisa comas y puntos."));
         }
 
-        if (nullRate >= 0.30) {
-            out.add(new UniversalImportQualityDto.Issue("MEDIUM", "NULLS", "Muchos nulos", "Hay muchas celdas vacías; puede distorsionar KPIs."));
-        } else if (nullRate >= 0.12) {
-            out.add(new UniversalImportQualityDto.Issue("LOW", "NULLS", "Nulos", "Hay celdas vacías; revisa columnas clave."));
+        if (structuralNullCells > 0L) {
+            out.add(new UniversalImportQualityDto.Issue(
+                "LOW",
+                "STRUCTURAL_NULLS",
+                "Nulos estructurales detectados",
+                "Parte de las celdas vacias parecen no aplicables por contexto de negocio y no se elevan automaticamente como error."
+            ));
+        }
+
+        if (nullRate >= 0.30d) {
+            out.add(new UniversalImportQualityDto.Issue("MEDIUM", "NULLS", "Muchos nulos", "Hay muchas celdas vacias fuera de los casos estructurales; pueden distorsionar KPIs."));
+        } else if (nullRate >= 0.12d) {
+            out.add(new UniversalImportQualityDto.Issue("LOW", "NULLS", "Nulos", "Hay celdas vacias fuera de los casos estructurales; revisa columnas clave."));
         }
 
         return out;
     }
 
-    private static int computeScore(Stats s, List<UniversalImportQualityDto.Issue> issues) {
-        if (s.rowsScanned <= 0) return 0;
-        double irregularRate = (double) s.irregularRows / (double) Math.max(1L, s.rowsScanned);
-        double nullRate = (double) s.nullCells / (double) Math.max(1L, s.totalCells);
-        double dateErrRate = (double) s.dateParseErrors / (double) Math.max(1L, s.rowsScanned);
-        double numErrRate = (double) s.numberParseErrors / (double) Math.max(1L, s.rowsScanned);
+    private static int computeScore(Stats stats, List<UniversalImportQualityDto.Issue> issues, long structuralNullCells) {
+        if (stats.rowsScanned <= 0) return 0;
+        double irregularRate = (double) stats.irregularRows / (double) Math.max(1L, stats.rowsScanned);
+        long effectiveNullCells = Math.max(0L, stats.nullCells - Math.max(0L, structuralNullCells));
+        double nullRate = (double) effectiveNullCells / (double) Math.max(1L, stats.totalCells);
+        double dateErrRate = (double) stats.dateParseErrors / (double) Math.max(1L, stats.rowsScanned);
+        double numErrRate = (double) stats.numberParseErrors / (double) Math.max(1L, stats.rowsScanned);
 
-        double score = 100.0;
-        score -= irregularRate * 260.0;
-        score -= dateErrRate * 220.0;
-        score -= numErrRate * 220.0;
-        score -= nullRate * 120.0;
+        double score = 100.0d;
+        score -= irregularRate * 260.0d;
+        score -= dateErrRate * 220.0d;
+        score -= numErrRate * 220.0d;
+        score -= nullRate * 120.0d;
 
         boolean high = issues != null && issues.stream().anyMatch(i -> i != null && "HIGH".equalsIgnoreCase(i.severity()));
-        if (high) score -= 10.0;
+        if (high) score -= 10.0d;
 
-        int out = (int) Math.round(Math.max(0.0, Math.min(100.0, score)));
-        return out;
+        return (int) Math.round(Math.max(0.0d, Math.min(100.0d, score)));
     }
 
     private static String computeLevel(int score, List<UniversalImportQualityDto.Issue> issues) {
@@ -223,18 +239,18 @@ public class UniversalImportQualityService {
         return "GREEN";
     }
 
-    private static void addExample(Stats s, String msg) {
-        if (s.examples == null) s.examples = new ArrayList<>();
-        if (s.examples.size() >= 8) return;
-        if (msg == null || msg.isBlank()) return;
-        s.examples.add(msg);
+    private static void addExample(Stats stats, String message) {
+        if (stats.examples == null) stats.examples = new ArrayList<>();
+        if (stats.examples.size() >= 8) return;
+        if (message == null || message.isBlank()) return;
+        stats.examples.add(message);
     }
 
-    private static String truncate(String s, int n) {
-        if (s == null) return "";
-        String v = s.trim();
-        if (v.length() <= n) return v;
-        return v.substring(0, Math.max(0, n - 1)) + "…";
+    private static String truncate(String value, int limit) {
+        if (value == null) return "";
+        String trimmed = value.trim();
+        if (trimmed.length() <= limit) return trimmed;
+        return trimmed.substring(0, Math.max(0, limit - 1)) + "...";
     }
 
     private static char detectDelimiter(byte[] bytes) {
@@ -248,18 +264,24 @@ public class UniversalImportQualityService {
         int pipes = count(head, '|');
         int max = commas;
         char best = ',';
-        if (semis > max) { max = semis; best = ';'; }
-        if (tabs > max) { max = tabs; best = '\t'; }
-        if (pipes > max) { best = '|'; }
+        if (semis > max) {
+            max = semis;
+            best = ';';
+        }
+        if (tabs > max) {
+            max = tabs;
+            best = '\t';
+        }
+        if (pipes > max) best = '|';
         return best;
     }
 
-    private static int count(String s, char c) {
-        if (s == null || s.isEmpty()) return 0;
-        int n = 0;
-        for (int i = 0; i < s.length(); i++) {
-            if (s.charAt(i) == c) n++;
+    private static int count(String value, char needle) {
+        if (value == null || value.isEmpty()) return 0;
+        int total = 0;
+        for (int i = 0; i < value.length(); i++) {
+            if (value.charAt(i) == needle) total++;
         }
-        return n;
+        return total;
     }
 }

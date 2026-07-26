@@ -154,7 +154,9 @@ public class ImportController {
     private ImportDto toDto(ImportJob job) {
         return new ImportDto(job.getId(), job.getCompany().getId(), job.getPeriod(), job.getStatus(),
             job.getCreatedAt(), job.getProcessedAt(), job.getErrorSummary(), job.getWarningCount(), job.getErrorCount(),
-            job.getUpdatedAt(), job.getRunAfter(), job.getAttempts(), job.getMaxAttempts(), job.getLastError(), job.getStorageRef(), job.getOriginalFilename());
+            job.getUpdatedAt(), job.getRunAfter(), job.getAttempts(), job.getMaxAttempts(), job.getLastError(), job.getStorageRef(), job.getOriginalFilename(),
+            job.getVersionNo(), job.getContentHash(), job.getNormalizedHash(), job.getSupersedesImportId(), job.getDuplicateOfImportId(),
+            job.getBlockingCode(), job.getBlockingReason(), job.getRowsReceived(), job.getRowsValid(), job.getAppliedAt());
     }
 
     private static Integer parseOptionalInt(String raw) {

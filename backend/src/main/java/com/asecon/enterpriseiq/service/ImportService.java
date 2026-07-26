@@ -3,14 +3,11 @@ package com.asecon.enterpriseiq.service;
 import com.asecon.enterpriseiq.model.Company;
 import com.asecon.enterpriseiq.model.ImportJob;
 import com.asecon.enterpriseiq.model.ImportStatus;
-import com.asecon.enterpriseiq.model.AutomationJobStatus;
 import com.asecon.enterpriseiq.model.AutomationJobType;
 import com.asecon.enterpriseiq.model.StagingTransaction;
 import com.asecon.enterpriseiq.model.Transaction;
-import com.asecon.enterpriseiq.repo.AutomationJobRepository;
 import com.asecon.enterpriseiq.repo.CompanyRepository;
 import com.asecon.enterpriseiq.repo.ImportJobRepository;
-import com.asecon.enterpriseiq.repo.ReportRepository;
 import com.asecon.enterpriseiq.repo.StagingTransactionRepository;
 import com.asecon.enterpriseiq.repo.TransactionRepository;
 import com.asecon.enterpriseiq.metrics.ErrorTagger;
@@ -25,18 +22,24 @@ import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.DigestInputStream;
+import java.security.MessageDigest;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import java.util.stream.Collectors;
 import java.util.HashMap;
+import java.util.stream.Collectors;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.DistributionSummary;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -75,9 +78,12 @@ public class ImportService {
     private final MeterRegistry meterRegistry;
     private final ErrorTagger errorTagger;
     private final CompanySettingsService companySettingsService;
-    private final ReportRepository reportRepository;
     private final AutomationJobService automationJobService;
-    private final AutomationJobRepository automationJobRepository;
+    private final PeriodWorkflowService periodWorkflowService;
+    private final int minValidRows;
+    private final double maxWarningRate;
+    private final double maxDuplicateRate;
+    private final boolean blockOnOutsidePeriodRows;
 
     public ImportService(ImportJobRepository importJobRepository,
                          CompanyRepository companyRepository,
@@ -91,9 +97,12 @@ public class ImportService {
                          MeterRegistry meterRegistry,
                          ErrorTagger errorTagger,
                          CompanySettingsService companySettingsService,
-                         ReportRepository reportRepository,
                          AutomationJobService automationJobService,
-                         AutomationJobRepository automationJobRepository) {
+                         PeriodWorkflowService periodWorkflowService,
+                         @Value("${app.import-guard.min-valid-rows:1}") int minValidRows,
+                         @Value("${app.import-guard.max-warning-rate:0.15}") double maxWarningRate,
+                         @Value("${app.import-guard.max-duplicate-rate:0.5}") double maxDuplicateRate,
+                         @Value("${app.import-guard.block-on-outside-period-rows:true}") boolean blockOnOutsidePeriodRows) {
         this.importJobRepository = importJobRepository;
         this.companyRepository = companyRepository;
         this.stagingRepository = stagingRepository;
@@ -106,9 +115,12 @@ public class ImportService {
         this.meterRegistry = meterRegistry;
         this.errorTagger = errorTagger;
         this.companySettingsService = companySettingsService;
-        this.reportRepository = reportRepository;
         this.automationJobService = automationJobService;
-        this.automationJobRepository = automationJobRepository;
+        this.periodWorkflowService = periodWorkflowService;
+        this.minValidRows = Math.max(1, minValidRows);
+        this.maxWarningRate = Math.max(0d, maxWarningRate);
+        this.maxDuplicateRate = Math.max(0d, maxDuplicateRate);
+        this.blockOnOutsidePeriodRows = blockOnOutsidePeriodRows;
         try {
             Files.createDirectories(this.importsRoot);
         } catch (IOException ex) {
@@ -119,38 +131,28 @@ public class ImportService {
     public ImportJob createImport(Long companyId, String period, MultipartFile file) throws IOException {
         Timer.Sample uploadSample = Timer.start(meterRegistry);
         Company company = companyRepository.findById(companyId).orElseThrow();
-        ImportJob job = new ImportJob();
-        job.setCompany(company);
-        job.setPeriod(period);
-        job.setStatus(ImportStatus.PENDING);
-        job.setCreatedAt(Instant.now());
-        job.setUpdatedAt(job.getCreatedAt());
-        job.setRunAfter(job.getCreatedAt());
-        job.setAttempts(0);
-        job.setMaxAttempts(3);
-        job.setOriginalFilename(safeFilename(file.getOriginalFilename()));
-        job.setContentType(file.getContentType());
+        ImportJob job = initializeJob(company, period, safeFilename(file.getOriginalFilename()), file.getContentType(), null);
         job = importJobRepository.save(job);
+        periodWorkflowService.syncFromImport(job);
 
         Files.createDirectories(importsRoot);
         String ext = detectExtension(job.getOriginalFilename(), file.getContentType());
         String storageRef = "import-" + job.getId() + "-" + UUID.randomUUID() + ext;
         Path target = importsRoot.resolve(storageRef).toAbsolutePath().normalize();
         Files.createDirectories(target.getParent());
-        file.transferTo(target);
+        String contentHash;
+        try (InputStream is = file.getInputStream()) {
+            contentHash = copyToFileAndSha256(is, target);
+        }
+        job.setContentHash(contentHash);
 
         try {
             requireTxnHeaders(target);
         } catch (ResponseStatusException ex) {
             try { Files.deleteIfExists(target); } catch (IOException ignored) {}
-            job.setStatus(ImportStatus.DEAD);
-            job.setProcessedAt(Instant.now());
-            job.setUpdatedAt(job.getProcessedAt());
-            job.setErrorCount(1);
-            job.setWarningCount(0);
-            job.setLastError(ex.getReason() != null ? ex.getReason() : ex.getMessage());
-            job.setErrorSummary("Invalid import file: " + job.getLastError());
+            markRejectedValidation(job, "INVALID_IMPORT_FILE", ex.getReason() != null ? ex.getReason() : ex.getMessage());
             importJobRepository.save(job);
+            periodWorkflowService.syncFromImport(job);
             throw ex;
         }
 
@@ -173,7 +175,9 @@ public class ImportService {
 
         job.setStorageRef(storageRef);
         job.setUpdatedAt(Instant.now());
+        maybeBlockExactDuplicate(job);
         importJobRepository.save(job);
+        periodWorkflowService.syncFromImport(job);
 
         uploadSample.stop(Timer.builder("ingestion.import.upload.duration")
             .tag("kind", "raw")
@@ -197,18 +201,9 @@ public class ImportService {
         }
 
         Company company = companyRepository.findById(companyId).orElseThrow();
-        ImportJob job = new ImportJob();
-        job.setCompany(company);
-        job.setPeriod(period);
-        job.setStatus(ImportStatus.PENDING);
-        job.setCreatedAt(Instant.now());
-        job.setUpdatedAt(job.getCreatedAt());
-        job.setRunAfter(job.getCreatedAt());
-        job.setAttempts(0);
-        job.setMaxAttempts(3);
-        job.setOriginalFilename(safeFilename(file.getOriginalFilename()));
-        job.setContentType("text/csv");
+        ImportJob job = initializeJob(company, period, safeFilename(file.getOriginalFilename()), "text/csv", null);
         job = importJobRepository.save(job);
+        periodWorkflowService.syncFromImport(job);
 
         TabularFileService.XlsxOptions xlsxOptions = null;
         if (TabularFileService.isXlsx(file) && (sheetIndex != null || headerRow1Based != null)) {
@@ -222,6 +217,7 @@ public class ImportService {
         String storageRef = "import-" + job.getId() + "-" + UUID.randomUUID() + ".csv";
         Path target = importsRoot.resolve(storageRef).toAbsolutePath().normalize();
         Files.createDirectories(target.getParent());
+        String contentHash = sha256Hex(bytes);
 
         int warnings = 0;
         int errors = 0;
@@ -296,26 +292,18 @@ public class ImportService {
             Files.writeString(target, sw.toString(), StandardCharsets.UTF_8);
         } catch (ResponseStatusException ex) {
             try { Files.deleteIfExists(target); } catch (IOException ignored) {}
-            job.setStatus(ImportStatus.DEAD);
-            job.setProcessedAt(Instant.now());
-            job.setUpdatedAt(job.getProcessedAt());
-            job.setErrorCount(1);
-            job.setWarningCount(0);
-            job.setLastError(ex.getReason() != null ? ex.getReason() : ex.getMessage());
-            job.setErrorSummary("Invalid import mapping: " + job.getLastError());
+            markRejectedValidation(job, "INVALID_IMPORT_MAPPING", ex.getReason() != null ? ex.getReason() : ex.getMessage());
             importJobRepository.save(job);
+            periodWorkflowService.syncFromImport(job);
             throw ex;
         } catch (Exception ex) {
             try { Files.deleteIfExists(target); } catch (IOException ignored) {}
             errors++;
-            job.setStatus(ImportStatus.DEAD);
-            job.setProcessedAt(Instant.now());
-            job.setUpdatedAt(job.getProcessedAt());
+            markRejectedValidation(job, "IMPORT_MAPPING_FAILED", ex.getClass().getSimpleName() + ": " + ex.getMessage());
             job.setErrorCount(errors);
             job.setWarningCount(warnings);
-            job.setLastError(ex.getClass().getSimpleName() + ": " + ex.getMessage());
-            job.setErrorSummary("Import mapping failed: " + job.getLastError());
             importJobRepository.save(job);
+            periodWorkflowService.syncFromImport(job);
             throw ex;
         }
 
@@ -339,11 +327,14 @@ public class ImportService {
         job.setStorageRef(storageRef);
         job.setWarningCount(warnings);
         job.setErrorCount(errors);
+        job.setContentHash(contentHash);
         if (warnings > 0) {
             job.setErrorSummary("Warnings: " + warnings + " invalid rows skipped.");
         }
         job.setUpdatedAt(Instant.now());
+        maybeBlockExactDuplicate(job);
         importJobRepository.save(job);
+        periodWorkflowService.syncFromImport(job);
 
         uploadSample.stop(Timer.builder("ingestion.import.upload.duration")
             .tag("kind", "mapped")
@@ -353,24 +344,20 @@ public class ImportService {
 
     public ImportJob createImportFromPath(Long companyId, String period, Path csvFile) throws IOException {
         Company company = companyRepository.findById(companyId).orElseThrow();
-        ImportJob job = new ImportJob();
-        job.setCompany(company);
-        job.setPeriod(period);
-        job.setStatus(ImportStatus.PENDING);
-        job.setCreatedAt(Instant.now());
-        job.setUpdatedAt(job.getCreatedAt());
-        job.setRunAfter(job.getCreatedAt());
-        job.setAttempts(0);
-        job.setMaxAttempts(3);
-        job.setOriginalFilename(safeFilename(csvFile.getFileName().toString()));
+        ImportJob job = initializeJob(company, period, safeFilename(csvFile.getFileName().toString()), "text/csv", null);
         job = importJobRepository.save(job);
+        periodWorkflowService.syncFromImport(job);
 
         Files.createDirectories(importsRoot);
         String ext = extensionOf(job.getOriginalFilename());
         String storageRef = "import-" + job.getId() + "-" + UUID.randomUUID() + ext;
         Path target = importsRoot.resolve(storageRef);
-        Files.copy(csvFile, target);
+        String contentHash;
+        try (InputStream is = Files.newInputStream(csvFile)) {
+            contentHash = copyToFileAndSha256(is, target);
+        }
         job.setStorageRef(storageRef);
+        job.setContentHash(contentHash);
         try {
             long fileBytes = Files.size(target);
             log.info("METRIC ingestion.import.upload_path companyId={} importId={} period={} fileBytes={} originalFilename={}",
@@ -388,7 +375,9 @@ public class ImportService {
                 .increment();
         } catch (Exception ignored) {}
         job.setUpdatedAt(Instant.now());
+        maybeBlockExactDuplicate(job);
         importJobRepository.save(job);
+        periodWorkflowService.syncFromImport(job);
         return job;
     }
 
@@ -401,11 +390,17 @@ public class ImportService {
         long startNs = System.nanoTime();
         ImportJob job = importJobRepository.findById(importJobId).orElse(null);
         if (job == null) return;
+        if (job.getStatus() != ImportStatus.RUNNING
+            && job.getStatus() != ImportStatus.PENDING
+            && job.getStatus() != ImportStatus.RETRY) {
+            return;
+        }
 
         if (job.getStatus() != ImportStatus.RUNNING) {
             job.setStatus(ImportStatus.RUNNING);
             job.setUpdatedAt(Instant.now());
             importJobRepository.save(job);
+            periodWorkflowService.syncFromImport(job);
         }
 
         int warnings = 0;
@@ -426,6 +421,11 @@ public class ImportService {
             List<StagingTransaction> staging = new ArrayList<>();
             int nonEmptyRows = 0;
             int validRows = 0;
+            int outsidePeriodRows = 0;
+            int duplicateRows = 0;
+            Set<String> seenRows = new HashSet<>();
+            List<String> canonicalRows = new ArrayList<>();
+            YearMonth importPeriod = parseImportPeriod(job.getPeriod());
 
             for (var row : readRows(filePath)) {
                 String txnDateRaw = row.getOrDefault("txn_date", "");
@@ -478,6 +478,15 @@ public class ImportService {
                 normalized.add(tx);
                 validRows++;
 
+                if (importPeriod != null && !importPeriod.equals(YearMonth.from(txnDate))) {
+                    outsidePeriodRows++;
+                }
+                String canonicalRow = canonicalRow(txnDate, amount, description, counterparty);
+                canonicalRows.add(canonicalRow);
+                if (!seenRows.add(canonicalRow)) {
+                    duplicateRows++;
+                }
+
                 if (row.containsKey("balance_end")) {
                     try {
                         lastBalanceEnd = parseAmount(row.get("balance_end"));
@@ -488,20 +497,47 @@ public class ImportService {
             }
 
             if (normalized.isEmpty()) {
-                job.setStatus(ImportStatus.ERROR);
-                job.setProcessedAt(Instant.now());
-                job.setUpdatedAt(job.getProcessedAt());
-                job.setWarningCount(warnings);
-                job.setErrorCount(1);
-                job.setLastError("NoValidRows");
+                job.setRowsReceived(nonEmptyRows);
+                job.setRowsValid(0);
                 if (nonEmptyRows == 0) {
-                    job.setErrorSummary("Import vacío o sin filas con datos (txn_date/amount). No se han modificado transacciones.");
+                    markBlocked(job, "NO_VALID_ROWS", "Import vacio o sin filas con datos (txn_date/amount). No se han modificado transacciones.", warnings, 1);
                 } else {
-                    job.setErrorSummary("0 filas válidas. Revisa formato de fecha/importe. No se han modificado transacciones.");
+                    markBlocked(job, "NO_VALID_ROWS", "0 filas validas. Revisa formato de fecha/importe. No se han modificado transacciones.", warnings, 1);
                 }
                 importJobRepository.save(job);
+                periodWorkflowService.syncFromImport(job);
                 return;
             }
+
+            job.setRowsReceived(nonEmptyRows);
+            job.setRowsValid(validRows);
+            String normalizedHash = normalizedHash(canonicalRows);
+            job.setNormalizedHash(normalizedHash);
+
+            BlockingDecision blocking = evaluateBlocking(job, nonEmptyRows, validRows, warnings, outsidePeriodRows, duplicateRows);
+            if (blocking != null) {
+                markBlocked(job, blocking.code(), blocking.reason(), warnings, Math.max(1, warnings));
+                importJobRepository.save(job);
+                periodWorkflowService.syncFromImport(job);
+                return;
+            }
+
+            ImportJob appliedDuplicate = latestAppliedDuplicate(job, normalizedHash);
+            if (appliedDuplicate != null) {
+                markBlocked(
+                    job,
+                    "DUPLICATE_NORMALIZED_HASH",
+                    "Este import no se aplico porque ya existe una version efectiva con el mismo contenido normalizado (import #" + appliedDuplicate.getId() + ").",
+                    warnings,
+                    0
+                );
+                job.setDuplicateOfImportId(appliedDuplicate.getId());
+                importJobRepository.save(job);
+                periodWorkflowService.syncFromImport(job);
+                return;
+            }
+
+            ImportJob previousApplied = latestAppliedImport(job.getCompany().getId(), job.getPeriod());
 
             transactionRepository.deleteByCompanyIdAndPeriod(job.getCompany().getId(), job.getPeriod());
             stagingRepository.saveAll(staging);
@@ -511,6 +547,11 @@ public class ImportService {
             job.setStatus(status);
             job.setWarningCount(warnings);
             job.setErrorCount(errors);
+            job.setSupersedesImportId(previousApplied == null ? null : previousApplied.getId());
+            job.setDuplicateOfImportId(null);
+            job.setBlockingCode(null);
+            job.setBlockingReason(null);
+            job.setAppliedAt(Instant.now());
             if (warnings > 0) {
                 errorSummary.append("Warnings: ").append(warnings).append(" invalid rows skipped.");
             }
@@ -519,10 +560,13 @@ public class ImportService {
             job.setUpdatedAt(job.getProcessedAt());
             job.setLastError(null);
             importJobRepository.save(job);
+            periodWorkflowService.syncFromImport(job);
 
             var kpi = kpiService.recompute(job.getCompany(), job.getPeriod(), lastBalanceEnd);
             alertService.evaluateMonthly(job.getCompany(), kpi);
-            maybeEnqueueDefaultDeliverable(job.getCompany().getId(), job.getPeriod());
+            if (status == ImportStatus.OK) {
+                maybeEnqueueDefaultCloseFlow(job.getCompany().getId(), job.getPeriod());
+            }
 
             try {
                 long durMs = Math.max(0L, (System.nanoTime() - startNs) / 1_000_000L);
@@ -583,24 +627,16 @@ public class ImportService {
         }
     }
 
-    private void maybeEnqueueDefaultDeliverable(Long companyId, String period) {
+    private void maybeEnqueueDefaultCloseFlow(Long companyId, String period) {
         try {
             if (companyId == null || period == null || period.isBlank()) return;
             if (!companySettingsService.autoMonthlyReportEnabled(companyId)) return;
-            if (reportRepository.findByCompanyIdAndPeriod(companyId, period).isPresent()) return;
-
-            boolean alreadyQueued = automationJobRepository.existsByCompany_IdAndTypeAndStatusInAndPayloadJsonContaining(
-                companyId,
-                AutomationJobType.GENERATE_MONTHLY_REPORT,
-                List.of(AutomationJobStatus.PENDING, AutomationJobStatus.RETRY, AutomationJobStatus.RUNNING),
-                "\"period\":\"" + period.trim() + "\""
-            );
-            if (alreadyQueued) return;
+            if (automationJobService.hasActiveJobForPeriod(companyId, AutomationJobType.ORCHESTRATE_PERIOD_CLOSE, period)) return;
 
             Map<String, Object> payload = new HashMap<>();
             payload.put("period", period.trim());
             String json = objectMapper.writeValueAsString(payload);
-            automationJobService.enqueue(companyId, AutomationJobType.GENERATE_MONTHLY_REPORT, Instant.now(), json);
+            automationJobService.enqueue(companyId, AutomationJobType.ORCHESTRATE_PERIOD_CLOSE, Instant.now(), json);
         } catch (Exception ignored) {}
     }
 
@@ -619,8 +655,141 @@ public class ImportService {
         job.setRunAfter(Instant.now());
         job.setUpdatedAt(Instant.now());
         job.setLastError(null);
+        job.setBlockingCode(null);
+        job.setBlockingReason(null);
         job.setErrorSummary("Manual retry requested.");
-        return importJobRepository.save(job);
+        job = importJobRepository.save(job);
+        periodWorkflowService.syncFromImport(job);
+        return job;
+    }
+
+    private ImportJob initializeJob(Company company,
+                                    String period,
+                                    String originalFilename,
+                                    String contentType,
+                                    String contentHash) {
+        ImportJob job = new ImportJob();
+        job.setCompany(company);
+        job.setPeriod(period);
+        job.setStatus(ImportStatus.PENDING);
+        job.setCreatedAt(Instant.now());
+        job.setUpdatedAt(job.getCreatedAt());
+        job.setRunAfter(job.getCreatedAt());
+        job.setAttempts(0);
+        job.setMaxAttempts(3);
+        job.setOriginalFilename(originalFilename);
+        job.setContentType(contentType);
+        job.setContentHash(contentHash);
+        job.setVersionNo(nextVersionNo(company.getId(), period));
+        return job;
+    }
+
+    private int nextVersionNo(Long companyId, String period) {
+        return importJobRepository.findFirstByCompanyIdAndPeriodOrderByVersionNoDescCreatedAtDesc(companyId, period)
+            .map(ImportJob::getVersionNo)
+            .map(v -> Math.max(1, v + 1))
+            .orElse(1);
+    }
+
+    private void maybeBlockExactDuplicate(ImportJob job) {
+        if (job == null || job.getContentHash() == null || job.getContentHash().isBlank()) return;
+        List<ImportJob> duplicates = importJobRepository.findDuplicatesByContentHash(
+            job.getCompany().getId(),
+            job.getPeriod(),
+            job.getContentHash(),
+            job.getId()
+        );
+        if (duplicates.isEmpty()) return;
+        ImportJob previous = duplicates.get(0);
+        markBlocked(
+            job,
+            "DUPLICATE_CONTENT_HASH",
+            "El fichero es identico a un import previo (import #" + previous.getId() + ", version " + safeVersion(previous) + ").",
+            0,
+            0
+        );
+        job.setDuplicateOfImportId(previous.getId());
+    }
+
+    private ImportJob latestAppliedImport(Long companyId, String period) {
+        return importJobRepository.findFirstByCompanyIdAndPeriodAndAppliedAtNotNullOrderByAppliedAtDesc(companyId, period).orElse(null);
+    }
+
+    private ImportJob latestAppliedDuplicate(ImportJob job, String normalizedHash) {
+        if (job == null || normalizedHash == null || normalizedHash.isBlank()) return null;
+        return importJobRepository.findAppliedDuplicatesByNormalizedHash(
+            job.getCompany().getId(),
+            job.getPeriod(),
+            normalizedHash,
+            job.getId()
+        ).stream().findFirst().orElse(null);
+    }
+
+    private BlockingDecision evaluateBlocking(ImportJob job,
+                                              int rowsReceived,
+                                              int rowsValid,
+                                              int warnings,
+                                              int outsidePeriodRows,
+                                              int duplicateRows) {
+        if (rowsValid < minValidRows) {
+            return new BlockingDecision(
+                "MIN_VALID_ROWS",
+                "El import se bloqueo porque solo hay " + rowsValid + " fila(s) valida(s); el minimo configurado es " + minValidRows + "."
+            );
+        }
+
+        double warningRate = rowsReceived <= 0 ? 0d : (double) warnings / (double) rowsReceived;
+        if (warningRate > maxWarningRate) {
+            return new BlockingDecision(
+                "HIGH_WARNING_RATE",
+                "El import se bloqueo porque el " + pct(warningRate) + " de las filas tiene errores; el maximo permitido es " + pct(maxWarningRate) + "."
+            );
+        }
+
+        if (blockOnOutsidePeriodRows && outsidePeriodRows > 0) {
+            return new BlockingDecision(
+                "OUTSIDE_PERIOD_ROWS",
+                "El import se bloqueo porque contiene " + outsidePeriodRows + " fila(s) fuera del periodo " + job.getPeriod() + "."
+            );
+        }
+
+        double duplicateRate = rowsValid <= 0 ? 0d : (double) duplicateRows / (double) rowsValid;
+        if (duplicateRate > maxDuplicateRate) {
+            return new BlockingDecision(
+                "HIGH_DUPLICATE_RATE",
+                "El import se bloqueo porque el " + pct(duplicateRate) + " de las filas validas parece duplicado; el maximo permitido es " + pct(maxDuplicateRate) + "."
+            );
+        }
+
+        return null;
+    }
+
+    private void markRejectedValidation(ImportJob job, String code, String reason) {
+        markBlocked(job, code, reason, 0, 1);
+        job.setStatus(ImportStatus.DEAD);
+    }
+
+    private void markBlocked(ImportJob job, String code, String reason, int warnings, int errors) {
+        Instant now = Instant.now();
+        job.setStatus(ImportStatus.BLOCKED);
+        job.setProcessedAt(now);
+        job.setUpdatedAt(now);
+        job.setRunAfter(null);
+        job.setAppliedAt(null);
+        job.setBlockingCode(code);
+        job.setBlockingReason(reason);
+        job.setLastError(code);
+        job.setErrorSummary(reason);
+        job.setWarningCount(Math.max(0, warnings));
+        job.setErrorCount(Math.max(0, errors));
+    }
+
+    private static String safeVersion(ImportJob job) {
+        return job == null || job.getVersionNo() == null ? "?" : String.valueOf(job.getVersionNo());
+    }
+
+    private static String pct(double value) {
+        return String.format(java.util.Locale.ROOT, "%.0f%%", value * 100d);
     }
 
     private void handleFailure(ImportJob job, Exception ex) {
@@ -651,6 +820,7 @@ public class ImportService {
             job.setErrorCount(1);
             job.setErrorSummary("Import failed permanently: " + job.getLastError());
             importJobRepository.save(job);
+            periodWorkflowService.syncFromImport(job);
             return;
         }
 
@@ -659,12 +829,75 @@ public class ImportService {
         job.setRunAfter(Instant.now().plusSeconds(backoffSeconds));
         job.setErrorSummary("Retry scheduled in " + backoffSeconds + "s. " + job.getLastError());
         importJobRepository.save(job);
+        periodWorkflowService.syncFromImport(job);
     }
 
     private Path resolveImportPath(ImportJob job) {
         String ref = job.getStorageRef();
         if (ref == null || ref.isBlank()) return importsRoot.resolve("import-" + job.getId() + ".csv");
         return importsRoot.resolve(ref);
+    }
+
+    private static String copyToFileAndSha256(InputStream input, Path target) throws IOException {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            try (DigestInputStream dis = new DigestInputStream(input, digest)) {
+                Files.copy(dis, target);
+            }
+            return hex(digest.digest());
+        } catch (java.security.GeneralSecurityException ex) {
+            throw new IllegalStateException("Cannot compute SHA-256", ex);
+        }
+    }
+
+    private static String sha256Hex(byte[] bytes) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            return hex(digest.digest(bytes));
+        } catch (java.security.GeneralSecurityException ex) {
+            throw new IllegalStateException("Cannot compute SHA-256", ex);
+        }
+    }
+
+    private static String normalizedHash(List<String> canonicalRows) {
+        if (canonicalRows == null || canonicalRows.isEmpty()) return null;
+        List<String> copy = new ArrayList<>(canonicalRows);
+        Collections.sort(copy);
+        return sha256Hex(String.join("\n", copy).getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static String canonicalRow(LocalDate txnDate, BigDecimal amount, String description, String counterparty) {
+        return txnDate
+            + "|"
+            + amount.stripTrailingZeros().toPlainString()
+            + "|"
+            + normalizeTiny(description)
+            + "|"
+            + normalizeTiny(counterparty);
+    }
+
+    private static String normalizeTiny(String raw) {
+        String s = raw == null ? "" : raw.trim().toLowerCase(java.util.Locale.ROOT);
+        s = s.replaceAll("\\s+", " ");
+        return s;
+    }
+
+    private static YearMonth parseImportPeriod(String period) {
+        if (period == null || period.isBlank()) return null;
+        try {
+            return YearMonth.parse(period.trim());
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private static String hex(byte[] bytes) {
+        StringBuilder out = new StringBuilder(bytes.length * 2);
+        for (byte b : bytes) {
+            out.append(Character.forDigit((b >> 4) & 0xF, 16));
+            out.append(Character.forDigit(b & 0xF, 16));
+        }
+        return out.toString();
     }
 
     private static String safeContentType(String raw) {
@@ -936,4 +1169,6 @@ public class ImportService {
         if (ext.equals(".xlsx") || ext.equals(".csv")) return ext;
         return ".csv";
     }
+
+    private record BlockingDecision(String code, String reason) {}
 }

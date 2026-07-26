@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+﻿import { useEffect, useMemo, useRef, useState } from 'react'
 import type { EChartsCoreOption, EChartsType } from './echarts'
 import Button from '../ui/Button'
 import Skeleton from '../ui/Skeleton'
@@ -99,7 +99,7 @@ function baseOption(module: ChartModule): EChartsCoreOption {
     animationDurationUpdate: 260,
     animationEasingUpdate: 'cubicOut',
     textStyle: { color: '#e2e8f0', fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif', fontSize: 12 },
-    grid: { left: 14, right: 14, top: 30, bottom: 26, containLabel: true },
+    grid: { left: 16, right: 16, top: 34, bottom: 30, containLabel: true },
     legend: {
       top: 0,
       left: 0,
@@ -127,11 +127,13 @@ function baseOption(module: ChartModule): EChartsCoreOption {
       borderWidth: 1,
       backgroundColor: 'rgba(15, 23, 42, 0.95)',
       borderColor: 'rgba(148, 163, 184, 0.22)',
+      padding: [10, 12],
+      extraCssText: 'box-shadow: 0 18px 40px rgba(2, 8, 20, 0.45); border-radius: 12px;',
       textStyle: { color: '#e2e8f0', fontSize: 12 },
       axisPointer: {
         type: 'cross',
         crossStyle: { color: 'rgba(148, 163, 184, 0.2)' },
-        lineStyle: { color: 'rgba(148, 163, 184, 0.18)' },
+        lineStyle: { color: 'rgba(96, 165, 250, 0.24)', width: 1.2 },
         label: {
           show: true,
           backgroundColor: 'rgba(15, 23, 42, 0.92)',
@@ -167,6 +169,7 @@ function polishSeries(option: any): any {
 
     const emphasis = { ...(base.emphasis || {}), focus: (base.emphasis?.focus ?? 'series') as any }
     base.emphasis = emphasis
+    base.blur = { ...(base.blur || {}), lineStyle: { opacity: 0.2 }, itemStyle: { opacity: 0.3 } }
 
     if (type === 'line') {
       if (base.smooth == null) base.smooth = true
@@ -183,7 +186,16 @@ function polishSeries(option: any): any {
 
       base.emphasis = {
         ...base.emphasis,
-        scale: base.emphasis?.scale ?? true
+        scale: base.emphasis?.scale ?? true,
+        lineStyle: {
+          ...(base.emphasis?.lineStyle || {}),
+          width: (base.emphasis?.lineStyle as any)?.width ?? Math.max(4, Number(base.lineStyle?.width || 3) + 1)
+        },
+        itemStyle: {
+          ...(base.emphasis?.itemStyle || {}),
+          borderColor: (base.emphasis?.itemStyle as any)?.borderColor ?? 'rgba(255,255,255,0.78)',
+          borderWidth: (base.emphasis?.itemStyle as any)?.borderWidth ?? 2
+        }
       }
     }
 
@@ -195,6 +207,16 @@ function polishSeries(option: any): any {
       if (itemStyle.shadowOffsetY == null) itemStyle.shadowOffsetY = 10
       if (itemStyle.shadowColor == null) itemStyle.shadowColor = 'rgba(2, 8, 20, 0.5)'
       base.itemStyle = itemStyle
+      base.emphasis = {
+        ...base.emphasis,
+        itemStyle: {
+          ...(base.emphasis?.itemStyle || {}),
+          borderColor: (base.emphasis?.itemStyle as any)?.borderColor ?? 'rgba(255,255,255,0.34)',
+          borderWidth: (base.emphasis?.itemStyle as any)?.borderWidth ?? 1.2,
+          shadowBlur: (base.emphasis?.itemStyle as any)?.shadowBlur ?? 26,
+          shadowOffsetY: (base.emphasis?.itemStyle as any)?.shadowOffsetY ?? 14
+        }
+      }
     }
 
     return base
@@ -275,7 +297,7 @@ export default function EChart({
   error,
   emptyTitle = 'Sin datos',
   emptyHint = 'Sube un CSV/XLSX o ajusta filtros/periodo para ver resultados.',
-  errorTitle = 'No se pudo cargar la gráfica',
+  errorTitle = 'Gráfica no disponible',
   errorHint = 'Refresca la página. Si persiste, revisa el import o el límite de filas.',
   actions = true,
   valueSuffix = '',
@@ -288,6 +310,7 @@ export default function EChart({
   const elRef = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<EChartsType | null>(null)
   const [ready, setReady] = useState(false)
+  const [hasInteractiveFocus, setHasInteractiveFocus] = useState(false)
 
   const mergedOption = useMemo(() => {
     const withTheme = mergeOptions(baseOption(module), option)
@@ -381,11 +404,13 @@ export default function EChart({
       if (!axisValue) return
       if (axisValue === lastAxisValue) return
       lastAxisValue = axisValue
+      setHasInteractiveFocus(true)
       onAxisHover(axisValue)
     }
 
     const handleGlobalOut = () => {
       lastAxisValue = null
+      setHasInteractiveFocus(false)
       onLeave?.()
     }
 
@@ -467,6 +492,10 @@ export default function EChart({
 
   const resolvedHeight = typeof height === 'number' && height > 0 ? height : 260
 
+  useEffect(() => {
+    if (showSkeleton || error || isEmpty) setHasInteractiveFocus(false)
+  }, [showSkeleton, error, isEmpty])
+
   const heightClass = (() => {
     switch (resolvedHeight) {
       case 240:
@@ -487,7 +516,13 @@ export default function EChart({
   const canvasHidden = showSkeleton || !!error || isEmpty
 
   return (
-    <div className={`chart-shell ${heightClass} ${className || ''}`.trim()}>
+    <div
+      className={`chart-shell ${hasInteractiveFocus ? 'chart-shell-active' : ''} ${heightClass} ${className || ''}`.trim()}
+      onMouseLeave={() => {
+        setHasInteractiveFocus(false)
+        onLeave?.()
+      }}
+    >
       {showSkeleton ? <Skeleton className="chart-skeleton" /> : null}
       {!showSkeleton && error ? (
         <div className="empty chart-state">
@@ -521,3 +556,4 @@ export default function EChart({
     </div>
   )
 }
+

@@ -1,6 +1,8 @@
-﻿import { useQuery, useQueryClient } from '@tanstack/react-query'
+// @ts-nocheck
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   getImports,
+  getReports,
   getCompanyMapping,
   getImportQuality,
   previewImport,
@@ -12,6 +14,7 @@ import {
   uploadImportSmart,
   uploadTribunalImport,
   uploadUniversalImport,
+  type UniversalSummaryDto,
   type UniversalXlsxPreview
 } from '../api'
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
@@ -22,16 +25,24 @@ import Button from '../components/ui/Button'
 import { useToast } from '../components/ui/ToastProvider'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { getWorkPeriod, nowYm } from '../utils/workPeriod'
+import { intakeDetail, intakeDisplayLabel, intakeKind, isAnnualBudgetDiagnosis } from '../utils/intakeDiagnosis'
 
 export default function ImportsPage() {
   const { id: companyId, plan } = useCompanySelection()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
+  const annualFlow = String(searchParams.get('flow') || '').toLowerCase() === 'budget'
+  const annualFocus = String(searchParams.get('focus') || '').toLowerCase()
   const queryClient = useQueryClient()
   const toast = useToast()
   const { data } = useQuery({
     queryKey: ['imports', companyId],
     queryFn: () => getImports(companyId as number),
+    enabled: !!companyId
+  })
+  const { data: reports } = useQuery({
+    queryKey: ['imports-flow-reports', companyId],
+    queryFn: () => getReports(companyId as number),
     enabled: !!companyId
   })
   const [mode, setMode] = useState<'auto' | 'transactions' | 'universal'>('auto')
@@ -41,6 +52,7 @@ export default function ImportsPage() {
   useEffect(() => {
     const m = String(searchParams.get('mode') || '').toLowerCase()
     if (m === 'auto' || m === 'transactions' || m === 'universal') setMode(m as any)
+    if (String(searchParams.get('flow') || '').toLowerCase() === 'budget') setMode('universal')
     // only apply on initial navigation
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -91,6 +103,78 @@ export default function ImportsPage() {
   const canPreviewXlsx = !!companyId && (mode === 'universal' || mode === 'auto') && isXlsx && !!file
   const isBatch = batchFiles.length > 1
   const batchAbortRef = useRef<{ abort: boolean }>({ abort: false })
+  const modeSectionRef = useRef<HTMLDivElement | null>(null)
+  const uploadSectionRef = useRef<HTMLDivElement | null>(null)
+  const exceptionSectionRef = useRef<HTMLDetailsElement | null>(null)
+
+  function finishUniversalUpload(result: UniversalSummaryDto, sourceLabel: 'AUTO' | 'UNIVERSAL') {
+    const diagnosis = result?.intakeDiagnosis || null
+    const detectedAnnualBudget = isAnnualBudgetDiagnosis(diagnosis)
+    const detectedLabel = intakeDisplayLabel(diagnosis, 'tabla analitica')
+    const detectedDetail = intakeDetail(diagnosis)
+    const detectedKind = intakeKind(diagnosis)
+
+    setTone(annualFlow && !detectedAnnualBudget ? 'info' : 'success')
+
+    if (annualFlow) {
+      if (detectedAnnualBudget) {
+        setMessage('Plan anual detectado. Volvemos a Plan anual para validar la lectura.')
+        toast.push({ tone: 'success', title: 'Plan anual', message: 'Fichero anual detectado. Abriendo el flujo anual.' })
+        navigate('/budget?source=upload')
+        return
+      }
+
+      setMessage('El fichero se ha cargado, pero no parece un plan anual. Lo abrimos en Universal para revisarlo.')
+      toast.push({
+        tone: 'warning',
+        title: 'No parece presupuesto',
+        message: `${detectedLabel}. Revisalo en Universal antes de usarlo como plan anual.`
+      })
+      navigate('/universal')
+      return
+    }
+
+    if (detectedAnnualBudget) {
+      setMessage('Plan anual detectado. Lo abrimos directamente en Plan anual.')
+      toast.push({ tone: 'success', title: 'Plan anual', message: 'Presupuesto anual detectado correctamente.' })
+      navigate('/budget?source=upload')
+      return
+    }
+
+    if (detectedKind === 'CASH_TRANSACTIONS') {
+      setMessage('Parece un fichero de caja. La lectura queda en Universal y la ruta operativa natural es Caja.')
+      toast.push({
+        tone: 'info',
+        title: 'Caja detectada',
+        message: 'Si quieres cierre mensual, el siguiente paso natural es Caja.'
+      })
+      navigate('/universal')
+      return
+    }
+
+    if (detectedKind === 'TRIBUNAL_PORTFOLIO') {
+      setMessage('Parece una cartera operativa. La lectura queda en Universal y la ruta natural es Tribunal.')
+      toast.push({
+        tone: 'info',
+        title: 'Tribunal detectado',
+        message: 'El fichero encaja mejor en cartera operativa que en una carga mensual.'
+      })
+      navigate('/universal')
+      return
+    }
+
+    setMessage(
+      detectedDetail
+        ? `${detectedLabel}. ${detectedDetail}`
+        : `Archivo analizado en Universal${sourceLabel === 'AUTO' ? ' (auto)' : ''}.`
+    )
+    toast.push({
+      tone: 'success',
+      title: sourceLabel === 'AUTO' ? 'Universal (auto)' : 'Universal',
+      message: detectedDetail || 'Archivo analizado correctamente.'
+    })
+    navigate('/universal')
+  }
 
   type BatchItem = {
     file: File
@@ -100,7 +184,48 @@ export default function ImportsPage() {
     message?: string
   }
 
+  type ExceptionInboxEntry = {
+    severity: 'HIGH' | 'MEDIUM' | 'LOW'
+    code: string
+    title: string
+    detail: string
+    action: string
+    evidence?: string
+  }
+
   const [batchItems, setBatchItems] = useState<BatchItem[]>([])
+  const workflowHref = `/monthly-close?period=${encodeURIComponent(period)}`
+  const selectedPeriodImport = useMemo(() => {
+    const list = ((data || []) as ImportJob[]).filter((item) => String(item.period || '') === String(period || ''))
+    return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0] || null
+  }, [data, period])
+  const selectedPeriodReport = useMemo(() => {
+    return ((reports || []) as any[]).find((item) => String(item?.period || '') === String(period || '')) || null
+  }, [period, reports])
+  const selectedPeriodFlow = useMemo(() => {
+    const importState = !companyId
+      ? { title: 'Sin empresa gestionada', detail: 'Selecciona una empresa gestionada para activar el flujo de este periodo.' }
+      : !selectedPeriodImport
+        ? { title: 'Carga pendiente', detail: 'Todavía no hay un import registrado para este periodo.' }
+        : selectedPeriodImport.status === 'OK'
+          ? { title: 'Datos cargados', detail: 'El import del periodo terminó correctamente.' }
+          : selectedPeriodImport.status === 'WARNING'
+            ? { title: 'Datos con avisos', detail: 'El periodo está cargado, pero conviene revisar calidad antes de seguir.' }
+            : { title: `Import ${selectedPeriodImport.status}`, detail: 'El flujo está bloqueado hasta corregir o reintentar esta carga.' }
+
+    const reviewReady = !!selectedPeriodImport && ['OK', 'WARNING'].includes(String(selectedPeriodImport.status || ''))
+    const reportReady = !!selectedPeriodReport
+
+    return {
+      importState,
+      reviewState: reviewReady
+        ? { title: 'Lectura disponible', detail: 'Ya puedes validar este periodo en Vista ejecutiva o Caja.' }
+        : { title: 'Lectura bloqueada', detail: 'Primero necesitas un import válido para revisar el periodo.' },
+      reportState: reportReady
+        ? { title: 'PDF disponible', detail: 'Este periodo ya tiene al menos un entregable generado.' }
+        : { title: 'PDF pendiente', detail: 'Cuando valides la lectura, podrás cerrar el periodo en Entregables.' }
+    }
+  }, [companyId, selectedPeriodImport, selectedPeriodReport])
 
   function nowYmMinus(months: number) {
     const d = new Date()
@@ -168,12 +293,12 @@ export default function ImportsPage() {
         }
       case 'presupuesto':
         return {
-          title: 'Presupuesto (XLSX)',
+          title: 'Plan anual (XLSX)',
           href: '/samples/presupuesto-ejemplo.xlsx',
           bullets: [
             <>Sube el XLSX por Universal (si tiene varias hojas, usa modo guiado).</>,
             <>
-              Luego ve al dashboard <strong>Presupuesto</strong> para validar “long” e insights.
+              Luego ve al <strong>plan anual</strong> para validar la lectura, y al análisis técnico para revisar “long” e insights.
             </>,
             <>Tip: si hay meses a cero, suele ser cabecera/fila incorrecta.</>
           ]
@@ -360,7 +485,7 @@ export default function ImportsPage() {
   const importsForUi = useMemo(() => {
     let out = [...(data || [])]
     if (!showDeadImports) out = out.filter((i) => i.status !== 'DEAD')
-    if (showOnlyFailedImports) out = out.filter((i) => i.status === 'ERROR' || i.status === 'DEAD' || i.status === 'WARNING')
+    if (showOnlyFailedImports) out = out.filter((i) => i.status === 'ERROR' || i.status === 'DEAD' || i.status === 'WARNING' || i.status === 'BLOCKED')
     out = out.slice(0, showAllImports ? 10 : 3)
     return out
   }, [data, showAllImports, showDeadImports, showOnlyFailedImports])
@@ -395,6 +520,350 @@ export default function ImportsPage() {
     const label = high ? `${high} crítico` : med ? `${med} medio` : low ? `${low} leve` : 'OK'
     return { badge, label }
   }
+
+  const statusBadgeClass = (status: ImportJob['status']) =>
+    status === 'OK'
+      ? 'ok'
+      : status === 'WARNING'
+      ? 'warn'
+      : status === 'ERROR' || status === 'DEAD' || status === 'BLOCKED'
+      ? 'err'
+      : ''
+
+  const severityBadgeClass = (severity: string) => {
+    const normalized = String(severity || '').toUpperCase()
+    return normalized === 'HIGH' ? 'err' : normalized === 'MEDIUM' ? 'warn' : 'ok'
+  }
+
+  const formatRate = (value: number | null | undefined, total: number | null | undefined) => {
+    const safeValue = Number(value || 0)
+    const safeTotal = Number(total || 0)
+    if (!safeTotal) return null
+    return `${Math.round((safeValue / safeTotal) * 100)}%`
+  }
+
+  const blockingMeta = (code: string | null | undefined) => {
+    switch (String(code || '').toUpperCase()) {
+      case 'DUPLICATE_CONTENT_HASH':
+        return {
+          title: 'El fichero ya se había cargado exactamente igual.',
+          action: 'No lo reintentes. Revisa si esa versión ya está aplicada y sube solo una variante real.'
+        }
+      case 'DUPLICATE_NORMALIZED_HASH':
+        return {
+          title: 'Los datos efectivos coinciden con una versión ya aplicada.',
+          action: 'Evita reprocesar el mismo periodo. Si cambió algo, sube una versión corregida con contenido distinto.'
+        }
+      case 'MIN_VALID_ROWS':
+        return {
+          title: 'No hay suficientes filas válidas para confiar en el import.',
+          action: 'Reexporta el Excel/CSV, revisa cabeceras y valida formato de fecha e importe antes de subirlo de nuevo.'
+        }
+      case 'HIGH_WARNING_RATE':
+        return {
+          title: 'La tasa de incidencias supera el umbral de calidad.',
+          action: 'Corrige el origen o limpia el fichero antes de reintentar para no contaminar los cuadros de mando.'
+        }
+      case 'OUTSIDE_PERIOD_ROWS':
+        return {
+          title: 'Hay movimientos fuera del periodo declarado.',
+          action: 'Separa por meses o corrige el periodo objetivo antes de volver a subir el fichero.'
+        }
+      case 'HIGH_DUPLICATE_RATE':
+        return {
+          title: 'El fichero trae demasiados duplicados.',
+          action: 'Depura duplicados en origen o conserva una única línea por movimiento antes de reimportar.'
+        }
+      default:
+        return {
+          title: 'El import quedó bloqueado por reglas de ingestión.',
+          action: 'Revisa la causa y vuelve a subir una versión corregida del fichero.'
+        }
+    }
+  }
+
+  const qualityIssueAction = (code: string | null | undefined) => {
+    switch (String(code || '').toUpperCase()) {
+      case 'MISSING_TXN_DATE':
+      case 'DATE_PARSE_ERRORS':
+        return 'Normaliza la columna de fecha y asegúrate de que todas las filas usan un formato consistente.'
+      case 'MISSING_AMOUNT':
+      case 'AMOUNT_PARSE_ERRORS':
+        return 'Convierte importes a número limpio, sin texto embebido ni separadores ambiguos.'
+      case 'OUTSIDE_PERIOD_ROWS':
+        return 'Saca del fichero los asientos que pertenecen a otros meses o cambia el periodo de carga.'
+      case 'DUPLICATE_ROWS':
+        return 'Elimina movimientos repetidos para no inflar KPIs, saldos y tendencias.'
+      case 'MISSING_COUNTERPARTY':
+        return 'Completa la contraparte si quieres una lectura más útil de clientes, proveedores y dispersión.'
+      case 'BALANCE_END_MISMATCH':
+        return 'Revisa el saldo final informado porque no está cuadrando con la secuencia de movimientos.'
+      default:
+        return 'Revisa esta incidencia antes de dar por buena la carga o de seguir con el dashboard.'
+    }
+  }
+
+  const buildImportExceptionEntries = (imp: ImportJob): ExceptionInboxEntry[] => {
+    const entries: ExceptionInboxEntry[] = []
+    const info = summarizeImport(imp)
+    const warningRate = formatRate((imp.rowsReceived ?? 0) - (imp.rowsValid ?? 0), imp.rowsReceived)
+
+    if (imp.status === 'BLOCKED') {
+      const meta = blockingMeta(imp.blockingCode)
+      entries.push({
+        severity: 'HIGH',
+        code: imp.blockingCode || 'BLOCKED',
+        title: meta.title,
+        detail: imp.blockingReason || info.title,
+        action: meta.action,
+        evidence:
+          [
+            imp.versionNo ? `Versión ${imp.versionNo}` : null,
+            imp.rowsValid != null && imp.rowsReceived != null ? `${imp.rowsValid}/${imp.rowsReceived} filas válidas` : null,
+            imp.duplicateOfImportId ? `Duplica al import #${imp.duplicateOfImportId}` : null
+          ]
+            .filter(Boolean)
+            .join(' · ') || undefined
+      })
+    }
+
+    if (imp.status === 'ERROR' || imp.status === 'DEAD') {
+      entries.push({
+        severity: 'HIGH',
+        code: imp.status,
+        title: info.title,
+        detail: info.raw || 'El proceso no pudo completar la ingestión.',
+        action: info.fix || 'Revisa el fichero fuente, corrige el problema y vuelve a subirlo.',
+        evidence: imp.attempts != null ? `Intentos ${imp.attempts}/${imp.maxAttempts ?? 3}` : undefined
+      })
+    }
+
+    if (imp.status === 'WARNING') {
+      entries.push({
+        severity: 'MEDIUM',
+        code: 'WARNING_IMPORT',
+        title: 'El import terminó, pero dejó incidencias que merecen revisión.',
+        detail:
+          imp.errorSummary ||
+          imp.lastError ||
+          'La carga se procesó con avisos y puede introducir ruido en la lectura ejecutiva.',
+        action: 'Abre la bandeja, valida las incidencias y decide si basta con aceptar la carga o conviene rehacerla.',
+        evidence:
+          [
+            imp.warningCount ? `${imp.warningCount} warnings` : null,
+            warningRate ? `${warningRate} de filas con incidencias` : null,
+            imp.supersedesImportId ? `Sustituye al import #${imp.supersedesImportId}` : null
+          ]
+            .filter(Boolean)
+            .join(' · ') || undefined
+      })
+    }
+
+    return entries
+  }
+
+  const importRowNextStep = (imp: ImportJob) => {
+    const info = summarizeImport(imp)
+
+    if (imp.status === 'BLOCKED') {
+      const meta = blockingMeta(imp.blockingCode)
+      return {
+        title: 'Corregir y volver a subir',
+        detail: meta.action
+      }
+    }
+
+    if (imp.status === 'ERROR' || imp.status === 'DEAD') {
+      return {
+        title: info.canRetry ? 'Reintentar o rehacer fichero' : 'Volver a subir fichero',
+        detail: info.fix || 'Revisa el origen, corrige el problema y lanza una nueva versión.'
+      }
+    }
+
+    if (imp.status === 'WARNING') {
+      return {
+        title: 'Abrir excepciones',
+        detail: 'Valida las incidencias de calidad antes de dar esta carga por buena o seguir con el cierre.'
+      }
+    }
+
+    if (imp.status === 'OK') {
+      return {
+        title: 'Seguir con el cierre',
+        detail: 'La base es utilizable. Desde aquí ya toca revisar el periodo o preparar el entregable.'
+      }
+    }
+
+    return {
+      title: 'Esperar procesamiento',
+      detail: 'La carga todavía no ha terminado de resolverse por completo.'
+    }
+  }
+
+  const attentionImports = useMemo(() => {
+    const list = ((data || []) as ImportJob[]).filter((imp) => {
+      return imp.status === 'WARNING' || imp.status === 'BLOCKED' || imp.status === 'ERROR' || imp.status === 'DEAD'
+    })
+
+    return list
+      .map((imp) => {
+        const entries = buildImportExceptionEntries(imp)
+        const top = entries[0]
+        const priority = top?.severity === 'HIGH' ? 3 : top?.severity === 'MEDIUM' ? 2 : 1
+        return { imp, entries, top, priority }
+      })
+      .sort((a, b) => {
+        if (b.priority !== a.priority) return b.priority - a.priority
+        return new Date(b.imp.createdAt).getTime() - new Date(a.imp.createdAt).getTime()
+      })
+  }, [data])
+
+  const attentionSummary = useMemo(() => {
+    const blocked = attentionImports.filter((item) => item.imp.status === 'BLOCKED').length
+    const warnings = attentionImports.filter((item) => item.imp.status === 'WARNING').length
+    const technical = attentionImports.filter((item) => item.imp.status === 'ERROR' || item.imp.status === 'DEAD').length
+    return { blocked, warnings, technical }
+  }, [attentionImports])
+
+  const importDecisionState = useMemo(() => {
+    if (!companyId) {
+      return {
+        title: 'Selecciona una empresa gestionada',
+        detail: 'Sin empresa no podemos cargar, revisar excepciones ni cerrar el periodo.'
+      }
+    }
+
+    if (attentionSummary.blocked || attentionSummary.technical) {
+      return {
+        title: 'La ingestión necesita intervención',
+        detail: 'Hay bloqueos o fallos técnicos abiertos. Conviene resolverlos antes de seguir con lectura o entregable.'
+      }
+    }
+
+    if (attentionSummary.warnings) {
+      return {
+        title: 'Hay cargas con avisos',
+        detail: 'La base existe, pero todavía merece una revisión rápida de calidad antes de dar el periodo por bueno.'
+      }
+    }
+
+    if (file) {
+      return {
+        title: 'Fichero listo para subir',
+        detail: `Ya has preparado ${file.name}. El siguiente paso es cargarlo y validar cómo lo interpreta el sistema.`
+      }
+    }
+
+    if (selectedPeriodImport && ['OK', 'WARNING'].includes(String(selectedPeriodImport.status || ''))) {
+      return {
+        title: 'Periodo listo para revisión',
+        detail: 'La base del periodo ya existe. Desde aquí toca revisar excepciones si las hubiera o seguir el cierre mensual.'
+      }
+    }
+
+    return {
+      title: 'Arranca la carga del periodo',
+      detail: 'Sube un CSV o XLSX limpio y deja que Imports active el resto del flujo operativo.'
+    }
+  }, [attentionSummary.blocked, attentionSummary.technical, attentionSummary.warnings, companyId, file, selectedPeriodImport])
+
+  const importsNextAction = useMemo(() => {
+    if (!companyId) {
+      return {
+        label: 'Selecciona empresa',
+        detail: 'Empieza activando una empresa gestionada para operar sobre su periodo.',
+        kind: 'idle' as const
+      }
+    }
+
+    if (attentionImports.length) {
+      return {
+        label: 'Revisar excepciones',
+        detail: 'Prioriza bloqueos, avisos o fallos antes de subir más versiones o seguir el cierre.',
+        kind: 'exceptions' as const
+      }
+    }
+
+    if (file || !selectedPeriodImport) {
+      return {
+        label: 'Elegir modo y subir',
+        detail: file
+          ? 'El fichero ya está preparado, pero primero conviene confirmar el modo correcto antes de subirlo.'
+          : 'Empieza eligiendo cómo debe leer el sistema este fichero y después súbelo.',
+        kind: 'upload' as const
+      }
+    }
+
+    if (selectedPeriodReport) {
+      return {
+        label: 'Abrir informe',
+        detail: 'Ya existe un entregable para este periodo. Revísalo o compártelo desde Informes.',
+        kind: 'route' as const,
+        href: '/reports'
+      }
+    }
+
+    return {
+      label: 'Abrir cierre mensual',
+      detail: 'La siguiente pantalla natural ya no es Imports: es el workflow oficial del periodo.',
+      kind: 'route' as const,
+      href: workflowHref
+    }
+  }, [attentionImports.length, companyId, file, selectedPeriodImport, selectedPeriodReport, workflowHref])
+  const importsSupportOpen = attentionImports.length > 0
+
+  const openImport = useMemo(() => {
+    return ((data || []) as ImportJob[]).find((item) => item.id === qualityOpenId) || null
+  }, [data, qualityOpenId])
+
+  const openImportExceptions = useMemo(() => {
+    if (!openImport) return []
+    return buildImportExceptionEntries(openImport)
+  }, [openImport])
+
+  const qualityExceptions = useMemo(() => {
+    if (!quality) return []
+    return (Array.isArray(quality.issues) ? quality.issues : []).map((issue) => ({
+      severity: String(issue.severity || '').toUpperCase() === 'HIGH' ? 'HIGH' : String(issue.severity || '').toUpperCase() === 'MEDIUM' ? 'MEDIUM' : 'LOW',
+      code: issue.code,
+      title: issue.title,
+      detail: issue.detail,
+      action: qualityIssueAction(issue.code)
+    })) as ExceptionInboxEntry[]
+  }, [quality])
+
+  const openImportAllIssues = useMemo(() => {
+    return [...openImportExceptions, ...qualityExceptions]
+  }, [openImportExceptions, qualityExceptions])
+
+  const openImportDecisionState = useMemo(() => {
+    if (!openImport) {
+      return {
+        title: 'Sin carga abierta',
+        detail: 'Abre una carga para revisar su bandeja de excepciones.'
+      }
+    }
+
+    if (qualityLoading) {
+      return {
+        title: 'Analizando calidad',
+        detail: 'Estamos leyendo incidencias operativas y de calidad para esta carga.'
+      }
+    }
+
+    const primaryIssue = openImportAllIssues[0]
+    if (primaryIssue) {
+      return {
+        title: primaryIssue.title,
+        detail: primaryIssue.action
+      }
+    }
+
+    return {
+      title: 'Carga estable',
+      detail: 'No se detectan incidencias abiertas. Esta base ya puede sostener la revisión del periodo.'
+    }
+  }, [openImport, openImportAllIssues, qualityLoading])
 
   const tribunalHint = useMemo(() => {
     const headers = txPreview?.headers || []
@@ -744,13 +1213,13 @@ export default function ImportsPage() {
           file.name.toLowerCase().endsWith('.xlsx')
             ? { sheetIndex: sheetIndex ?? xlsxPreview?.sheetIndex ?? undefined, headerRow: headerRow ?? xlsxPreview?.headerRow ?? undefined }
             : {}
-        await uploadUniversalImport(companyId, file, opts)
+        const result = await uploadUniversalImport(companyId, file, opts)
         await queryClient.invalidateQueries({ queryKey: ['universal-summary', companyId] })
         await queryClient.invalidateQueries({ queryKey: ['universal-suggestions', companyId] })
-        setTone('success')
-        setMessage('Archivo analizado en Universal (auto). Ya puedes ver columnas, insights y el asesor.')
-        toast.push({ tone: 'success', title: 'Universal (auto)', message: 'Archivo analizado correctamente.' })
-        navigate('/universal')
+        await queryClient.invalidateQueries({ queryKey: ['budget-workflow', companyId] })
+        await queryClient.invalidateQueries({ queryKey: ['budget-summary-workflow', companyId] })
+        await queryClient.invalidateQueries({ queryKey: ['budget-insights-workflow', companyId] })
+        finishUniversalUpload(result, 'AUTO')
         return
       }
 
@@ -759,13 +1228,13 @@ export default function ImportsPage() {
           file.name.toLowerCase().endsWith('.xlsx')
             ? { sheetIndex: sheetIndex ?? xlsxPreview?.sheetIndex ?? undefined, headerRow: headerRow ?? xlsxPreview?.headerRow ?? undefined }
             : {}
-        await uploadUniversalImport(companyId, file, opts)
+        const result = await uploadUniversalImport(companyId, file, opts)
         await queryClient.invalidateQueries({ queryKey: ['universal-summary', companyId] })
         await queryClient.invalidateQueries({ queryKey: ['universal-suggestions', companyId] })
-        setTone('success')
-        setMessage('Archivo analizado en Universal. Ya puedes ver columnas, insights y el asesor.')
-        toast.push({ tone: 'success', title: 'Universal', message: 'Archivo analizado correctamente.' })
-        navigate('/universal')
+        await queryClient.invalidateQueries({ queryKey: ['budget-workflow', companyId] })
+        await queryClient.invalidateQueries({ queryKey: ['budget-summary-workflow', companyId] })
+        await queryClient.invalidateQueries({ queryKey: ['budget-insights-workflow', companyId] })
+        finishUniversalUpload(result, 'UNIVERSAL')
         return
       }
 
@@ -821,15 +1290,172 @@ export default function ImportsPage() {
   }
 
   return (
-    <div>
+    <div className="imports-page">
+      <PageHeader
+        title="Cargar datos"
+        subtitle="Una sola pantalla para subir el fichero del periodo y decidir el siguiente paso."
+        actions={<span className="badge">{period}</span>}
+      />
+
+      {!companyId ? <Alert tone="warning">Selecciona una empresa para empezar.</Alert> : null}
+      {message ? (
+        <Alert tone={tone === 'danger' ? 'danger' : tone === 'success' ? 'success' : 'info'} className="mb-3">
+          {message}
+        </Alert>
+      ) : null}
+      {annualFlow ? (
+        <Alert tone="info" className="mb-3">
+          Estás corrigiendo un presupuesto anual. Sube el XLSX correcto y, si hace falta, ajusta hoja y cabecera antes de volver a Plan anual.
+        </Alert>
+      ) : null}
+
+      <div className="card section soft">
+        <div className="mini-row row-baseline">
+          <h3 className="m-0">1. Subir fichero</h3>
+          <span className="upload-hint">Elige módulo, periodo y archivo. Nada más.</span>
+        </div>
+        <div className="grid grid-autofit-220 mt-12">
+          <div className="card soft card-pad-sm">
+            <div className="upload-hint">Modo</div>
+            <select value={mode} onChange={(e) => setMode(e.target.value as 'auto' | 'transactions' | 'universal')} className="mt-8">
+              <option value="auto">AUTO</option>
+              <option value="transactions">Caja</option>
+              <option value="universal">Universal</option>
+            </select>
+          </div>
+          <div className="card soft card-pad-sm">
+            <div className="upload-hint">Periodo</div>
+            <input value={period} onChange={(e) => setPeriod(e.target.value)} placeholder="YYYY-MM" className="pipeline-period-input mt-8" />
+          </div>
+          <div className="card soft card-pad-sm">
+            <div className="upload-hint">Archivo</div>
+            <input type="file" accept=".csv,.xlsx" onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="mt-8" />
+            <div className="upload-hint mt-8">{file ? file.name : 'Todavía sin fichero seleccionado.'}</div>
+          </div>
+        </div>
+        <div className="row row-wrap gap-8 mt-12">
+          <Button onClick={handleUpload} disabled={!companyId || !file || uploading || !isAllowed} loading={uploading}>
+            Subir
+          </Button>
+          <Button variant="ghost" onClick={() => navigate('/monthly-close?period=' + encodeURIComponent(period))} disabled={!companyId}>
+            Ir al cierre
+          </Button>
+        </div>
+      </div>
+
+      {annualFlow ? (
+        <div className="card section soft">
+          <div className="mini-row row-baseline">
+            <h3 className="m-0">Ajuste anual</h3>
+            <span className="upload-hint">Solo toca esto si Plan anual no detecta bien los meses.</span>
+          </div>
+          <div className="grid grid-autofit-220 mt-12">
+            <div className="card soft card-pad-sm">
+              <div className="upload-hint">Qué probar primero</div>
+              <div className="fw-800 mt-1">
+                {annualFocus === 'header' ? 'Cambiar fila de cabecera' : annualFocus === 'sheet' ? 'Elegir otra hoja' : 'Hoja y cabecera'}
+              </div>
+              <div className="upload-hint mt-1">
+                Si no detecta meses ENERO..DICIEMBRE, el problema suele estar en la hoja elegida o en la fila tomada como encabezado.
+              </div>
+            </div>
+            <div className="card soft card-pad-sm">
+              <div className="upload-hint">Hoja</div>
+              {isXlsx && xlsxPreview?.sheets?.length ? (
+                <select
+                  value={sheetIndex ?? xlsxPreview?.sheetIndex ?? 0}
+                  onChange={(e) => setSheetIndex(Number(e.target.value))}
+                  className="mt-8"
+                >
+                  {xlsxPreview.sheets.map((s, idx) => (
+                    <option key={`${s}-${idx}`} value={idx}>
+                      {idx + 1}. {s}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <div className="upload-hint mt-8">Selecciona primero un XLSX para elegir hoja.</div>
+              )}
+            </div>
+            <div className="card soft card-pad-sm">
+              <div className="upload-hint">Fila de cabecera</div>
+              <input
+                type="number"
+                min={1}
+                value={headerRow ?? xlsxPreview?.headerRow ?? ''}
+                onChange={(e) => setHeaderRow(Number(e.target.value))}
+                className="pipeline-period-input mt-8"
+                disabled={!isXlsx}
+              />
+              <div className="upload-hint mt-8">Prueba con la fila donde realmente empiezan los nombres de columnas o meses.</div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      <div className="card section soft">
+        <div className="mini-row row-baseline">
+          <h3 className="m-0">2. Estado del periodo</h3>
+          <span className="upload-hint">Solo la lectura útil del último intento.</span>
+        </div>
+        <div className="grid grid-autofit-220 mt-12">
+          <div className="card soft card-pad-sm">
+            <div className="upload-hint">Carga</div>
+            <div className="fw-800 mt-1">{selectedPeriodFlow.importState.title}</div>
+            <div className="upload-hint mt-1">{selectedPeriodFlow.importState.detail}</div>
+          </div>
+          <div className="card soft card-pad-sm">
+            <div className="upload-hint">Lectura</div>
+            <div className="fw-800 mt-1">{selectedPeriodFlow.reviewState.title}</div>
+            <div className="upload-hint mt-1">{selectedPeriodFlow.reviewState.detail}</div>
+          </div>
+          <div className="card soft card-pad-sm">
+            <div className="upload-hint">Entregable</div>
+            <div className="fw-800 mt-1">{selectedPeriodFlow.reportState.title}</div>
+            <div className="upload-hint mt-1">{selectedPeriodFlow.reportState.detail}</div>
+          </div>
+        </div>
+      </div>
+
+      {selectedPeriodImport ? (
+        <div className="card section soft">
+          <div className="mini-row row-baseline">
+            <h3 className="m-0">3. Último import</h3>
+            <span className="upload-hint">Solo lo justo para decidir si sigues o corriges.</span>
+          </div>
+          <div className="card soft card-pad-sm mt-12">
+            <div className="row row-wrap gap-8 row-center">
+              <span className={`badge ${selectedPeriodImport.status === 'OK' ? 'ok' : selectedPeriodImport.status === 'WARNING' ? 'warn' : 'err'}`}>
+                {selectedPeriodImport.status}
+              </span>
+              <span className="fw-700">{selectedPeriodImport.filename}</span>
+            </div>
+            <div className="upload-hint mt-8">
+              {selectedPeriodImport.blockingReason || selectedPeriodImport.errorSummary || selectedPeriodImport.lastError || 'Carga registrada para este periodo.'}
+            </div>
+            <div className="row row-wrap gap-8 mt-12">
+              {(selectedPeriodImport.status === 'ERROR' || selectedPeriodImport.status === 'DEAD' || selectedPeriodImport.status === 'BLOCKED') ? (
+                <Button size="sm" variant="secondary" onClick={() => handleRetry(selectedPeriodImport.id)}>
+                  Reprocesar
+                </Button>
+              ) : null}
+              <Button size="sm" variant="ghost" onClick={() => navigate(workflowHref)}>
+                Abrir cierre mensual
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  )
+
+  return (
+    <div className="imports-page">
       <PageHeader
         title="Cargar datos"
         subtitle="Sube un CSV/XLSX y EnterpriseIQ te guía al módulo correcto."
         actions={
           <>
-            <Button size="sm" variant="ghost" onClick={() => navigate(`/guides?module=${guidesModule}`)}>
-              Guías de carga
-            </Button>
             <span className="badge">
               {mode === 'auto'
                 ? 'AUTO • detecta objetivo'
@@ -841,7 +1467,59 @@ export default function ImportsPage() {
         }
       />
 
-      <div className="section">
+      <div className="card section soft imports-flow-shell">
+        <div className="mini-row row-baseline">
+          <h3 className="m-0">Qué hacer aquí</h3>
+          <span className="upload-hint">Solo tres ideas: subir, resolver excepción o seguir el cierre del periodo.</span>
+        </div>
+        <div className="grid grid-autofit-220 mt-12 imports-flow-grid">
+          <div className="card soft card-pad-sm imports-flow-card">
+            <div className="upload-hint">Situación</div>
+            <div className="fw-800 mt-1">{importDecisionState.title}</div>
+            <div className="upload-hint mt-1">{importDecisionState.detail}</div>
+          </div>
+          <div className="card soft card-pad-sm imports-flow-card">
+            <div className="upload-hint">Periodo activo</div>
+            <div className="fw-800 mt-1">{period}</div>
+            <div className="upload-hint mt-1">{selectedPeriodFlow.importState.detail}</div>
+            <div className="upload-hint mt-8">
+              Revisión: {selectedPeriodFlow.reviewState.title} · Entregable: {selectedPeriodFlow.reportState.title}
+            </div>
+          </div>
+          <div className="card soft card-pad-sm imports-flow-card">
+            <div className="upload-hint">Siguiente paso</div>
+            <div className="fw-800 mt-1">{importsNextAction.label}</div>
+            <div className="upload-hint mt-1">{importsNextAction.detail}</div>
+            {importsNextAction.kind === 'upload' ? (
+              <div className="mt-2">
+                <Button size="sm" variant="secondary" onClick={() => modeSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
+                  Elegir modo
+                </Button>
+              </div>
+            ) : null}
+            {importsNextAction.kind === 'exceptions' ? (
+              <div className="mt-2">
+                <Button size="sm" variant="secondary" onClick={() => exceptionSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
+                  Abrir excepciones
+                </Button>
+              </div>
+            ) : null}
+            {importsNextAction.kind === 'route' && importsNextAction.href ? (
+              <div className="mt-2">
+                <Button size="sm" variant="secondary" onClick={() => navigate(importsNextAction.href as string)}>
+                  {importsNextAction.label}
+                </Button>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </div>
+
+      <div className="card section soft imports-upload-shell" ref={modeSectionRef}>
+        <div className="mini-row row-baseline mb-12">
+          <h3 className="m-0">1. Elegir modo</h3>
+          <span className="upload-hint">Decide si la base va a Caja, Universal o modo automático antes de subirla.</span>
+        </div>
         <div className="segmented" role="tablist" aria-label="Modo de carga">
           <Button
             type="button"
@@ -872,7 +1550,9 @@ export default function ImportsPage() {
           </Button>
         </div>
 
-        <div className="card soft compact-guide mt-3">
+        <details className="card soft compact-guide mt-3">
+          <summary className="upload-hint cursor-pointer">Guía rápida de carga</summary>
+          <div className="card-pad-sm">
           <div className="mini-row row-baseline">
             <h3 className="m-0">Guía rápida</h3>
             <Button size="sm" variant="ghost" onClick={() => navigate(`/guides?module=${guidesModule}`)}>
@@ -932,7 +1612,8 @@ export default function ImportsPage() {
               </li>
             ))}
           </ul>
-        </div>
+          </div>
+        </details>
       </div>
 
       {mode === 'transactions' && file && txPreview && Number(txPreview.confidence || 0) < 0.4 ? (
@@ -979,11 +1660,14 @@ export default function ImportsPage() {
         </div>
       ) : null}
 
-      <div className="card section">
-        <h3 className="h3-reset">Subida</h3>
+      <div className="card section soft imports-upload-shell" ref={uploadSectionRef}>
+        <div className="mini-row row-baseline mb-12">
+          <h3 className="m-0">2. Subir fichero</h3>
+          <span className="upload-hint">Carga el archivo y deja el detalle avanzado solo para los casos que lo necesiten.</span>
+        </div>
         {!companyId ? (
-          <Alert tone="warning" title="Falta seleccionar empresa">
-            Selecciona una empresa arriba para subir el fichero.
+          <Alert tone="warning" title="Falta seleccionar empresa gestionada">
+            Selecciona una empresa gestionada arriba para subir el fichero.
           </Alert>
         ) : null}
         <div className="upload-row">
@@ -1142,7 +1826,7 @@ export default function ImportsPage() {
           ) : null}
         </div>
         {isBatch ? (
-          <details className="mt-12" open>
+          <details className="mt-12">
             <summary className="upload-hint cursor-pointer">
               Subida por lotes ({batchFiles.length})
             </summary>
@@ -1213,7 +1897,9 @@ export default function ImportsPage() {
       </div>
 
       {mode === 'transactions' && companyId && file && txPreview ? (
-        <div className="card section">
+        <details className="card section">
+          <summary className="upload-hint cursor-pointer">Ajustar mapeo de columnas</summary>
+          <div className="card-pad-sm">
           <h3 className="h3-reset">Asistente de mapeo (Caja)</h3>
           <div className="upload-hint">
             Selecciona qué columnas significan <strong>fecha</strong> e <strong>importe</strong>. El resto es opcional.
@@ -1312,263 +1998,331 @@ export default function ImportsPage() {
               </div>
             )}
           </details>
-        </div>
+          </div>
+        </details>
       ) : null}
 
-      <div className="card section">
-        <h3 className="h3-reset">Historial de imports</h3>
-        {!data?.length ? (
-          <div className="empty">No hay imports todavía.</div>
-        ) : (
-          <>
-            {latestImport ? (
-              <div className="card soft mb-12">
-                <div className="mini-row row-center row-wrap">
-                  <strong>Último import</strong>
-                  <span className="upload-hint">{new Date(latestImport.createdAt).toLocaleString()}</span>
+      <details className="imports-support-details" open={importsSupportOpen} ref={exceptionSectionRef}>
+        <summary>
+          <div>
+            <div className="fw-700">Excepciones e historial</div>
+            <div className="upload-hint">Bloqueos, calidad e imports anteriores solo cuando necesitas intervenir o auditar.</div>
+          </div>
+          <div className="row row-center row-wrap gap-8">
+            <span className={`badge ${attentionSummary.blocked ? 'err' : 'ok'}`}>{attentionSummary.blocked} bloqueados</span>
+            <span className={`badge ${attentionSummary.warnings ? 'warn' : 'ok'}`}>{attentionSummary.warnings} con avisos</span>
+            <span className={`badge ${attentionSummary.technical ? 'err' : 'ok'}`}>{attentionSummary.technical} técnicos</span>
+          </div>
+        </summary>
+        <div className="imports-support-body">
+          {!data?.length ? (
+            <div className="card section">
+              <div className="empty">Todavía no hay imports ni excepciones abiertas.</div>
+            </div>
+          ) : (
+            <>
+              <div className="card section soft">
+                <div className="mini-row mt-0 row-between row-center row-wrap gap-8">
+                  <div>
+                    <div className="fw-700">Bandeja prioritaria</div>
+                    <div className="upload-hint">
+                      Prioriza bloqueos, avisos de calidad y fallos técnicos antes de dar por bueno el periodo.
+                    </div>
+                  </div>
+                  <span className="badge">{attentionImports.length} casos a revisar</span>
                 </div>
 
-                {(() => {
-                  const info = summarizeImport(latestImport)
-                  const canRetry =
-                    (latestImport.status === 'ERROR' || latestImport.status === 'DEAD') && info.canRetry && !!latestImport.storageRef
-                  return (
-                    <>
-                      <div className="mini-row mt-8 row-wrap">
-                        <div className="row row-center row-wrap gap-10">
-                          <span className="fw-800">{latestImport.period}</span>
-                          <span
-                            className={`badge ${
-                              latestImport.status === 'OK'
-                                ? 'ok'
-                                : latestImport.status === 'WARNING'
-                                ? 'warn'
-                                : latestImport.status === 'ERROR' || latestImport.status === 'DEAD'
-                                ? 'err'
-                                : ''
-                            }`}
-                          >
-                            {latestImport.status}
-                          </span>
-                          <span className="upload-hint">{latestImport.originalFilename || latestImport.storageRef || '-'}</span>
-                        </div>
-                        {latestImport.status === 'ERROR' || latestImport.status === 'DEAD' ? (
-                          <Button size="sm" disabled={!canRetry} onClick={() => handleRetry(latestImport.id)}>
-                            Reintentar
-                          </Button>
-                        ) : null}
-                      </div>
-                      <div className="mt-8">{info.title}</div>
-                      {info.fix ? <div className="upload-hint mt-1">{info.fix}</div> : null}
-                    </>
-                  )
-                })()}
-              </div>
-            ) : null}
-
-            <details>
-              <summary className="upload-hint cursor-pointer">
-                Ver historial ({data.length})
-              </summary>
-
-              <div className="row row-between row-center row-wrap gap-8 fs-12 mt-2 mb-2">
-                <label className="upload-hint row row-center gap-8">
-                  <input type="checkbox" checked={showAllImports} onChange={(e) => setShowAllImports(e.target.checked)} />
-                  Mostrar más
-                </label>
-
-                <details>
-                  <summary className="upload-hint cursor-pointer">
-                    Filtros
-                  </summary>
-                  <div className="stack gap-8 mt-8">
-                    <label className="upload-hint row row-center gap-8">
-                      <input
-                        type="checkbox"
-                        checked={showOnlyFailedImports}
-                        onChange={(e) => setShowOnlyFailedImports(e.target.checked)}
-                      />
-                      Solo con problemas
-                    </label>
-                    <label className="upload-hint row row-center gap-8">
-                      <input type="checkbox" checked={showDeadImports} onChange={(e) => setShowDeadImports(e.target.checked)} />
-                      Incluir DEAD (técnico)
-                    </label>
-                  </div>
-                </details>
-              </div>
-
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Periodo</th>
-                    <th>Estado</th>
-                    <th>Fichero</th>
-                    <th>Qué pasó</th>
-                    <th>Qué hacer</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {importsForUi.map((imp: ImportJob) => {
-                    const info = summarizeImport(imp)
-                    const canRetry = (imp.status === 'ERROR' || imp.status === 'DEAD') && info.canRetry && !!imp.storageRef
-                    const isQualityOpen = qualityOpenId === imp.id
-                    return (
-                      <Fragment key={imp.id}>
-                        <tr key={imp.id}>
-                          <td>
-                            <div className="fw-700">{imp.period}</div>
-                            <div className="upload-hint">{new Date(imp.createdAt).toLocaleString()}</div>
-                          </td>
-                          <td>
-                            <span
-                              className={`badge ${
-                                imp.status === 'OK'
-                                  ? 'ok'
-                                  : imp.status === 'WARNING'
-                                  ? 'warn'
-                                  : imp.status === 'ERROR' || imp.status === 'DEAD'
-                                  ? 'err'
-                                  : ''
-                              }`}
-                            >
-                              {imp.status}
+                {!attentionImports.length ? (
+                  <div className="empty mt-12">Sin excepciones.</div>
+                ) : (
+                  <div className="stack gap-8 mt-12">
+                    {attentionImports.slice(0, 5).map(({ imp, top, entries }) => (
+                      <div key={`attention-${imp.id}`} className="card soft card-pad-sm">
+                        <div className="mini-row mt-0 row-between row-center row-wrap gap-8">
+                          <div className="row row-center row-wrap gap-8">
+                            <span className={`badge ${severityBadgeClass(top?.severity || 'LOW')}`}>{top?.severity || 'LOW'}</span>
+                            <span className={`badge ${statusBadgeClass(imp.status)}`}>{imp.status}</span>
+                            <span className="fw-700">
+                              {imp.period}
+                              {imp.versionNo ? ` · v${imp.versionNo}` : ''}
                             </span>
-                            <div className="upload-hint">
-                              {typeof imp.attempts === 'number' || typeof imp.maxAttempts === 'number'
-                                ? `Intentos: ${imp.attempts ?? 0}/${imp.maxAttempts ?? 3}`
-                                : null}
-                            </div>
-                          </td>
-                          <td className="upload-hint">{imp.originalFilename || imp.storageRef || '-'}</td>
-                          <td className="maxw-460">
-                            <div>{info.title}</div>
-                            {info.raw ? (
-                              <details className="mt-1">
-                                <summary className="upload-hint">Detalles técnicos</summary>
-                                <div className="upload-hint pre-wrap">{info.raw}</div>
-                              </details>
-                            ) : null}
-                          </td>
-                          <td className="upload-hint maxw-420">
-                            {info.fix || '-'}
-                            {info.showTemplate ? (
-                              <div className="mt-8">
-                                <Button size="sm" variant="secondary" onClick={downloadTransactionsTemplate}>
-                                  Descargar plantilla (CSV)
-                                </Button>
-                              </div>
-                            ) : null}
-                          </td>
-                          <td className="text-right nowrap">
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              disabled={!imp.storageRef}
-                              onClick={() => setQualityOpenId((cur) => (cur === imp.id ? null : imp.id))}
-                            >
-                              Calidad
+                            <span className="upload-hint">{imp.originalFilename || imp.storageRef || '-'}</span>
+                          </div>
+                          <Button size="sm" variant="ghost" onClick={() => setQualityOpenId((cur) => (cur === imp.id ? null : imp.id))}>
+                            {qualityOpenId === imp.id ? 'Cerrar' : 'Abrir'}
+                          </Button>
+                        </div>
+                        <div className="mt-8 fw-700">{top?.title || 'Revisión pendiente'}</div>
+                        <div className="upload-hint mt-1">{top?.detail || 'Hay incidencias abiertas en esta carga.'}</div>
+                        <div className="upload-hint mt-8">
+                          <strong>Siguiente paso:</strong> {top?.action || 'Revisar la carga.'}
+                        </div>
+                        {top?.evidence ? <div className="upload-hint mt-8">{top.evidence}</div> : null}
+                        {entries.length > 1 ? <div className="upload-hint mt-8">{entries.length} incidencias principales en esta carga.</div> : null}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {latestImport ? (
+                <div className="card section soft">
+                  <div className="mini-row row-center row-wrap">
+                    <strong>Último import</strong>
+                    <span className="upload-hint">{new Date(latestImport.createdAt).toLocaleString()}</span>
+                  </div>
+
+                  {(() => {
+                    const info = summarizeImport(latestImport)
+                    const canRetry =
+                      (latestImport.status === 'ERROR' || latestImport.status === 'DEAD') && info.canRetry && !!latestImport.storageRef
+                    return (
+                      <>
+                        <div className="mini-row mt-8 row-wrap">
+                          <div className="row row-center row-wrap gap-10">
+                            <span className="fw-800">{latestImport.period}</span>
+                            <span className={`badge ${statusBadgeClass(latestImport.status)}`}>{latestImport.status}</span>
+                            <span className="upload-hint">{latestImport.originalFilename || latestImport.storageRef || '-'}</span>
+                          </div>
+                          {latestImport.status === 'ERROR' || latestImport.status === 'DEAD' ? (
+                            <Button size="sm" disabled={!canRetry} onClick={() => handleRetry(latestImport.id)}>
+                              Reintentar
                             </Button>
-                            {imp.status === 'ERROR' || imp.status === 'DEAD' ? (
-                              <Button size="sm" disabled={!canRetry} onClick={() => handleRetry(imp.id)}>
-                                Reintentar
-                              </Button>
-                            ) : null}
-                          </td>
-                        </tr>
-                        {isQualityOpen ? (
-                          <tr key={`q-${imp.id}`}>
-                            <td colSpan={6}>
-                              <div className="card soft card-pad-sm mt-2">
-                                <div className="mini-row mt-0 row-between row-center row-wrap gap-8">
-                                  <div className="row row-center gap-8">
-                                    <span className="fw-700">Calidad de dato</span>
-                                    {qualityLoading ? <span className="upload-hint">Analizando…</span> : null}
-                                    {!qualityLoading && quality ? (
-                                      <span className={`badge ${qualitySummary(quality)?.badge || ''}`}>
-                                        {qualitySummary(quality)?.label || 'OK'}
-                                      </span>
-                                    ) : null}
-                                  </div>
-                                  <div className="upload-hint">
-                                    {quality?.minDate && quality?.maxDate ? `Rango: ${quality.minDate} → ${quality.maxDate}` : ''}
-                                  </div>
-                                </div>
+                          ) : null}
+                        </div>
+                        <div className="mt-8">{info.title}</div>
+                        {info.fix ? <div className="upload-hint mt-1">{info.fix}</div> : null}
+                      </>
+                    )
+                  })()}
+                </div>
+              ) : null}
 
-                                {qualityError ? (
-                                  <Alert tone="danger">No se pudo calcular la calidad: {String((qualityError as any).message || qualityError)}</Alert>
+              <div className="card section soft">
+                <div className="mini-row row-baseline mb-12">
+                  <h3 className="m-0">Historial operativo</h3>
+                  <span className="upload-hint">Últimas cargas, reintentos y detalle de calidad cuando necesites mirar hacia atrás.</span>
+                </div>
+
+                <div className="row row-between row-center row-wrap gap-8 fs-12 mt-2 mb-2">
+                  <label className="upload-hint row row-center gap-8">
+                    <input type="checkbox" checked={showAllImports} onChange={(e) => setShowAllImports(e.target.checked)} />
+                    Mostrar más
+                  </label>
+
+                  <details>
+                    <summary className="upload-hint cursor-pointer">
+                      Filtros
+                    </summary>
+                    <div className="stack gap-8 mt-8">
+                      <label className="upload-hint row row-center gap-8">
+                        <input
+                          type="checkbox"
+                          checked={showOnlyFailedImports}
+                          onChange={(e) => setShowOnlyFailedImports(e.target.checked)}
+                        />
+                        Solo con problemas
+                      </label>
+                      <label className="upload-hint row row-center gap-8">
+                        <input type="checkbox" checked={showDeadImports} onChange={(e) => setShowDeadImports(e.target.checked)} />
+                        Incluir DEAD (técnico)
+                      </label>
+                    </div>
+                  </details>
+                </div>
+
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Qué pasó</th>
+                      <th>Situación</th>
+                      <th>Siguiente paso</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {importsForUi.map((imp: ImportJob) => {
+                      const info = summarizeImport(imp)
+                      const canRetry = (imp.status === 'ERROR' || imp.status === 'DEAD') && info.canRetry && !!imp.storageRef
+                      const isQualityOpen = qualityOpenId === imp.id
+                      const nextStep = importRowNextStep(imp)
+                      return (
+                        <Fragment key={imp.id}>
+                          <tr key={imp.id}>
+                            <td>
+                              <div className="fw-700">{imp.period}</div>
+                              <div className="row row-wrap row-center gap-8 mt-8">
+                                <span className={`badge ${statusBadgeClass(imp.status)}`}>{imp.status}</span>
+                                {imp.versionNo ? <span className="badge">v{imp.versionNo}</span> : null}
+                                <span className="upload-hint">{new Date(imp.createdAt).toLocaleString()}</span>
+                              </div>
+                              <div className="upload-hint mt-8">{imp.originalFilename || imp.storageRef || '-'}</div>
+                            </td>
+                            <td className="maxw-460">
+                              <div>{info.title}</div>
+                              <div className="upload-hint mt-8">
+                                {typeof imp.attempts === 'number' || typeof imp.maxAttempts === 'number'
+                                  ? `Intentos ${imp.attempts ?? 0}/${imp.maxAttempts ?? 3}`
+                                  : 'Sin detalle de reintentos'}
+                              </div>
+                              {info.raw ? (
+                                <details className="mt-1">
+                                  <summary className="upload-hint">Detalles técnicos</summary>
+                                  <div className="upload-hint pre-wrap">{info.raw}</div>
+                                </details>
+                              ) : null}
+                            </td>
+                            <td className="upload-hint maxw-420 nowrap">
+                              <div className="fw-700">{nextStep.title}</div>
+                              <div className="upload-hint mt-8">{nextStep.detail}</div>
+                              <div className="row row-wrap row-center gap-8 mt-8">
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  disabled={!imp.storageRef}
+                                  onClick={() => setQualityOpenId((cur) => (cur === imp.id ? null : imp.id))}
+                                >
+                                  {isQualityOpen ? 'Cerrar detalle' : 'Ver detalle'}
+                                </Button>
+                                {imp.status === 'ERROR' || imp.status === 'DEAD' ? (
+                                  <Button size="sm" disabled={!canRetry} onClick={() => handleRetry(imp.id)}>
+                                    Reintentar
+                                  </Button>
                                 ) : null}
-
-                                {quality ? (
-                                  <div className="grid grid-autofit-180 mt-12">
-                                    <div className="card soft card-pad-sm">
-                                      <div className="upload-hint">Filas parseadas</div>
-                                      <div className="fw-700">{quality.rowsParsed}</div>
-                                    </div>
-                                    <div className="card soft card-pad-sm">
-                                      <div className="upload-hint">Errores fecha/importe</div>
-                                      <div className="fw-700">
-                                        {quality.dateParseErrors}/{quality.amountParseErrors}
-                                      </div>
-                                    </div>
-                                    <div className="card soft card-pad-sm">
-                                      <div className="upload-hint">Fuera de periodo</div>
-                                      <div className="fw-700">{quality.outsidePeriodRows}</div>
-                                    </div>
-                                    <div className="card soft card-pad-sm">
-                                      <div className="upload-hint">Duplicados</div>
-                                      <div className="fw-700">{quality.duplicateRows}</div>
-                                    </div>
-                                    <div className="card soft card-pad-sm">
-                                      <div className="upload-hint">Sin contraparte</div>
-                                      <div className="fw-700">{quality.missingCounterpartyRows}</div>
-                                    </div>
-                                    <div className="card soft card-pad-sm">
-                                      <div className="upload-hint">Saldo no cuadra</div>
-                                      <div className="fw-700">{quality.balanceEndMismatchRows}</div>
-                                    </div>
-                                  </div>
-                                ) : null}
-
-                                {quality?.issues?.length ? (
-                                  <div className="mt-12">
-                                    {quality.issues.slice(0, 6).map((it, idx) => (
-                                      <div key={`qi-${idx}`} className="row row-center gap-8 mb-1">
-                                        <span className={`badge ${String(it.severity).toUpperCase() === 'HIGH' ? 'err' : String(it.severity).toUpperCase() === 'MEDIUM' ? 'warn' : 'ok'}`}>
-                                          {String(it.severity || '').toUpperCase()}
-                                        </span>
-                                        <div>
-                                          <div className="fw-700">{it.title}</div>
-                                          <div className="upload-hint">{it.detail}</div>
-                                        </div>
-                                      </div>
-                                    ))}
-                                  </div>
-                                ) : null}
-
-                                {quality?.examples?.length ? (
-                                  <details className="mt-12">
-                                    <summary className="upload-hint cursor-pointer">Ver ejemplos</summary>
-                                    <div className="upload-hint mono pre-wrap mt-8">
-                                      {quality.examples.join('\n')}
-                                    </div>
-                                  </details>
+                                {info.showTemplate ? (
+                                  <Button size="sm" variant="secondary" onClick={downloadTransactionsTemplate}>
+                                    Plantilla CSV
+                                  </Button>
                                 ) : null}
                               </div>
                             </td>
                           </tr>
-                        ) : null}
-                      </Fragment>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </details>
-          </>
-        )}
-      </div>
+                          {isQualityOpen ? (
+                            <tr key={`q-${imp.id}`}>
+                              <td colSpan={3}>
+                                <div className="card soft card-pad-sm mt-2">
+                                  <div className="mini-row mt-0 row-between row-center row-wrap gap-8">
+                                    <div className="row row-center gap-8">
+                                      <span className="fw-700">Excepciones de esta carga</span>
+                                      {qualityLoading ? <span className="upload-hint">Analizando…</span> : null}
+                                      {!qualityLoading && quality ? (
+                                        <span className={`badge ${qualitySummary(quality)?.badge || ''}`}>
+                                          {qualitySummary(quality)?.label || 'OK'}
+                                        </span>
+                                      ) : null}
+                                    </div>
+                                    <div className="upload-hint">
+                                      {quality?.minDate && quality?.maxDate ? `Rango detectado: ${quality.minDate} → ${quality.maxDate}` : ''}
+                                    </div>
+                                  </div>
+
+                                  {qualityError ? (
+                                    <Alert tone="danger">No se pudo cargar la calidad: {String((qualityError as any).message || qualityError)}</Alert>
+                                  ) : null}
+
+                                  <div className="grid grid-autofit-220 mt-12">
+                                    <div className="card soft card-pad-sm">
+                                      <div className="upload-hint">Situación</div>
+                                      <div className="fw-700 mt-8">{imp.status}</div>
+                                      <div className="upload-hint mt-8">
+                                        {imp.period}
+                                        {imp.versionNo ? ` · versión ${imp.versionNo}` : ''}
+                                      </div>
+                                    </div>
+                                    <div className="card soft card-pad-sm">
+                                      <div className="upload-hint">Calidad detectada</div>
+                                      <div className="fw-700 mt-8">
+                                        {qualityLoading ? 'Analizando…' : qualitySummary(quality)?.label || 'Sin incidencias'}
+                                      </div>
+                                      <div className="upload-hint mt-8">
+                                        {quality?.minDate && quality?.maxDate ? `Rango ${quality.minDate} → ${quality.maxDate}` : 'Todavía no hay rango calculado'}
+                                      </div>
+                                    </div>
+                                    <div className="card soft card-pad-sm">
+                                      <div className="upload-hint">Qué haría ahora</div>
+                                      <div className="fw-700 mt-8">{openImportDecisionState.title}</div>
+                                      <div className="upload-hint mt-8">{openImportDecisionState.detail}</div>
+                                    </div>
+                                  </div>
+
+                                  {openImportAllIssues.length ? (
+                                    <div className="mt-12">
+                                      <div className="fw-700 mb-1">Incidencias a resolver</div>
+                                      {openImportAllIssues.map((entry, idx) => (
+                                        <div key={`issue-${idx}`} className="card soft card-pad-sm mb-1">
+                                          <div className="row row-center row-wrap gap-8">
+                                            <span className={`badge ${severityBadgeClass(entry.severity)}`}>{entry.severity}</span>
+                                            <span className="fw-700">{entry.title}</span>
+                                          </div>
+                                          <div className="upload-hint mt-8">{entry.detail}</div>
+                                          <div className="upload-hint mt-8">
+                                            <strong>Siguiente paso:</strong> {entry.action}
+                                          </div>
+                                          {entry.evidence ? <div className="upload-hint mt-8">{entry.evidence}</div> : null}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <div className="empty mt-12">Sin incidencias.</div>
+                                  )}
+
+                                  {quality ? (
+                                    <details className="mt-12">
+                                      <summary className="upload-hint cursor-pointer">Ver señales de calidad</summary>
+                                      <div className="grid grid-autofit-180 mt-12">
+                                        <div className="card soft card-pad-sm">
+                                          <div className="upload-hint">Filas válidas</div>
+                                          <div className="fw-700">{quality.rowsParsed}</div>
+                                        </div>
+                                        <div className="card soft card-pad-sm">
+                                          <div className="upload-hint">Errores fecha/importe</div>
+                                          <div className="fw-700">
+                                            {quality.dateParseErrors}/{quality.amountParseErrors}
+                                          </div>
+                                        </div>
+                                        <div className="card soft card-pad-sm">
+                                          <div className="upload-hint">Fuera de periodo</div>
+                                          <div className="fw-700">{quality.outsidePeriodRows}</div>
+                                        </div>
+                                        <div className="card soft card-pad-sm">
+                                          <div className="upload-hint">Duplicados</div>
+                                          <div className="fw-700">{quality.duplicateRows}</div>
+                                        </div>
+                                        <div className="card soft card-pad-sm">
+                                          <div className="upload-hint">Sin contraparte</div>
+                                          <div className="fw-700">{quality.missingCounterpartyRows}</div>
+                                        </div>
+                                        <div className="card soft card-pad-sm">
+                                          <div className="upload-hint">Saldo no cuadra</div>
+                                          <div className="fw-700">{quality.balanceEndMismatchRows}</div>
+                                        </div>
+                                      </div>
+                                    </details>
+                                  ) : null}
+
+                                  {quality?.examples?.length ? (
+                                    <details className="mt-12">
+                                      <summary className="upload-hint cursor-pointer">Ver evidencia y ejemplos</summary>
+                                      <div className="upload-hint mono pre-wrap mt-8">
+                                        {quality.examples.join('\n')}
+                                      </div>
+                                    </details>
+                                  ) : null}
+                                </div>
+                              </td>
+                            </tr>
+                          ) : null}
+                        </Fragment>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
+      </details>
     </div>
   )
 }
+
 

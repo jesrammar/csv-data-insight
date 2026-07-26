@@ -12,10 +12,12 @@ import java.io.IOException;
 import java.util.List;
 import java.util.stream.Collectors;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 
 @RestController
 @RequestMapping("/api/companies/{companyId}/reports")
@@ -48,8 +50,13 @@ public class ReportController {
         accessService.requireCompanyAccess(user, companyId);
         var company = companyRepository.findById(companyId).orElseThrow();
         String summary = "Informe generado automáticamente con KPIs de tesorería, tendencia y alertas del periodo.";
-        String html = reportService.buildHtmlTemplate(company, request.getPeriod(), summary);
-        Report report = reportService.generateHtmlReport(company, request.getPeriod(), html);
+        ReportService.PreparedMonthlyReport prepared = reportService.prepareMonthlyHtmlReport(
+            company,
+            request.getPeriod(),
+            summary,
+            request.getUniversalViewId()
+        );
+        Report report = reportService.generateHtmlReport(company, request.getPeriod(), prepared);
         return toDto(report);
     }
 
@@ -57,9 +64,10 @@ public class ReportController {
     public String content(@PathVariable Long companyId, @PathVariable Long reportId) throws IOException {
         var user = accessService.currentUser();
         accessService.requireCompanyAccess(user, companyId);
-        Report report = reportRepository.findById(reportId).orElseThrow();
+        Report report = reportRepository.findById(reportId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Report not found"));
         if (!report.getCompany().getId().equals(companyId)) {
-            throw new IllegalArgumentException("Report not found for company");
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Report not found for company");
         }
         return reportService.loadReportContent(report);
     }
@@ -68,9 +76,10 @@ public class ReportController {
     public ResponseEntity<byte[]> contentPdf(@PathVariable Long companyId, @PathVariable Long reportId) throws IOException {
         var user = accessService.currentUser();
         accessService.requireCompanyAccess(user, companyId);
-        Report report = reportRepository.findById(reportId).orElseThrow();
+        Report report = reportRepository.findById(reportId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Report not found"));
         if (!report.getCompany().getId().equals(companyId)) {
-            throw new IllegalArgumentException("Report not found for company");
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Report not found for company");
         }
         String html = reportService.loadReportContent(report);
         byte[] pdf = reportService.renderPdfFromHtml(html);
@@ -88,6 +97,7 @@ public class ReportController {
 
     private ReportDto toDto(Report report) {
         return new ReportDto(report.getId(), report.getCompany().getId(), report.getPeriod(), report.getFormat(),
-            report.getStatus(), report.getCreatedAt());
+            report.getStatus(), report.getCreatedAt(), report.getVersionNo(),
+            report.getSelectedUniversalViewId(), report.getSelectedUniversalViewName(), report.getSelectedUniversalAggregationMode());
     }
 }

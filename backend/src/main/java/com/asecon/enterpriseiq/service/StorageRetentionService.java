@@ -26,7 +26,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class StorageRetentionService {
     private static final Logger log = LoggerFactory.getLogger(StorageRetentionService.class);
-    private static final EnumSet<ImportStatus> FINAL_IMPORT_STATUSES = EnumSet.of(ImportStatus.OK, ImportStatus.WARNING, ImportStatus.ERROR, ImportStatus.DEAD);
+    private static final EnumSet<ImportStatus> FINAL_IMPORT_STATUSES = EnumSet.of(ImportStatus.OK, ImportStatus.WARNING, ImportStatus.ERROR, ImportStatus.DEAD, ImportStatus.BLOCKED);
 
     private final CompanyRepository companyRepository;
     private final ImportJobRepository importJobRepository;

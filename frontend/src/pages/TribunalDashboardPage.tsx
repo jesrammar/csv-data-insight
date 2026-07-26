@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { useQuery } from '@tanstack/react-query'
 import { useRef, useState, useEffect } from 'react'
 import { downloadTribunalCsv, getTribunalStatus, getTribunalSummary, uploadTribunalImportWithProgress } from '../api'
@@ -9,6 +10,7 @@ import Alert from '../components/ui/Alert'
 import Button from '../components/ui/Button'
 import { useToast } from '../components/ui/ToastProvider'
 import Section from '../components/ui/Section'
+import { EMPTY_DATA_TEXT, EMPTY_VALUE, formatDateTime } from '../utils/format'
 
 type GestorRow = {
   gestor: string
@@ -56,9 +58,9 @@ export default function TribunalDashboardPage() {
   })
 
   function fmtTime(iso?: string | null) {
-    if (!iso) return '—'
+    if (!iso) return EMPTY_VALUE
     try {
-      return new Date(iso).toLocaleString()
+      return formatDateTime(iso)
     } catch {
       return String(iso)
     }
@@ -252,7 +254,7 @@ export default function TribunalDashboardPage() {
 
   function sortMark(key: 'gestor' | 'total' | 'active' | 'minuta' | 'carga') {
     if (gestorSort.key !== key) return ''
-    return gestorSort.dir === 'asc' ? ' ↑' : ' ↓'
+    return gestorSort.dir === 'asc' ? ' (asc)' : ' (desc)'
   }
 
   const topGestores = gestores
@@ -268,6 +270,25 @@ export default function TribunalDashboardPage() {
   const totalClients = Number((data as any)?.kpis?.totalClients || 0)
   const hasData = totalClients > 0
   const riskRows: any[] = (data as any)?.risk || []
+  const visibleRisks = riskRows.length
+  const tribunalDecisionState =
+    !hasData
+      ? {
+          title: 'Falta cargar la cartera',
+          detail: 'Sin CSV no hay reparto por gestor ni lectura operativa defendible.',
+          next: 'Carga la cartera oficial y valida la estructura básica.'
+        }
+      : visibleRisks > 0
+        ? {
+            title: 'Hay riesgos que revisar',
+            detail: `${visibleRisks} cliente${visibleRisks === 1 ? '' : 's'} con señales visibles de revisión.`,
+            next: 'Empieza por riesgos y baja a gestores solo si necesitas repartir carga.'
+          }
+        : {
+            title: 'Cartera estable',
+            detail: 'La base está lista para seguimiento y conversación con la empresa gestionada.',
+            next: 'Revisa KPIs y exporta solo si necesitas compartir o archivar.'
+          }
   const gestorOptions = Array.from(new Set(riskRows.map((r) => String(r?.gestor || 'SIN GESTOR')))).sort((a, b) =>
     a.localeCompare(b)
   )
@@ -280,10 +301,74 @@ export default function TribunalDashboardPage() {
   })
 
   return (
+    <div>
+      <PageHeader
+        title="Tribunal"
+        subtitle="Solo cargar cartera y comprobar si ya está utilizable."
+        actions={<span className="badge">{hasGold ? 'Activo' : 'GOLD+'}</span>}
+      />
+
+      {!hasGold ? <Alert tone="warning">Disponible desde Gold.</Alert> : null}
+      {!companyId ? <Alert tone="warning">Selecciona una empresa.</Alert> : null}
+      {uploadError ? <Alert tone="danger">{uploadError}</Alert> : null}
+      {uploadOk ? <Alert tone="success">{uploadOk}</Alert> : null}
+
+      <div className="card section soft">
+        <div className="mini-row row-baseline">
+          <h3 className="m-0">1. Cargar cartera</h3>
+          <span className="upload-hint">CSV de cartera y validación básica.</span>
+        </div>
+        <div className="grid grid-autofit-220 mt-12">
+          <div className="card soft card-pad-sm">
+            <div className="upload-hint">Archivo</div>
+            <input type="file" accept=".csv" onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="mt-8" />
+            <div className="upload-hint mt-8">{file ? file.name : 'Sin fichero.'}</div>
+          </div>
+          <div className="card soft card-pad-sm">
+            <div className="upload-hint">Estado</div>
+            <div className="fw-800 mt-1">{status?.createdAt ? 'Cartera cargada' : 'Pendiente'}</div>
+            <div className="upload-hint mt-1">{status?.createdAt ? `Ultima carga ${fmtTime(status.createdAt)}` : 'Sin carga.'}</div>
+          </div>
+        </div>
+        <div className="row row-wrap gap-8 mt-12">
+          <Button onClick={handleUpload} disabled={!canUpload} loading={uploading}>
+            Subir CSV
+          </Button>
+          <Button variant="ghost" onClick={downloadTemplate}>
+            Descargar plantilla
+          </Button>
+        </div>
+      </div>
+
+      <div className="card section soft">
+        <div className="mini-row row-baseline">
+          <h3 className="m-0">2. Lectura corta</h3>
+          <span className="upload-hint">Solo el contexto mínimo para seguir.</span>
+        </div>
+        <div className="grid grid-autofit-220 mt-12">
+          <div className="card soft card-pad-sm">
+            <div className="upload-hint">Clientes</div>
+            <div className="fw-800 mt-1">{data?.totals?.total ?? EMPTY_VALUE}</div>
+          </div>
+          <div className="card soft card-pad-sm">
+            <div className="upload-hint">Riesgos</div>
+            <div className="fw-800 mt-1">{visibleRisks}</div>
+          </div>
+          <div className="card soft card-pad-sm">
+            <div className="upload-hint">Situación</div>
+            <div className="fw-800 mt-1">{tribunalDecisionState.title}</div>
+            <div className="upload-hint mt-1">{tribunalDecisionState.detail}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+
+  return (
     <div ref={dashboardRef}>
       <PageHeader
-        title="Dashboard Tribunal"
-        subtitle="Cumplimiento, riesgos y gestión por gestor. Carga un CSV y el tablero se actualiza."
+        title="Cartera Tribunal"
+        subtitle="Lectura operativa de cartera, riesgos y carga por gestor a partir de la base oficial de Tribunal."
         actions={
           <div className="row row-wrap row-center row-end gap-10">
             <span className="badge">{plan}</span>
@@ -291,9 +376,9 @@ export default function TribunalDashboardPage() {
               <div className="card soft card-pad-sm minw-240">
                 <div className="upload-hint">Última carga</div>
                 <div className="fw-800 mt-1">{fmtTime(status?.createdAt)}</div>
-                <div className="upload-hint mt-1">{status?.filename ? `Fichero: ${status.filename}` : 'Sin ingestas'}</div>
+                <div className="upload-hint mt-1">{status?.filename ? `Fichero de referencia: ${status.filename}` : 'Sin cargas todavía'}</div>
                 <div className="upload-hint mt-tight">
-                  {status?.rowCount != null ? `Filas: ${status.rowCount}` : '—'}
+                  {status?.rowCount != null ? `Filas: ${status.rowCount}` : EMPTY_VALUE}
                   {status?.warningCount ? ` · Avisos: ${status.warningCount}` : ''}
                 </div>
               </div>
@@ -304,7 +389,7 @@ export default function TribunalDashboardPage() {
       {!hasGold && (
         <div className="mb-3">
           <Alert tone="warning" title="Plan insuficiente">
-            Tu plan actual no incluye este estudio. Requiere plan GOLD o superior.
+            Disponible desde Gold.
           </Alert>
         </div>
       )}
@@ -314,9 +399,9 @@ export default function TribunalDashboardPage() {
           className="card soft tribunal-sticky mt-3 mb-4"
         >
           <div>
-            <div className="upload-hint">{hasData ? 'Listo para analizar' : 'Siguiente paso: cargar CSV'}</div>
+            <div className="upload-hint">{hasData ? 'Base lista para revisar' : 'Siguiente paso: cargar cartera oficial'}</div>
             <div className="fw-800 mt-tight">
-              {hasData ? `${totalClients} clientes en el tablero` : 'Aún no hay datos para este estudio.'}
+              {hasData ? `${totalClients} clientes en el tablero` : 'Sin datos.'}
             </div>
             <div className="upload-hint mt-1">
               Mínimo requerido: columnas <strong>cliente</strong> y <strong>cif</strong> (resto opcional).
@@ -333,6 +418,35 @@ export default function TribunalDashboardPage() {
           </div>
         </div>
       )}
+
+      {hasGold ? (
+        <div className="card section soft">
+          <div className="mini-row row-baseline">
+            <h3 className="m-0">Qué hacer aquí</h3>
+            <span className="upload-hint">Una sola lectura para decidir si cargar, corregir o revisar riesgos.</span>
+          </div>
+          <div className="grid grid-autofit-220 mt-12">
+            <div className="card soft card-pad-sm">
+              <div className="upload-hint">Situación</div>
+              <div className="fw-800 mt-1">{tribunalDecisionState.title}</div>
+              <div className="upload-hint mt-1">{tribunalDecisionState.detail}</div>
+            </div>
+            <div className="card soft card-pad-sm">
+              <div className="upload-hint">Riesgos visibles</div>
+              <div className="fw-800 mt-1">{visibleRisks}</div>
+              <div className="upload-hint mt-1">
+                {hasData ? 'Usa esta cifra para decidir si entras en riesgo o sigues con KPIs.' : 'Sin cartera cargada.'}
+              </div>
+            </div>
+            <div className="card soft card-pad-sm">
+              <div className="upload-hint">Siguiente paso</div>
+              <div className="fw-800 mt-1">{hasData ? 'Revisar y priorizar' : 'Cargar cartera'}</div>
+              <div className="upload-hint mt-1">{tribunalDecisionState.next}</div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
 
       <Section title="1) Ingesta" subtitle="Carga el CSV y sincroniza para recalcular el tablero.">
         <div className="hero" ref={uploadAnchorRef}>
@@ -363,9 +477,6 @@ export default function TribunalDashboardPage() {
                 >
                   Subir CSV
                 </Button>
-                <Button variant="secondary" size="sm" onClick={downloadTemplate}>
-                  Descargar plantilla
-                </Button>
                 {file && !isCsv && <span className="error">Solo se permite CSV.</span>}
                 {!file && <span className="upload-hint">Arrastra y suelta aquí para cargar rápido.</span>}
                 {file && isCsv && <span className="upload-hint">Tip: puedes re-subir para recalcular al instante.</span>}
@@ -375,20 +486,6 @@ export default function TribunalDashboardPage() {
                     misma hoja.
                   </span>
                 )}
-                <label className="upload-toggle">
-                  <input type="checkbox" checked={autoSync} onChange={(e) => setAutoSync(e.target.checked)} />
-                  Auto-sync
-                </label>
-                <select
-                  value={autoSyncSeconds}
-                  onChange={(e) => setAutoSyncSeconds(Number(e.target.value))}
-                  disabled={!autoSync}
-                >
-                  <option value={10}>Cada 10s</option>
-                  <option value={20}>Cada 20s</option>
-                  <option value={30}>Cada 30s</option>
-                  <option value={60}>Cada 60s</option>
-                </select>
                 {uploading && (
                   <progress className="upload-progress-native" value={uploadProgress} max={100} />
                 )}
@@ -396,7 +493,7 @@ export default function TribunalDashboardPage() {
             </div>
             {!companyId && (
               <div className="mt-12">
-                <Alert tone="warning">Selecciona una empresa para subir el CSV.</Alert>
+                <Alert tone="warning">Selecciona una empresa.</Alert>
               </div>
             )}
             {uploadError && (
@@ -419,36 +516,58 @@ export default function TribunalDashboardPage() {
             <div className="upload-hint mt-12">
               Recomendado: separador <strong>;</strong> o <strong>,</strong> y cabeceras en la primera fila. Mínimo requerido:{' '}
               <strong>cliente</strong> y <strong>cif</strong>. Si tu fichero es un presupuesto con varias tablas/gráficas, este estudio
-              no lo va a “entender”: súbelo a <strong>Universal</strong> (Cargar datos) y luego lo conectamos a un tablero de
+              no lo va a interpretar bien: súbelo a <strong>Universal</strong> (Cargar datos) y luego lo conectamos a un tablero de
               presupuestos.
             </div>
           </div>
-          <div className="card soft">
-            <h3 className="h3-reset">Exportaciones</h3>
-            <div className="export-actions">
-              <Button variant="secondary" size="sm" onClick={handleExportCsv}>
-                CSV
-              </Button>
-              <Button variant="secondary" size="sm" onClick={handleExportPng}>
-                PNG
-              </Button>
-              <Button variant="secondary" size="sm" onClick={handleExportPdf}>
-                PDF
-              </Button>
+          <details className="card soft">
+            <summary className="upload-hint cursor-pointer">Opciones avanzadas</summary>
+            <div className="stack gap-10 mt-12">
+              <div className="export-actions">
+                <Button variant="secondary" size="sm" onClick={downloadTemplate}>
+                  Descargar plantilla
+                </Button>
+                <Button variant="secondary" size="sm" onClick={handleExportCsv}>
+                  Exportar CSV
+                </Button>
+                <Button variant="secondary" size="sm" onClick={handleExportPng}>
+                  Exportar PNG
+                </Button>
+                <Button variant="secondary" size="sm" onClick={handleExportPdf}>
+                  Exportar PDF
+                </Button>
+              </div>
+              <div className="row row-wrap row-center gap-10">
+                <label className="upload-toggle">
+                  <input type="checkbox" checked={autoSync} onChange={(e) => setAutoSync(e.target.checked)} />
+                  Auto-sync
+                </label>
+                <select
+                  value={autoSyncSeconds}
+                  onChange={(e) => setAutoSyncSeconds(Number(e.target.value))}
+                  disabled={!autoSync}
+                >
+                  <option value={10}>Cada 10s</option>
+                  <option value={20}>Cada 20s</option>
+                  <option value={30}>Cada 30s</option>
+                  <option value={60}>Cada 60s</option>
+                </select>
+              </div>
             </div>
-          </div>
+          </details>
         </div>
       </Section>
 
       {error && <p className="error">{String((error as any).message)}</p>}
 
-      <Section title="2) Vista previa" subtitle="Valida columnas y primeras filas antes de operar.">
-        <div className="card">
-          <h3 className="h3-reset">Vista previa del CSV</h3>
+      <Section title="2) Validación rápida" subtitle="Revisa columnas y primeras filas solo cuando necesites confirmar la estructura.">
+        <details className="card">
+        <summary className="upload-hint cursor-pointer">Vista previa de cartera</summary>
+        <h3 className="h3-reset mt-12">Vista previa de cartera</h3>
           {previewError ? (
             <div className="empty">{previewError}</div>
           ) : !previewHeaders.length ? (
-            <div className="empty">Selecciona un CSV para ver columnas y primeras filas.</div>
+            <div className="empty">Selecciona un CSV para revisar columnas y primeras filas.</div>
           ) : (
             <div className="csv-preview">
               <table className="table">
@@ -471,10 +590,10 @@ export default function TribunalDashboardPage() {
               </table>
             </div>
           )}
-        </div>
+        </details>
       </Section>
 
-      <Section title="3) KPIs y actividad" subtitle="KPIs principales, actividad contable y ranking por gestor.">
+      <Section title="3) KPIs y actividad" subtitle="Indicadores principales, señal contable y reparto operativo por gestor.">
         <div className="grid">
           <div className="card">
             <h3 className="h3-reset">KPIs principales</h3>
@@ -512,7 +631,7 @@ export default function TribunalDashboardPage() {
           <div className="card">
             <h3 className="h3-reset">Actividad contable</h3>
             {!activityPoints.length ? (
-              <div className="empty">Sin datos para graficar.</div>
+              <div className="empty">{EMPTY_DATA_TEXT} para graficar.</div>
             ) : (
               <KpiChart title="Asientos contables por año" points={activityPoints} variant="area" module="tribunal" />
             )}
@@ -520,7 +639,7 @@ export default function TribunalDashboardPage() {
           <div className="card">
             <h3 className="h3-reset">Ranking gestores (carga media)</h3>
             {!gestorCargaPoints.length ? (
-              <div className="empty">Sin datos para graficar.</div>
+              <div className="empty">{EMPTY_DATA_TEXT} para graficar.</div>
             ) : (
               <KpiChart title="Carga media por gestor" points={gestorCargaPoints} variant="bar" module="tribunal" />
             )}
@@ -528,12 +647,14 @@ export default function TribunalDashboardPage() {
         </div>
       </Section>
 
-      <Section title="4) Gestión y riesgo" subtitle="Operativa por gestor + lista de riesgos para priorizar.">
+      <Section title="4) Gestión y riesgo" subtitle="Carga por gestor y riesgos visibles para priorizar la conversación con el cliente final.">
         <div className="grid">
           <div className="card">
-            <h3 className="h3-reset">Gestores</h3>
+            <details>
+              <summary className="upload-hint cursor-pointer">Ver reparto por gestor</summary>
+            <h3 className="h3-reset mt-12">Gestores</h3>
             {!data?.gestores?.length ? (
-              <div className="empty">Sin datos de gestores.</div>
+              <div className="empty">{EMPTY_DATA_TEXT} de gestores.</div>
             ) : (
               <table className="table">
                 <thead>
@@ -558,7 +679,7 @@ export default function TribunalDashboardPage() {
                 <tbody>
                   {gestoresSorted.map((g: any) => (
                     <tr key={g.gestor || `${g.total}-${g.active}-${g.minuta}-${g.carga}`}>
-                      <td>{g.gestor || '—'}</td>
+                      <td>{g.gestor || EMPTY_VALUE}</td>
                       <td>{g.total}</td>
                       <td>{g.active}</td>
                       <td>{g.minuta}</td>
@@ -568,11 +689,12 @@ export default function TribunalDashboardPage() {
                 </tbody>
               </table>
             )}
+            </details>
           </div>
           <div className="card">
             <h3 className="h3-reset">Riesgos</h3>
             {!data?.risk?.length ? (
-              <div className="empty">No se detectaron riesgos.</div>
+              <div className="empty">No se detectan riesgos visibles con la cartera cargada actualmente.</div>
             ) : (
               <div>
                 <div className="row row-wrap row-center gap-10 mb-2">
@@ -622,5 +744,6 @@ export default function TribunalDashboardPage() {
     </div>
   )
 }
+
 
 

@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+  <title>EnterpriseIQ Report</title>
+  <style>
+{{REPORT_CSS}}
+  </style>
+</head>
+<body>
+  <section class="cover page-break-after">
+    <div class="brand-row">
+      <div class="brand-left">
+        <div class="brand">{{CONSULTANCY_NAME}}</div>
+      </div>
+      <div class="brand-right">
+        <div class="logo">{{LOGO_INNER}}</div>
+      </div>
+    </div>
+    <div class="title">Informe mensual</div>
+    <div class="subtitle">Resumen, señales clave y soporte de caja listos para revisión antes de compartir con el cliente.</div>
+    <div class="meta">
+      <div class="row"><div class="k">Empresa</div><div class="v">{{COMPANY_NAME}}</div></div>
+      <div class="row"><div class="k">Periodo</div><div class="v">{{PERIOD}}</div></div>
+      <div class="row"><div class="k">Generado</div><div class="v">{{GENERATED_AT}}</div></div>
+    </div>
+  </section>
+
+  <section class="report-section keep-together">
+    <div class="section-title">Resumen ejecutivo</div>
+    <div class="card">
+      <div class="small">{{SUMMARY}}</div>
+      <div class="muted top-gap">{{EXECUTIVE_SUMMARY}}</div>
+    </div>
+  </section>
+
+  {{PRIMARY_STORY_HTML}}
+
+  <section class="report-section keep-together">
+    <div class="section-title">KPIs del periodo</div>
+    {{KPI_HTML}}
+  </section>
+
+  <section class="report-section">
+    <div class="section-title">Alertas y riesgos</div>
+    {{ALERTS_HTML}}
+  </section>
+
+  {{SECONDARY_STORY_HTML}}
+
+  {{BUDGET_HTML}}
+
+  <section class="report-section secondary-reading keep-together">
+    <div class="section-title">Lectura complementaria</div>
+    <div class="section-intro">Gráficas y detalle histórico para profundizar después de la lectura ejecutiva.</div>
+  </section>
+
+  <section class="report-section">
+    <div class="section-title">Radiografía operativa</div>
+    <div class="grid2">
+      <div class="col">
+        <div class="chart keep-together">
+          <div class="chart-kicker">Lectura operativa</div>
+          <h3>Distribución</h3>
+          <div class="sub">Cobros frente a pagos del periodo</div>
+          <div class="chart-context">{{DISTRIBUTION_CONTEXT}}</div>
+          {{MONTH_DONUT}}
+          <div class="chart-foot">{{DISTRIBUTION_FOOT}}</div>
+        </div>
+      </div>
+      <div class="col">
+        <div class="chart keep-together">
+          <div class="chart-kicker">Lectura operativa</div>
+          <h3>Liquidez</h3>
+          <div class="sub">Saldo final frente a pagos del mes</div>
+          <div class="chart-context">{{LIQUIDITY_CONTEXT}}</div>
+          {{COVERAGE_GAUGE}}
+          <div class="chart-foot">{{LIQUIDITY_FOOT}}</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="report-section">
+    <div class="section-title">Tendencia histórica de caja</div>
+    <div class="grid2">
+      <div class="col">
+        <div class="chart">
+          <div class="chart-kicker">Evolución</div>
+          <h3>Neto mensual</h3>
+          <div class="sub">{{MONTH_LABELS}}</div>
+          <div class="chart-context">{{NET_CONTEXT}}</div>
+          {{NET_SVG}}
+        </div>
+      </div>
+      <div class="col">
+        <div class="chart">
+          <div class="chart-kicker">Evolución</div>
+          <h3>Saldo final</h3>
+          <div class="sub">{{MONTH_LABELS}}</div>
+          <div class="chart-context">{{BALANCE_CONTEXT}}</div>
+          {{BALANCE_SVG}}
+        </div>
+      </div>
+    </div>
+
+    <div class="grid2 compact-top">
+      <div class="col full-width">
+        <div class="chart">
+          <div class="chart-kicker">Comparativa</div>
+          <h3>Cobros frente a pagos</h3>
+          <div class="sub">{{MONTH_LABELS}}</div>
+          <div class="chart-context">{{INOUT_CONTEXT}}</div>
+          {{IN_OUT_SVG}}
+          <div class="chart-legend">
+            <span class="dot dot-inflow"></span>Cobros
+            <span class="legend-gap"><span class="dot dot-outflow"></span>Pagos</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer class="footer">{{FOOTER_TEXT}}</footer>
+</body>
+</html>

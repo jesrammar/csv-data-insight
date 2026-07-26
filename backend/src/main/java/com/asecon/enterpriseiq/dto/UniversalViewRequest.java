@@ -11,6 +11,7 @@ public class UniversalViewRequest {
     private String xColumn;
     private String yColumn;
     private String aggregation; // sum | avg
+    private String aggregationMode; // ROW_COUNT | DISTINCT_* | SUM_* | AVG_VALUE
     // Legacy single-filter fields (keep for backward compatibility)
     private String filterColumn;
     private String filterValue;
@@ -35,6 +36,8 @@ public class UniversalViewRequest {
     public void setYColumn(String yColumn) { this.yColumn = yColumn; }
     public String getAggregation() { return aggregation; }
     public void setAggregation(String aggregation) { this.aggregation = aggregation; }
+    public String getAggregationMode() { return aggregationMode; }
+    public void setAggregationMode(String aggregationMode) { this.aggregationMode = aggregationMode; }
     public String getFilterColumn() { return filterColumn; }
     public void setFilterColumn(String filterColumn) { this.filterColumn = filterColumn; }
     public String getFilterValue() { return filterValue; }

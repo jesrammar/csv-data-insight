@@ -7,6 +7,8 @@ import java.util.List;
 public record CashflowSummaryDto(
     String sourceFilename,
     Instant sourceCreatedAt,
+    Long sourceImportId,
+    String analysisVersion,
     BigDecimal openingBalance,
     List<CashflowMonthDto> months,
     BigDecimal totalInflow,

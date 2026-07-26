@@ -20,12 +20,24 @@ public class ImportDto {
     private String lastError;
     private String storageRef;
     private String originalFilename;
+    private Integer versionNo;
+    private String contentHash;
+    private String normalizedHash;
+    private Long supersedesImportId;
+    private Long duplicateOfImportId;
+    private String blockingCode;
+    private String blockingReason;
+    private Integer rowsReceived;
+    private Integer rowsValid;
+    private Instant appliedAt;
 
     public ImportDto() {}
 
     public ImportDto(Long id, Long companyId, String period, ImportStatus status, Instant createdAt, Instant processedAt,
                      String errorSummary, Integer warningCount, Integer errorCount,
-                     Instant updatedAt, Instant runAfter, Integer attempts, Integer maxAttempts, String lastError, String storageRef, String originalFilename) {
+                     Instant updatedAt, Instant runAfter, Integer attempts, Integer maxAttempts, String lastError, String storageRef, String originalFilename,
+                     Integer versionNo, String contentHash, String normalizedHash, Long supersedesImportId, Long duplicateOfImportId,
+                     String blockingCode, String blockingReason, Integer rowsReceived, Integer rowsValid, Instant appliedAt) {
         this.id = id;
         this.companyId = companyId;
         this.period = period;
@@ -42,6 +54,16 @@ public class ImportDto {
         this.lastError = lastError;
         this.storageRef = storageRef;
         this.originalFilename = originalFilename;
+        this.versionNo = versionNo;
+        this.contentHash = contentHash;
+        this.normalizedHash = normalizedHash;
+        this.supersedesImportId = supersedesImportId;
+        this.duplicateOfImportId = duplicateOfImportId;
+        this.blockingCode = blockingCode;
+        this.blockingReason = blockingReason;
+        this.rowsReceived = rowsReceived;
+        this.rowsValid = rowsValid;
+        this.appliedAt = appliedAt;
     }
 
     public Long getId() { return id; }
@@ -76,4 +98,24 @@ public class ImportDto {
     public void setStorageRef(String storageRef) { this.storageRef = storageRef; }
     public String getOriginalFilename() { return originalFilename; }
     public void setOriginalFilename(String originalFilename) { this.originalFilename = originalFilename; }
+    public Integer getVersionNo() { return versionNo; }
+    public void setVersionNo(Integer versionNo) { this.versionNo = versionNo; }
+    public String getContentHash() { return contentHash; }
+    public void setContentHash(String contentHash) { this.contentHash = contentHash; }
+    public String getNormalizedHash() { return normalizedHash; }
+    public void setNormalizedHash(String normalizedHash) { this.normalizedHash = normalizedHash; }
+    public Long getSupersedesImportId() { return supersedesImportId; }
+    public void setSupersedesImportId(Long supersedesImportId) { this.supersedesImportId = supersedesImportId; }
+    public Long getDuplicateOfImportId() { return duplicateOfImportId; }
+    public void setDuplicateOfImportId(Long duplicateOfImportId) { this.duplicateOfImportId = duplicateOfImportId; }
+    public String getBlockingCode() { return blockingCode; }
+    public void setBlockingCode(String blockingCode) { this.blockingCode = blockingCode; }
+    public String getBlockingReason() { return blockingReason; }
+    public void setBlockingReason(String blockingReason) { this.blockingReason = blockingReason; }
+    public Integer getRowsReceived() { return rowsReceived; }
+    public void setRowsReceived(Integer rowsReceived) { this.rowsReceived = rowsReceived; }
+    public Integer getRowsValid() { return rowsValid; }
+    public void setRowsValid(Integer rowsValid) { this.rowsValid = rowsValid; }
+    public Instant getAppliedAt() { return appliedAt; }
+    public void setAppliedAt(Instant appliedAt) { this.appliedAt = appliedAt; }
 }

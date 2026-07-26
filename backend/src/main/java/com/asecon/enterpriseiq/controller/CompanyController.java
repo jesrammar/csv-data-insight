@@ -1,10 +1,12 @@
 package com.asecon.enterpriseiq.controller;
 
 import com.asecon.enterpriseiq.dto.CompanyDto;
+import com.asecon.enterpriseiq.dto.PortfolioOperationsDto;
 import com.asecon.enterpriseiq.model.Company;
 import com.asecon.enterpriseiq.model.Role;
 import com.asecon.enterpriseiq.service.AccessService;
 import com.asecon.enterpriseiq.service.CompanyService;
+import com.asecon.enterpriseiq.service.PortfolioOperationsService;
 import jakarta.validation.Valid;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -16,10 +18,14 @@ import org.springframework.web.bind.annotation.*;
 public class CompanyController {
     private final CompanyService companyService;
     private final AccessService accessService;
+    private final PortfolioOperationsService portfolioOperationsService;
 
-    public CompanyController(CompanyService companyService, AccessService accessService) {
+    public CompanyController(CompanyService companyService,
+                             AccessService accessService,
+                             PortfolioOperationsService portfolioOperationsService) {
         this.companyService = companyService;
         this.accessService = accessService;
+        this.portfolioOperationsService = portfolioOperationsService;
     }
 
     @GetMapping
@@ -40,6 +46,12 @@ public class CompanyController {
         return companyService.findForUser(user.getId()).stream()
             .map(c -> new CompanyDto(c.getId(), c.getName(), c.getPlan()))
             .collect(Collectors.toList());
+    }
+
+    @GetMapping("/mine/operations")
+    @PreAuthorize("hasAnyRole('ADMIN','CONSULTOR')")
+    public PortfolioOperationsDto myOperations(@RequestParam(defaultValue = "4") int months) {
+        return portfolioOperationsService.buildForUser(accessService.currentUser(), months);
     }
 
     @PostMapping

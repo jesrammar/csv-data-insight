@@ -12,6 +12,7 @@ public record UniversalImportAnalysisDto(
     Integer observedRows,
     Integer removedEmptyColumns,
     Boolean convertedFromXlsx,
-    UniversalXlsxOptionsDto xlsx
+    UniversalXlsxOptionsDto xlsx,
+    UniversalIntakeDiagnosisDto intakeDiagnosis
 ) {}
 

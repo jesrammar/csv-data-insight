@@ -34,7 +34,7 @@ export default function GuidesPage() {
     <div>
       <PageHeader
         title="Guías de carga"
-        subtitle="Qué subir, ejemplos y cómo arreglar errores típicos. Pensado para trabajar rápido con clientes."
+        subtitle="Qué subir, ejemplos y cómo resolver errores típicos. Pensado para operar rápido con empresas gestionadas."
         actions={
           <Button variant="ghost" size="sm" onClick={() => navigate('/imports')}>
             Ir a Cargar datos
@@ -58,13 +58,13 @@ export default function GuidesPage() {
           size="sm"
           onClick={() => go('presupuesto')}
         >
-          Presupuesto
+          Plan anual
         </Button>
       </div>
 
       <Alert tone="info" title="Workflow recomendado (2 minutos)">
         <div className="upload-hint mt-1">
-          1) Descarga una plantilla · 2) Rellena 2–3 filas y valida cabecera/columnas · 3) Sube en “Cargar datos” y revisa el dashboard.
+          1) Descarga una plantilla · 2) Rellena 2-3 filas y valida cabecera/columnas · 3) Sube en "Cargar datos" y revisa el dashboard.
         </div>
         <div className="row row-wrap gap-10 mt-2">
           <a className="btn btn-secondary btn-sm" href={hrefFor(selected)} download>
@@ -192,7 +192,7 @@ export default function GuidesPage() {
           <Section title="Ejemplo rápido" subtitle="Plantilla descargable (CSV).">
             <div className="card">
               <div className="mini-row">
-                <div className="upload-hint">Útil para arrancar si el cliente “solo tiene Excel”.</div>
+                <div className="upload-hint">Útil para arrancar si la empresa cliente “solo tiene Excel”.</div>
                 <a className="btn btn-secondary btn-sm" href="/samples/plantilla-tribunal.csv" download>
                   Descargar plantilla
                 </a>
@@ -343,7 +343,7 @@ export default function GuidesPage() {
               <div className="card soft">
                 <div className="fw-900">Si el XLSX tiene títulos/logos arriba</div>
                 <div className="upload-hint mt-8">
-                  Usa Universal en modo guiado para indicar la fila de cabecera real. Luego valida en el Dashboard de Presupuesto con “Preview long”.
+                  Usa Universal en modo guiado para indicar la fila de cabecera real. Luego valida en el plan anual con “Preview long”.
                 </div>
               </div>
               <div className="card soft">
@@ -372,7 +372,7 @@ export default function GuidesPage() {
           <Section title="Validación (pro)" subtitle="Antes de hablar con el cliente, comprueba que la lectura es correcta.">
             <div className="card">
               <div className="upload-hint">
-                En el Dashboard Presupuesto:
+                En el análisis técnico del presupuesto:
                 <ul className="list-steps mt-8">
                   <li>Botón “Preview long”: confirma columna etiqueta + meses + muestra de filas</li>
                   <li>Botón “CSV largo”: descarga y verifica que no hay meses desplazados</li>
@@ -411,7 +411,7 @@ export default function GuidesPage() {
                 Subir XLSX (Universal guiado)
               </Button>
               <Button size="sm" variant="ghost" onClick={() => navigate('/budget')}>
-                Abrir Dashboard Presupuesto
+                Abrir plan anual
               </Button>
             </div>
           </Alert>

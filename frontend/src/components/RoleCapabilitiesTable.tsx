@@ -3,27 +3,27 @@ type RoleRow = { role: string; goal: string; canSee: string; canOperate: string 
 export const ROLE_MATRIX: RoleRow[] = [
   {
     role: 'CLIENTE',
-    goal: 'Entender y decidir rápido',
+    goal: 'Consultar y decidir con contexto',
     canSee: 'Resumen, Caja, Alertas, Informes, Ayuda',
-    canOperate: 'No sube datos ni ejecuta automatizaciones'
+    canOperate: 'No sube datos ni ejecuta automatizaciones; consume lectura publicada'
   },
   {
     role: 'CONSULTOR',
-    goal: 'Operar para varias empresas',
+    goal: 'Operar una cartera de empresas',
     canSee: 'Todo lo anterior + módulos de consultoría (según plan)',
     canOperate: 'Importaciones, Tribunal, Universal, Automatización, Recomendaciones'
   },
   {
     role: 'ADMIN',
-    goal: 'Administrar plataforma',
+    goal: 'Gobernar la operación de la consultora',
     canSee: 'Todo',
-    canOperate: 'Gestión de empresas + permisos totales'
+    canOperate: 'Gestión de empresas gestionadas, usuarios y permisos'
   }
 ]
 
 export default function RoleCapabilitiesTable({
   title = 'Roles (permisos funcionales)',
-  subtitle = 'El plan aplica por empresa; el rol define qué pantallas puede operar cada usuario.',
+  subtitle = 'La consultora opera con ADMIN y CONSULTOR; CLIENTE queda como acceso opcional de lectura por empresa gestionada.',
   compact = false
 }: {
   title?: string

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+﻿import { useEffect, useMemo, useState } from 'react'
 import EChart from './charts/EChart'
 import type { ChartModule } from './charts/EChart'
 import { formatChartValue } from '../utils/chartFormat'
@@ -57,7 +57,7 @@ export default function KpiChart({
   band = null,
   onPointClick
 }: Props) {
-  if (!points.length) return <div className="empty">Sin datos para graficar.</div>
+  if (!points.length) return <div className="empty">Sin datos.</div>
 
   const lastLabel = points[points.length - 1]?.label ? String(points[points.length - 1].label) : ''
   const [focusLabel, setFocusLabel] = useState<string>(lastLabel)
@@ -220,13 +220,14 @@ export default function KpiChart({
   }, [points, variant, valueSuffix, avg, hasMany, title, markers, showTrend, band])
 
   return (
-    <div className="chart-wrap">
+    <div className="chart-wrap chart-wrap-executive">
       <h4 className="m-0 mb-8">{title}</h4>
       <div className="chart-surface">
         <EChart
           module={module}
           valueSuffix={valueSuffix}
           height={240}
+          className="chart-shell-hero chart-shell-story"
           option={option as any}
           onAxisHover={(label) => setFocusLabel(String(label || ''))}
           onLeave={() => setFocusLabel(lastLabel)}
@@ -253,7 +254,14 @@ export default function KpiChart({
         <span>Media 3p: {avg3 == null ? '—' : formatChartValue(avg3, valueSuffix)}</span>
         <span>Media 6p: {avg6 == null ? '—' : formatChartValue(avg6, valueSuffix)}</span>
       </div>
-      <ChartNarrative title={`Lectura del gráfico · ${focusLabel || '—'}`} see={narrative.see} why={narrative.why} todo={narrative.todo} />
+      <ChartNarrative
+        title={`Lectura del gráfico · ${focusLabel || '—'}`}
+        see={narrative.see}
+        why={narrative.why}
+        todo={narrative.todo}
+        className="chart-narrative-executive"
+      />
     </div>
   )
 }
+

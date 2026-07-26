@@ -1,8 +1,10 @@
-﻿import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import '../components/charts/echarts-advanced'
 import EChart from '../components/charts/EChart'
 import ChartNarrative from '../components/charts/ChartNarrative'
+import ExplainThisChart from '../components/charts/ExplainThisChart'
 import LineagePanel from '../components/charts/LineagePanel'
 import {
   assistantChat,
@@ -27,11 +29,13 @@ import {
   type AdvisorAction,
   type AssistantMessage,
   type UniversalImportDto,
+  type UniversalIntakeDiagnosis,
   type UniversalAutoSuggestion,
   type UniversalChartData,
   type UniversalEvidenceDto,
   type UniversalImportQualityDto,
   type UniversalRows,
+  type UniversalSummaryDto,
   type UniversalViewDto,
   type UniversalViewRequest,
   type UniversalXlsxPreview
@@ -41,7 +45,11 @@ import PageHeader from '../components/ui/PageHeader'
 import Alert from '../components/ui/Alert'
 import Button from '../components/ui/Button'
 import { useToast } from '../components/ui/ToastProvider'
+import { intakeDetail, intakeDisplayLabel, intakePrimaryActionLabel, intakeRecommendedRoute, intakeKind, isAnnualBudgetDiagnosis } from '../utils/intakeDiagnosis'
 import { buildUniversalChartNarrative } from '../utils/universalChartNarrative'
+import { EMPTY_DATA_TEXT, EMPTY_VALUE, formatDateTime } from '../utils/format'
+
+type AggregationMode = NonNullable<UniversalViewRequest['aggregationMode']>
 
 function formatPeriod(date: Date) {
   const y = date.getFullYear()
@@ -59,6 +67,320 @@ function lastMonths(count: number) {
   return months
 }
 
+function formatCompactNumber(value: number | null | undefined, digits = 1) {
+  if (value == null || Number.isNaN(Number(value))) return '-'
+  return new Intl.NumberFormat('es-ES', { maximumFractionDigits: digits }).format(Number(value))
+}
+
+function formatCompactPercent(value: number | null | undefined, digits = 0) {
+  if (value == null || Number.isNaN(Number(value))) return '-'
+  return `${new Intl.NumberFormat('es-ES', { maximumFractionDigits: digits }).format(Number(value))}%`
+}
+
+function prettyColumnName(name: string) {
+  const key = String(name || '').trim().toLowerCase()
+  const aliases: Record<string, string> = {
+    gross_pay: 'salario bruto',
+    net_pay: 'salario neto',
+    employer_cpp: 'CPP empresa',
+    employer_ei: 'EI empresa',
+    federal_tax: 'impuesto federal',
+    provincial_tax: 'impuesto provincial',
+    cpp: 'CPP',
+    ei: 'EI',
+    pay_date: 'fecha de pago',
+    employee_name: 'empleado',
+    role: 'rol'
+  }
+  if (aliases[key]) return aliases[key]
+  return String(name || '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function semanticLabel(value: string | null | undefined) {
+  const key = String(value || '').trim().toUpperCase()
+  const labels: Record<string, string> = {
+    ACCOUNTING_ENTRY_LINE: 'LÃ­nea contable',
+    DOCUMENT_LINE: 'LÃ­nea de documento',
+    INVOICE: 'Factura',
+    DOCUMENT: 'Documento',
+    PARTY: 'Tercero',
+    ACCOUNT: 'Cuenta',
+    ENTRY: 'Asiento',
+    MEASURE: 'MÃ©trica',
+    TEMPORAL: 'Temporal',
+    CATEGORICAL: 'CategorÃ­a',
+    IDENTIFIER: 'Identificador',
+    ACCOUNT_CODE: 'Cuenta contable',
+    ACCOUNT_NAME: 'Nombre de cuenta',
+    ENTRY_ID: 'Asiento',
+    DOCUMENT_ID: 'Documento',
+    INVOICE_ID: 'Factura',
+    PARTY_ID: 'Tercero',
+    PARTY_NAME: 'Nombre tercero',
+    PROJECT_ID: 'Proyecto',
+    PROJECT_NAME: 'Nombre proyecto',
+    DATE: 'Fecha',
+    DEBIT_AMOUNT: 'Importe debe',
+    CREDIT_AMOUNT: 'Importe haber',
+    SIGNED_AMOUNT: 'Importe neto',
+    CURRENCY: 'Importe',
+    BOOLEAN: 'Bandera',
+    TRI_STATE_BOOLEAN: 'Estado aplicable',
+    STATUS: 'Estado',
+    CATEGORICAL_DIMENSION: 'DimensiÃ³n',
+    TAX_IDENTIFIER: 'NIF/CIF',
+    FREE_TEXT: 'Texto libre'
+  }
+  return labels[key] || prettyColumnName(String(value || 'sin clasificar'))
+}
+
+function aggregationLabel(value: string | null | undefined) {
+  const key = String(value || '').trim().toUpperCase()
+  const labels: Record<string, string> = {
+    ROW_COUNT: 'filas',
+    DISTINCT_COUNT: 'distintos',
+    DISTINCT_ENTRY_COUNT: 'asientos',
+    DISTINCT_DOCUMENT_COUNT: 'documentos',
+    DISTINCT_INVOICE_COUNT: 'facturas',
+    DISTINCT_PARTY_COUNT: 'terceros',
+    SUM_DEBIT: 'debe',
+    SUM_CREDIT: 'haber',
+    NET_BALANCE: 'saldo',
+    SUM_AMOUNT: 'importe',
+    SUM_VALUE: 'suma',
+    SUM_DISTINCT_VALUE: 'suma deduplicada',
+    AVG_VALUE: 'media',
+    MEDIAN: 'mediana',
+    SHARE: 'porcentaje',
+    TIME_SERIES: 'evoluciÃ³n',
+    APPLICABLE_ROW_COUNT: 'aplicables',
+    APPLICABLE_RATE: '% aplicable'
+  }
+  return labels[key] || prettyColumnName(String(value || ''))
+}
+
+function viewTypeLabel(value: string | null | undefined) {
+  const key = String(value || '').trim().toUpperCase()
+  const labels: Record<string, string> = {
+    TIME_SERIES: 'Serie temporal',
+    CATEGORY_BAR: 'Ranking',
+    KPI_CARDS: 'KPIs',
+    SCATTER: 'Relacion X/Y',
+    HEATMAP: 'Mapa cruzado',
+    PIVOT_MONTHLY: 'Pivote mensual'
+  }
+  return labels[key] || prettyColumnName(String(value || 'vista'))
+}
+
+function columnSupportsAggregation(column: any, mode: string) {
+  const wanted = String(mode || '').trim().toUpperCase()
+  return Array.isArray(column?.validAggregations)
+    ? column.validAggregations.some((item: any) => String(item || '').trim().toUpperCase() === wanted)
+    : false
+}
+
+function aggregationNeedsValue(mode: AggregationMode | null | undefined) {
+  return !mode || mode === 'SUM_AMOUNT' || mode === 'AVG_VALUE'
+}
+
+function isMeasureColumn(column: any) {
+  return String(column?.analyticalType || '').toUpperCase() === 'MEASURE' && String(column?.detectedType || '').toLowerCase() === 'number'
+}
+
+function isTemporalColumn(column: any) {
+  return String(column?.analyticalType || '').toUpperCase() === 'TEMPORAL' || String(column?.detectedType || '').toLowerCase() === 'date'
+}
+
+function isCategoryColumn(column: any) {
+  const analyticalType = String(column?.analyticalType || '').toUpperCase()
+  return ['CATEGORICAL', 'IDENTIFIER', 'STATUS'].includes(analyticalType) || String(column?.semanticType || '').toUpperCase() === 'ACCOUNT_CODE'
+}
+
+function entitySummary(summary: any) {
+  const entities = Array.isArray(summary?.detectedEntities) ? summary.detectedEntities : []
+  if (!entities.length) return 'Sin entidad dominante detectada'
+  return entities
+    .slice(0, 3)
+    .map((entity: any) => `${semanticLabel(entity?.entityType)} ${formatCompactNumber(Number(entity?.distinctCount || 0), 0)}`)
+    .join('  Â·  ')
+}
+
+function insightTone(value: string | null | undefined) {
+  const key = String(value || '').trim().toLowerCase()
+  if (key === 'warning') return 'warn'
+  if (key === 'opportunity' || key === 'advisor') return 'ok'
+  return 'default'
+}
+
+function insightAudienceLabel(value: string | null | undefined) {
+  const key = String(value || '').trim().toLowerCase()
+  if (key === 'warning') return 'Riesgo'
+  if (key === 'opportunity') return 'Oportunidad'
+  if (key === 'advisor') return 'Lectura consultiva'
+  return 'Lectura base'
+}
+
+function trimInsightMessage(message: string | null | undefined) {
+  const text = String(message || '').trim()
+  if (!text) return ''
+  const normalized = text.replace(/\s+/g, ' ')
+  if (normalized.length <= 170) return normalized
+  const cut = normalized.slice(0, 167).trimEnd()
+  return `${cut}...`
+}
+
+function parseRangeLabel(label: string) {
+  const values =
+    String(label || '')
+      .match(/-?\d+(?:[.,]\d+)?/g)
+      ?.map((part) => Number(String(part).replace(',', '.')))
+      .filter((value) => Number.isFinite(value)) || []
+  if (values.length >= 2) return { from: values[0], to: values[1] }
+  if (values.length === 1) return { from: values[0], to: values[0] }
+  return null
+}
+
+function describeDistribution(column: any) {
+  const histogram = Array.isArray(column?.histogram) ? column.histogram : []
+  const total = histogram.reduce((sum: number, bucket: any) => sum + Number(bucket?.count || 0), 0)
+  if (!histogram.length || total <= 0) {
+    return {
+      see: ['TodavÃ­a no hay suficiente informaciÃ³n para resumir esta distribuciÃ³n.'],
+      why: ['Sin histograma no puedo decir si la mÃ©trica estÃ¡ concentrada, dispersa o tiene valores raros.'],
+      todo: ['Revisa si la columna viene bien importada como nÃºmero y no como texto.']
+    }
+  }
+
+  const nonZero = histogram.filter((bucket: any) => Number(bucket?.count || 0) > 0)
+  const sorted = [...nonZero].sort((a: any, b: any) => Number(b?.count || 0) - Number(a?.count || 0))
+  const dominant = sorted[0]
+  const top3 = sorted.slice(0, 3).reduce((sum: number, bucket: any) => sum + Number(bucket?.count || 0), 0)
+  const dominantShare = (Number(dominant?.count || 0) / total) * 100
+  const top3Share = (top3 / total) * 100
+  const range = parseRangeLabel(String(dominant?.label || ''))
+  const min = column?.min
+  const max = column?.max
+  const nullCount = Number(column?.nullCount || 0)
+  const spreadText =
+    nonZero.length <= 3
+      ? 'muy concentrada'
+      : nonZero.length <= Math.max(4, Math.ceil(histogram.length / 2))
+        ? 'bastante concentrada'
+        : 'bastante repartida'
+  const dominantText = range
+    ? `La mayor concentraciÃ³n de ${prettyColumnName(column?.name)} estÃ¡ entre ${formatCompactNumber(range.from, 2)} y ${formatCompactNumber(range.to, 2)} (${formatCompactPercent(dominantShare)} de las filas).`
+    : `El tramo con mÃ¡s peso en ${prettyColumnName(column?.name)} es ${String(dominant?.label || '-')}, con ${formatCompactPercent(dominantShare)} de las filas.`
+
+  const why = min != null && max != null
+    ? `La distribuciÃ³n estÃ¡ ${spreadText}: el rango observado va de ${formatCompactNumber(Number(min), 2)} a ${formatCompactNumber(Number(max), 2)} y los 3 tramos mÃ¡s frecuentes concentran ${formatCompactPercent(top3Share)}.`
+    : `La distribuciÃ³n estÃ¡ ${spreadText}: los 3 tramos mÃ¡s frecuentes concentran ${formatCompactPercent(top3Share)} del dataset.`
+
+  const todo =
+    nullCount > 0
+      ? `Hay ${formatCompactNumber(nullCount, 0)} filas vacÃ­as en esta mÃ©trica. Conviene revisar si faltan importes o si el origen no la rellena siempre.`
+      : nonZero.length <= 2
+        ? 'Tiene muy poca variaciÃ³n. Si esperabas mÃ¡s casuÃ­stica, revisa si la columna se ha agregado demasiado o si el origen trae valores repetidos.'
+        : 'Ãšsala para segmentar o cruzarla con una categorÃ­a/fecha: aquÃ­ hay suficiente variaciÃ³n para sacar lectura Ãºtil.'
+
+  return { see: [dominantText], why: [why], todo: [todo] }
+}
+
+function describeDateSeries(column: any) {
+  const series = Array.isArray(column?.dateSeries) ? column.dateSeries : []
+  type DatePoint = { label: string; count: number }
+  const points = series
+    .map((item: any) => ({ label: String(item?.label || '-'), count: Number(item?.count || 0) }))
+    .filter((item: DatePoint) => Number.isFinite(item.count))
+
+  if (!points.length) {
+    return {
+      see: ['TodavÃ­a no hay suficiente informaciÃ³n temporal para resumir esta serie.'],
+      why: ['Sin serie temporal no puedo ver si la carga es estable, si faltan periodos o si hay picos.'],
+      todo: ['Revisa que la columna de fecha se haya detectado bien y que tenga valores vÃ¡lidos.']
+    }
+  }
+
+  const total = points.reduce((sum: number, point: DatePoint) => sum + point.count, 0)
+  const avg = total / points.length
+  const peak = points.reduce((best: DatePoint, point: DatePoint) => (point.count > best.count ? point : best), points[0])
+  const floor = points.reduce((best: DatePoint, point: DatePoint) => (point.count < best.count ? point : best), points[0])
+  const emptyPeriods = points.filter((point: DatePoint) => point.count === 0).length
+  const volatility = avg > 0 ? (peak.count - floor.count) / avg : 0
+  const cadence =
+    volatility < 0.35
+      ? 'bastante estable'
+      : volatility < 0.9
+        ? 'estable con algunos picos'
+        : 'irregular'
+
+  const see =
+    volatility < 0.35
+      ? `El ritmo de ${prettyColumnName(column?.name)} es ${cadence}: media de ${formatCompactNumber(avg, 0)} filas por periodo, con pico en ${peak.label} (${formatCompactNumber(peak.count, 0)}).`
+      : `Hay picos claros en ${prettyColumnName(column?.name)}: el mÃ¡ximo estÃ¡ en ${peak.label} con ${formatCompactNumber(peak.count, 0)} filas, frente a un mÃ­nimo de ${formatCompactNumber(floor.count, 0)} en ${floor.label}.`
+
+  const why =
+    emptyPeriods > 0
+      ? `Hay ${formatCompactNumber(emptyPeriods, 0)} periodos vacÃ­os. Esto puede indicar meses sin carga, huecos en el fichero o un calendario incompleto.`
+      : `No se ven periodos vacÃ­os y el volumen total asciende a ${formatCompactNumber(total, 0)} filas. Sirve para saber si tu dataset llega de forma regular o con tandas.`
+
+  const todo =
+    emptyPeriods > 0
+      ? 'Revisa esos periodos vacÃ­os antes de sacar conclusiones de negocio: pueden distorsionar comparativas y deltas.'
+      : volatility >= 0.9
+        ? 'Investiga quÃ© pasÃ³ en los picos: normalmente seÃ±alan cargas masivas, cierres de periodo o campaÃ±as concretas.'
+        : 'Si esta fecha es operativa, ya estÃ¡ lista para comparar meses, detectar estacionalidad y construir alertas.'
+
+  return { see: [see], why: [why], todo: [todo] }
+}
+
+function describeCategory(column: any) {
+  const topValues = Array.isArray(column?.topValues) ? column.topValues : []
+  const items = topValues
+    .map((item: any) => ({ value: String(item?.value || '-').trim() || '-', count: Number(item?.count || 0) }))
+    .filter((item: { value: string; count: number }) => Number.isFinite(item.count) && item.count > 0)
+
+  if (!items.length) {
+    return {
+      see: ['TodavÃ­a no hay suficiente informaciÃ³n para resumir esta categorÃ­a.'],
+      why: ['Sin valores frecuentes no puedo decir quÃ© segmentos pesan mÃ¡s ni si la columna sirve para agrupar.'],
+      todo: ['Revisa si esta columna tiene demasiados valores Ãºnicos o si el texto viene sucio.']
+    }
+  }
+
+  const total = items.reduce((sum: number, item: { value: string; count: number }) => sum + item.count, 0)
+  const leader = items[0]
+  const top3 = items.slice(0, 3).reduce((sum: number, item: { value: string; count: number }) => sum + item.count, 0)
+  const concentration = total > 0 ? (top3 / total) * 100 : 0
+  const uniquePreview = items.length
+
+  const see = `El valor que mÃ¡s aparece en ${prettyColumnName(column?.name)} es ${leader.value} con ${formatCompactNumber(leader.count, 0)} filas (${formatCompactPercent((leader.count / total) * 100)} del top visible).`
+  const why =
+    concentration >= 70
+      ? `La categorÃ­a estÃ¡ muy concentrada: los 3 valores principales ya explican ${formatCompactPercent(concentration)}. Esto ayuda a priorizar segmentos rÃ¡pido.`
+      : `La categorÃ­a estÃ¡ mÃ¡s repartida: los 3 valores principales suman ${formatCompactPercent(concentration)}. Hay variedad suficiente para comparar grupos.`
+  const todo =
+    uniquePreview <= 2
+      ? 'Tiene poca diversidad. QuizÃ¡ no sea la mejor columna para segmentar dashboards o filtros.'
+      : `Ãšsala para rankings, filtros y cruces: aquÃ­ sÃ­ tienes segmentos con peso real para contar una historia.`
+
+  return { see: [see], why: [why], todo: [todo] }
+}
+
+function describeCorrelation(entry: any) {
+  const value = Number(entry?.correlation || 0)
+  const strength = Math.abs(value)
+  const label =
+    strength >= 0.85 ? 'muy fuerte' :
+    strength >= 0.65 ? 'fuerte' :
+    strength >= 0.4 ? 'moderada' :
+    'dÃ©bil'
+  const direction = value >= 0 ? 'positiva' : 'negativa'
+  return `${prettyColumnName(entry?.columnA)} y ${prettyColumnName(entry?.columnB)} tienen una relaciÃ³n ${label} y ${direction} (${value.toFixed(3)}).`
+}
+
 export default function UniversalDashboardPage() {
   const { id: companyId, plan } = useCompanySelection()
   const hasPlatinum = plan === 'PLATINUM'
@@ -67,6 +389,8 @@ export default function UniversalDashboardPage() {
   const queryClient = useQueryClient()
   const toast = useToast()
   const datasetRef = useRef<HTMLDivElement | null>(null)
+  const supportRef = useRef<HTMLDetailsElement | null>(null)
+  const previewRef = useRef<HTMLDivElement | null>(null)
   const [file, setFile] = useState<File | null>(null)
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
@@ -136,7 +460,7 @@ export default function UniversalDashboardPage() {
   ])
   const [builderTopN, setBuilderTopN] = useState(8)
   const [builderMaxPoints, setBuilderMaxPoints] = useState(1500)
-  const [builderAgg, setBuilderAgg] = useState<'sum' | 'avg'>('sum')
+  const [builderAggMode, setBuilderAggMode] = useState<AggregationMode>('SUM_AMOUNT')
   const [builderPreview, setBuilderPreview] = useState<UniversalChartData | null>(null)
   const [builderLastRequest, setBuilderLastRequest] = useState<UniversalViewRequest | null>(null)
   const [builderLoading, setBuilderLoading] = useState(false)
@@ -145,6 +469,7 @@ export default function UniversalDashboardPage() {
   const [builderEvidence, setBuilderEvidence] = useState<UniversalEvidenceDto | null>(null)
   const [builderEvidenceLoading, setBuilderEvidenceLoading] = useState(false)
   const [builderEvidenceError, setBuilderEvidenceError] = useState<string | null>(null)
+  const [showDatasetPlaybook, setShowDatasetPlaybook] = useState(true)
 
   useEffect(() => {
     const labels = builderPreview?.labels || []
@@ -152,6 +477,16 @@ export default function UniversalDashboardPage() {
     setBuilderEvidence(null)
     setBuilderEvidenceError(null)
   }, [builderPreview?.labels?.join('|')])
+
+  useEffect(() => {
+    if (!builderPreview) return
+    const node = previewRef.current
+    if (!node) return
+    const timer = window.setTimeout(() => {
+      node.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }, 80)
+    return () => window.clearTimeout(timer)
+  }, [builderPreview])
 
   const builderNarrative = useMemo(() => buildUniversalChartNarrative(builderPreview, builderFocusLabel), [builderPreview, builderFocusLabel])
 
@@ -173,7 +508,7 @@ export default function UniversalDashboardPage() {
         toast.push({ tone: 'success', title: 'Evidencia', message: `Filas: ${res.rows.length}.` })
       }
     } catch (e: any) {
-      const msg = e?.message || 'No se pudo cargar evidencia.'
+      const msg = e?.message || 'No se pudo cargar.'
       setBuilderEvidence(null)
       setBuilderEvidenceError(msg)
       toast.push({ tone: 'danger', title: 'Evidencia', message: msg })
@@ -228,6 +563,11 @@ export default function UniversalDashboardPage() {
     queryFn: () => listUniversalImports(companyId as number),
     enabled: !!companyId
   })
+
+  const selectedSavedView = useMemo(
+    () => (((views || []) as UniversalViewDto[]).find((view) => view.id === selectedViewId) || null),
+    [selectedViewId, views]
+  )
 
   const importsList = (imports || []) as UniversalImportDto[]
   const activeImport = activeImportId ? importsList.find((i) => i.id === activeImportId) : null
@@ -422,9 +762,29 @@ export default function UniversalDashboardPage() {
       await queryClient.invalidateQueries({ queryKey: ['universal-imports', companyId] })
       await refetch()
       await queryClient.invalidateQueries({ queryKey: ['universal-suggestions', companyId] })
+      const diagnosis = (res?.intakeDiagnosis || null) as UniversalIntakeDiagnosis | null
+      const diagnosisKind = intakeKind(diagnosis)
       setFile(null)
       const kind = file.name.toLowerCase().endsWith('.xlsx') ? 'XLSX' : 'CSV'
-      setUploadOk(`${kind} analizado correctamente.`)
+      if (isAnnualBudgetDiagnosis(diagnosis)) {
+        setUploadOk('Plan anual detectado. Abrimos el flujo anual.')
+        toast.push({ tone: 'success', title: 'Plan anual', message: 'Presupuesto anual detectado correctamente.' })
+        navigate('/budget?source=upload')
+        return
+      }
+      if (diagnosisKind === 'CASH_TRANSACTIONS') {
+        setUploadOk('Fichero de caja detectado. La lectura tecnica queda en Universal y la ruta natural es Caja.')
+        toast.push({ tone: 'info', title: 'Caja detectada', message: 'Si quieres cierre mensual, el siguiente paso natural es Caja.' })
+        return
+      }
+      if (diagnosisKind === 'TRIBUNAL_PORTFOLIO') {
+        setUploadOk('Cartera operativa detectada. La lectura tecnica queda en Universal y la ruta natural es Tribunal.')
+        toast.push({ tone: 'info', title: 'Tribunal detectado', message: 'Este fichero encaja mejor en cartera operativa.' })
+        return
+      }
+      const diagnosisLabel = intakeDisplayLabel(diagnosis, kind)
+      const diagnosisText = intakeDetail(diagnosis, `${kind} analizado correctamente.`)
+      setUploadOk(`${diagnosisLabel}. ${diagnosisText}`)
       toast.push({ tone: 'success', title: 'Analisis', message: `${kind} analizado correctamente.` })
     } catch (err: any) {
       setUploadError(err?.message || 'Error subiendo archivo.')
@@ -434,31 +794,298 @@ export default function UniversalDashboardPage() {
     }
   }
 
-  const summary = data as any
+  const summary = ((data as UniversalSummaryDto | null | undefined) || null) as UniversalSummaryDto | null
+  const intakeDiagnosis = ((summary?.intakeDiagnosis || (universalLineage as any)?.analysis?.intakeDiagnosis || null) as UniversalIntakeDiagnosis | null)
+  const intakeDiagnosisKind = intakeKind(intakeDiagnosis)
   const columns = summary?.columns || []
   const correlations = summary?.correlations || []
   const insights = summary?.insights || []
+  const normalizedColumnNames = useMemo(
+    () => new Set((Array.isArray(columns) ? columns : []).map((c: any) => String(c?.name || '').trim().toLowerCase())),
+    [columns]
+  )
+  const looksLikePayrollDataset =
+    normalizedColumnNames.has('pay_date') &&
+    normalizedColumnNames.has('role') &&
+    (normalizedColumnNames.has('gross_pay') || normalizedColumnNames.has('net_pay'))
+  const suggestionsList = (suggestions as UniversalAutoSuggestion[] | undefined) || []
+  const allowedSuggestionTypes = plan === 'BRONZE' ? new Set(['TIME_SERIES', 'CATEGORY_BAR', 'KPI_CARDS']) : null
+  const suggestionsAllowed = allowedSuggestionTypes ? suggestionsList.filter((s) => allowedSuggestionTypes.has(String(s?.request?.type || '').toUpperCase())) : suggestionsList
+  const suggestionsBlockedCount = allowedSuggestionTypes ? suggestionsList.length - suggestionsAllowed.length : 0
+
+  const quickStartViews = useMemo(() => {
+    if (looksLikePayrollDataset) {
+      const presets: Array<{ title: string; description: string; request: UniversalViewRequest }> = []
+      if (normalizedColumnNames.has('gross_pay')) {
+        presets.push({
+          title: 'Coste bruto por mes',
+          description: 'Serie temporal para ver cuÃ¡nto cuesta la nÃ³mina en bruto cada mes.',
+          request: {
+            name: 'Coste bruto por mes',
+            type: 'TIME_SERIES',
+            dateColumn: 'Pay_Date',
+            valueColumn: 'Gross_Pay',
+            aggregationMode: 'SUM_AMOUNT',
+            aggregation: 'sum'
+          }
+        })
+      }
+      if (normalizedColumnNames.has('net_pay')) {
+        presets.push({
+          title: 'Neto pagado por rol',
+          description: 'Ranking para detectar quÃ© rol concentra mÃ¡s pago neto.',
+          request: {
+            name: 'Neto pagado por rol',
+            type: 'CATEGORY_BAR',
+            categoryColumn: 'Role',
+            valueColumn: 'Net_Pay',
+            aggregationMode: 'SUM_AMOUNT',
+            aggregation: 'sum',
+            topN: 8
+          }
+        })
+      }
+      if (normalizedColumnNames.has('employee_name') && normalizedColumnNames.has('gross_pay')) {
+        presets.push({
+          title: 'Peso salarial por empleado',
+          description: 'Comparativa por empleado para ver quiÃ©n pesa mÃ¡s en el coste total.',
+          request: {
+            name: 'Peso salarial por empleado',
+            type: 'CATEGORY_BAR',
+            categoryColumn: 'Employee_Name',
+            valueColumn: 'Gross_Pay',
+            aggregationMode: 'SUM_AMOUNT',
+            aggregation: 'sum',
+            topN: 10
+          }
+        })
+      }
+      if (normalizedColumnNames.has('role') && normalizedColumnNames.has('employer_cpp')) {
+        presets.push({
+          title: 'CotizaciÃ³n empresa por rol',
+          description: 'Comparativa del coste empresa adicional para explicar cargas sociales.',
+          request: {
+            name: 'CotizaciÃ³n empresa por rol',
+            type: 'CATEGORY_BAR',
+            categoryColumn: 'Role',
+            valueColumn: 'Employer_CPP',
+            aggregationMode: 'SUM_AMOUNT',
+            aggregation: 'sum',
+            topN: 8
+          }
+        })
+      }
+      return presets.slice(0, 4)
+    }
+
+    return suggestionsAllowed.slice(0, 3).map((sug) => ({
+      title: sug.title,
+      description: sug.description,
+      request: sug.request
+    }))
+  }, [looksLikePayrollDataset, normalizedColumnNames, suggestionsAllowed])
+  const primaryQuickStartView = quickStartViews[0] || null
+  const secondaryQuickStartViews = quickStartViews.slice(1)
+
+  const nextStepCards = useMemo(() => {
+    if (!summary?.filename) {
+      return [
+        { title: '1. Subir dataset', detail: 'Empieza cargando un CSV/XLSX para que Universal detecte estructura y primeras lecturas.' },
+        { title: '2. Revisar calidad', detail: 'Comprueba si fechas, importes y columnas se han entendido bien.' },
+        { title: '3. Crear una vista', detail: 'Usa una recomendaciÃ³n rÃ¡pida antes de entrar en la configuraciÃ³n avanzada.' }
+      ]
+    }
+    if (looksLikePayrollDataset) {
+      return [
+        { title: '1. Lee el coste mensual', detail: 'Empieza por Gross_Pay o Net_Pay por mes para entender la pelÃ­cula general.' },
+        { title: '2. Mira quiÃ©n pesa mÃ¡s', detail: 'Compara Role o Employee_Name para detectar concentraciÃ³n salarial.' },
+        { title: '3. Explica el coste empresa', detail: 'AÃ±ade Employer_CPP o Employer_EI para contar el coste oculto de nÃ³mina.' }
+      ]
+    }
+    return [
+      { title: '1. Revisa la calidad', detail: 'Si el score es bueno, confÃ­a en las vistas rÃ¡pidas; si no, corrige antes de interpretar.' },
+      { title: '2. Usa una sugerencia AUTO', detail: 'La forma mÃ¡s rÃ¡pida de sacar valor es empezar por una lectura ya propuesta.' },
+      { title: '3. Abre avanzado solo si hace falta', detail: 'La configuraciÃ³n manual queda para casos raros o preguntas muy concretas.' }
+    ]
+  }, [looksLikePayrollDataset, summary?.filename])
+
+  const legacyUniversalDecisionState = useMemo(() => {
+    if (!companyId) {
+      return {
+        title: 'Selecciona una empresa',
+        detail: 'Activa primero la empresa gestionada para poder leer un dataset y guardar una vista Ãºtil.'
+      }
+    }
+    if (!summary?.filename) {
+      return {
+        title: 'Sin dataset activo',
+        detail: 'Sube un CSV o XLSX y deja la exploraciÃ³n tÃ©cnica para despuÃ©s: primero necesitamos una base legible.'
+      }
+    }
+    if (looksLikePayrollDataset) {
+      return {
+        title: 'Dataset de nÃ³minas detectado',
+        detail: 'Universal ya estÃ¡ orientado a coste salarial, neto pagado y coste empresa. Empieza por una vista sencilla.'
+      }
+    }
+    if (quickStartViews.length) {
+      return {
+        title: 'Lectura lista para arrancar',
+        detail: `Ya tienes ${quickStartViews.length} vista${quickStartViews.length === 1 ? '' : 's'} recomendada${quickStartViews.length === 1 ? '' : 's'} para sacar valor sin entrar aÃºn en configuraciÃ³n manual.`
+      }
+    }
+    return {
+      title: 'Dataset activo',
+      detail: 'Empieza por calidad e insights, y baja al constructor solo si la lectura rÃ¡pida no responde la pregunta.'
+    }
+  }, [companyId, looksLikePayrollDataset, quickStartViews.length, summary?.filename])
+
+  const universalDecisionState = useMemo(() => {
+    if (!companyId) {
+      return {
+        title: 'Selecciona una empresa',
+        detail: 'Activa primero la empresa gestionada para poder leer un dataset y guardar una vista util.'
+      }
+    }
+    if (!summary?.filename) {
+      return {
+        title: 'Sin dataset activo',
+        detail: 'Sube un CSV o XLSX y deja la exploracion tecnica para despues: primero necesitamos una base legible.'
+      }
+    }
+    if (isAnnualBudgetDiagnosis(intakeDiagnosis)) {
+      return {
+        title: intakeDisplayLabel(intakeDiagnosis, 'Parece un plan anual'),
+        detail: intakeDetail(intakeDiagnosis, 'Este fichero encaja mejor en Plan anual que en Universal.')
+      }
+    }
+    if (intakeDiagnosisKind === 'CASH_TRANSACTIONS') {
+      return {
+        title: intakeDisplayLabel(intakeDiagnosis, 'Parece un fichero de caja'),
+        detail: intakeDetail(intakeDiagnosis, 'La lectura natural es Caja si quieres cierre mensual.')
+      }
+    }
+    if (intakeDiagnosisKind === 'TRIBUNAL_PORTFOLIO') {
+      return {
+        title: intakeDisplayLabel(intakeDiagnosis, 'Parece una cartera operativa'),
+        detail: intakeDetail(intakeDiagnosis, 'La ruta natural es Tribunal antes que un dashboard generico.')
+      }
+    }
+    if (looksLikePayrollDataset) {
+      return {
+        title: 'Dataset de nominas detectado',
+        detail: 'Universal ya esta orientado a coste salarial, neto pagado y coste empresa. Empieza por una vista sencilla.'
+      }
+    }
+    if (intakeDiagnosisKind === 'ACCOUNTING_LEDGER' || intakeDiagnosisKind === 'PAYROLL_DATASET') {
+      return {
+        title: intakeDisplayLabel(intakeDiagnosis, 'Lectura lista para arrancar'),
+        detail: intakeDetail(intakeDiagnosis, 'Universal ya puede abrir una lectura util de esta base.')
+      }
+    }
+    if (quickStartViews.length) {
+      return {
+        title: 'Lectura lista para arrancar',
+        detail: `Ya tienes ${quickStartViews.length} vista${quickStartViews.length === 1 ? '' : 's'} recomendada${quickStartViews.length === 1 ? '' : 's'} para sacar valor sin entrar aun en configuracion manual.`
+      }
+    }
+    return legacyUniversalDecisionState
+  }, [companyId, intakeDiagnosis, intakeDiagnosisKind, legacyUniversalDecisionState, looksLikePayrollDataset, quickStartViews.length, summary?.filename])
+
+  const executiveInsights = useMemo(() => {
+    if (!Array.isArray(insights) || !insights.length) return []
+    const preferred = ['warning', 'advisor', 'opportunity', 'info']
+    return [...insights]
+      .sort((a: any, b: any) => {
+        const aIdx = preferred.indexOf(String(a?.level || '').toLowerCase())
+        const bIdx = preferred.indexOf(String(b?.level || '').toLowerCase())
+        return (aIdx === -1 ? 99 : aIdx) - (bIdx === -1 ? 99 : bIdx)
+      })
+      .filter((item: any, index: number, arr: any[]) => arr.findIndex((other: any) => String(other?.title || '') === String(item?.title || '')) === index)
+      .slice(0, 3)
+  }, [insights])
+
+  const legacyPrimaryAction = useMemo(() => {
+    if (!summary?.filename) {
+      return {
+        label: 'Subir dataset',
+        helper: 'Empieza por la carga y deja la configuraciÃ³n avanzada para despuÃ©s.',
+        action: () => datasetRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }
+    }
+    if (quickStartViews.length) {
+      return {
+        label: 'Abrir vista sugerida',
+        helper: 'La forma mÃ¡s rÃ¡pida de sacar valor es abrir una lectura ya propuesta.',
+        action: () => previewPreset(quickStartViews[0].request, 'Vista sugerida cargada.')
+      }
+    }
+    return {
+      label: 'Revisar calidad',
+      helper: 'Si la base no estÃ¡ limpia, todo lo demÃ¡s pierde valor.',
+      action: () => supportRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+  }, [activeImportId, companyId, quickStartViews, summary?.filename])
+
+  const primaryAction = useMemo(() => {
+    if (!summary?.filename) {
+      return {
+        label: 'Subir dataset',
+        helper: 'Empieza por la carga y deja la configuracion avanzada para despues.',
+        action: () => datasetRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }
+    }
+    if (isAnnualBudgetDiagnosis(intakeDiagnosis)) {
+      return {
+        label: intakePrimaryActionLabel(intakeDiagnosis, 'Abrir plan anual'),
+        helper: 'Este fichero encaja mejor como presupuesto anual que como vista libre.',
+        action: () => navigate('/budget')
+      }
+    }
+    if (intakeDiagnosisKind === 'CASH_TRANSACTIONS') {
+      return {
+        label: intakePrimaryActionLabel(intakeDiagnosis, 'Usar modulo Caja'),
+        helper: 'Si quieres cierre mensual, vuelve a subirlo por Caja con un periodo operativo claro.',
+        action: () => navigate(intakeRecommendedRoute(intakeDiagnosis, '/imports?mode=transactions'))
+      }
+    }
+    if (intakeDiagnosisKind === 'TRIBUNAL_PORTFOLIO') {
+      return {
+        label: intakePrimaryActionLabel(intakeDiagnosis, 'Abrir Tribunal'),
+        helper: 'Este dataset encaja mejor en cartera operativa que en un constructor libre.',
+        action: () => navigate(intakeRecommendedRoute(intakeDiagnosis, '/tribunal'))
+      }
+    }
+    if (quickStartViews.length) {
+      return {
+        label: 'Abrir vista sugerida',
+        helper: 'La forma mas rapida de sacar valor es abrir una lectura ya propuesta.',
+        action: () => previewPreset(quickStartViews[0].request, 'Vista sugerida cargada.')
+      }
+    }
+    return legacyPrimaryAction
+  }, [intakeDiagnosis, intakeDiagnosisKind, legacyPrimaryAction, navigate, quickStartViews, summary?.filename])
 
   const crossDefaults = useMemo(() => {
     const cols = Array.isArray(columns) ? columns : []
     const dateCol =
-      cols.find((c: any) => String(c?.detectedType || '').toLowerCase() === 'date' || c?.dateMin || (c?.dateSeries || []).length)?.name ||
+      cols.find((c: any) => isTemporalColumn(c) || c?.dateMin || (c?.dateSeries || []).length)?.name ||
       ''
     const numCol =
-      cols.find((c: any) => String(c?.detectedType || '').toLowerCase() === 'number' || c?.mean != null || c?.median != null)?.name || ''
+      cols.find((c: any) => isMeasureColumn(c) || c?.mean != null || c?.median != null)?.name || ''
     const catCol =
-      cols.find((c: any) => String(c?.detectedType || '').toLowerCase() === 'string' && Number(c?.uniqueCount || 0) > 1)?.name || ''
+      cols.find((c: any) => isCategoryColumn(c) && Number(c?.uniqueCount || 0) > 1)?.name || ''
 
     const dateCandidates = cols
-      .filter((c: any) => String(c?.detectedType || '').toLowerCase() === 'date' || c?.dateMin || (c?.dateSeries || []).length)
+      .filter((c: any) => isTemporalColumn(c) || c?.dateMin || (c?.dateSeries || []).length)
       .map((c: any) => String(c?.name || ''))
       .filter(Boolean)
     const numCandidates = cols
-      .filter((c: any) => String(c?.detectedType || '').toLowerCase() === 'number' || c?.mean != null || c?.median != null)
+      .filter((c: any) => isMeasureColumn(c) || c?.mean != null || c?.median != null)
       .map((c: any) => String(c?.name || ''))
       .filter(Boolean)
     const catCandidates = cols
-      .filter((c: any) => String(c?.detectedType || '').toLowerCase() === 'string' && Number(c?.uniqueCount || 0) > 1)
+      .filter((c: any) => isCategoryColumn(c) && Number(c?.uniqueCount || 0) > 1)
       .map((c: any) => String(c?.name || ''))
       .filter(Boolean)
 
@@ -493,6 +1120,7 @@ export default function UniversalDashboardPage() {
       type: 'TIME_SERIES',
       dateColumn: crossPick.dateCol,
       valueColumn: crossPick.numCol,
+      aggregationMode: 'SUM_AMOUNT',
       aggregation: 'sum',
       filters
     } as any
@@ -506,6 +1134,7 @@ export default function UniversalDashboardPage() {
       type: 'CATEGORY_BAR',
       categoryColumn: crossPick.catCol,
       valueColumn: crossPick.numCol,
+      aggregationMode: 'SUM_AMOUNT',
       aggregation: 'sum',
       topN: 10,
       filters
@@ -541,19 +1170,102 @@ export default function UniversalDashboardPage() {
     return { badge, label, high, med, low }
   }
 
-  const suggestionsList = (suggestions as UniversalAutoSuggestion[] | undefined) || []
-  const allowedSuggestionTypes = plan === 'BRONZE' ? new Set(['TIME_SERIES', 'CATEGORY_BAR', 'KPI_CARDS']) : null
-  const suggestionsAllowed = allowedSuggestionTypes ? suggestionsList.filter((s) => allowedSuggestionTypes.has(String(s?.request?.type || '').toUpperCase())) : suggestionsList
-  const suggestionsBlockedCount = allowedSuggestionTypes ? suggestionsList.length - suggestionsAllowed.length : 0
-  const numericColumns = columns.filter((c: any) => c.detectedType === 'number').slice(0, 2)
-  const dateColumns = columns.filter((c: any) => c.detectedType === 'date').slice(0, 2)
-  const categoricalColumns = columns.filter((c: any) => c.detectedType === 'text' && (c.topValues?.length || 0) > 0).slice(0, 6)
-  const topCorrelations = correlations.slice(0, 5)
+  const pickColumnsByName = (items: any[], preferredNames: string[], fallbackCount: number) => {
+    const normalizedPreferred = preferredNames.map((name) => name.trim().toLowerCase())
+    const preferred = normalizedPreferred
+      .map((name) => items.find((item) => String(item?.name || '').trim().toLowerCase() === name))
+      .filter(Boolean)
+    const seen = new Set(preferred.map((item) => String(item?.name || '').trim().toLowerCase()))
+    const fallback = items.filter((item) => !seen.has(String(item?.name || '').trim().toLowerCase()))
+    return [...preferred, ...fallback].slice(0, fallbackCount)
+  }
 
-  const dateCols = columns.filter((c: any) => c.detectedType === 'date').map((c: any) => String(c.name))
-  const numberCols = columns.filter((c: any) => c.detectedType === 'number').map((c: any) => String(c.name))
-  const textCols = columns.filter((c: any) => c.detectedType === 'text').map((c: any) => String(c.name))
+  const payrollNumericColumns = pickColumnsByName(
+    columns.filter((c: any) => isMeasureColumn(c)),
+    ['gross_pay', 'net_pay', 'employer_cpp', 'employer_ei', 'federal_tax', 'provincial_tax', 'cpp', 'ei'],
+    4
+  )
+  const payrollDateColumns = pickColumnsByName(columns.filter((c: any) => isTemporalColumn(c)), ['pay_date'], 1)
+  const payrollCategoryColumns = pickColumnsByName(
+    columns.filter((c: any) => isCategoryColumn(c) && (c.topValues?.length || 0) > 0),
+    ['role', 'employee_name'],
+    2
+  )
+
+  const numericColumns = looksLikePayrollDataset
+    ? payrollNumericColumns
+    : columns.filter((c: any) => isMeasureColumn(c)).slice(0, 3)
+  const dateColumns = looksLikePayrollDataset
+    ? payrollDateColumns
+    : columns.filter((c: any) => isTemporalColumn(c)).slice(0, 2)
+  const categoricalColumns = looksLikePayrollDataset
+    ? payrollCategoryColumns
+    : columns.filter((c: any) => isCategoryColumn(c) && (c.topValues?.length || 0) > 0).slice(0, 6)
+  const topCorrelations = correlations.slice(0, 5)
+  const hiddenNumericColumnsCount = Math.max(0, columns.filter((c: any) => isMeasureColumn(c)).length - numericColumns.length)
+  const hiddenCategoryColumnsCount = Math.max(
+    0,
+    columns.filter((c: any) => isCategoryColumn(c) && (c.topValues?.length || 0) > 0).length - categoricalColumns.length
+  )
+
+  const dateCols = columns.filter((c: any) => isTemporalColumn(c)).map((c: any) => String(c.name))
+  const numberCols = columns.filter((c: any) => isMeasureColumn(c)).map((c: any) => String(c.name))
+  const textCols = columns.filter((c: any) => isCategoryColumn(c)).map((c: any) => String(c.name))
   const allCols = columns.map((c: any) => String(c.name))
+  const detectedEntities = Array.isArray(summary?.detectedEntities) ? summary.detectedEntities : []
+
+  const builderAggregationOptions = useMemo(() => {
+    if (builderType === 'SCATTER') {
+      return [{ value: 'ROW_COUNT' as AggregationMode, label: 'Puntos', detail: 'Scatter trabaja a nivel de fila y mantiene cada punto individual.' }]
+    }
+
+    const options: Array<{ value: AggregationMode; label: string; detail: string }> = []
+    const seen = new Set<string>()
+    const add = (value: AggregationMode, detail: string) => {
+      if (seen.has(value)) return
+      seen.add(value)
+      options.push({ value, label: aggregationLabel(value), detail })
+    }
+
+    add('ROW_COUNT', 'Cuenta filas vÃ¡lidas del recorte activo.')
+
+    if (detectedEntities.some((entity: any) => String(entity?.entityType || '').toUpperCase() === 'ENTRY' && entity?.keyColumn)) {
+      add('DISTINCT_ENTRY_COUNT', 'Cuenta asientos distintos sin duplicar lÃ­neas contables.')
+    }
+    if (detectedEntities.some((entity: any) => String(entity?.entityType || '').toUpperCase() === 'DOCUMENT' && entity?.keyColumn)) {
+      add('DISTINCT_DOCUMENT_COUNT', 'Cuenta documentos Ãºnicos para no medir varias veces el mismo soporte.')
+    }
+    if (detectedEntities.some((entity: any) => String(entity?.entityType || '').toUpperCase() === 'INVOICE' && entity?.keyColumn)) {
+      add('DISTINCT_INVOICE_COUNT', 'Cuenta facturas distintas aunque el dataset venga a nivel de lÃ­nea.')
+    }
+    if (detectedEntities.some((entity: any) => String(entity?.entityType || '').toUpperCase() === 'PARTY' && entity?.keyColumn)) {
+      add('DISTINCT_PARTY_COUNT', 'Cuenta terceros distintos para leer concentraciÃ³n de clientes o proveedores.')
+    }
+
+    const hasNumericValue = numberCols.length > 0 || columns.some((column: any) => columnSupportsAggregation(column, 'SUM_DISTINCT_VALUE'))
+    if (hasNumericValue) {
+      add('SUM_AMOUNT', 'Suma importes. Si hay clave documental, Universal evita el doble conteo.')
+      add('AVG_VALUE', 'Calcula la media de la columna de valor seleccionada.')
+    }
+    if (columns.some((column: any) => String(column?.semanticType || '').toUpperCase() === 'DEBIT_AMOUNT' || columnSupportsAggregation(column, 'SUM_DEBIT'))) {
+      add('SUM_DEBIT', 'Suma el debe detectado semÃ¡nticamente.')
+    }
+    if (columns.some((column: any) => String(column?.semanticType || '').toUpperCase() === 'CREDIT_AMOUNT' || columnSupportsAggregation(column, 'SUM_CREDIT'))) {
+      add('SUM_CREDIT', 'Suma el haber detectado semÃ¡nticamente.')
+    }
+    if (
+      columns.some(
+        (column: any) =>
+          String(column?.semanticType || '').toUpperCase() === 'SIGNED_AMOUNT' || columnSupportsAggregation(column, 'NET_BALANCE')
+      )
+    ) {
+      add('NET_BALANCE', 'Calcula saldo neto usando importe firmado o debe menos haber.')
+    }
+
+    return options
+  }, [builderType, columns, detectedEntities, numberCols.length])
+
+  const builderNeedsValue = aggregationNeedsValue(builderAggMode)
 
   useEffect(() => {
     // When switching dataset, keep the UI consistent: previous column selections may no longer exist.
@@ -578,6 +1290,13 @@ export default function UniversalDashboardPage() {
     if (!builderYCol && numberCols.length) setBuilderYCol(numberCols[1] ?? numberCols[0])
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [companyId, columns?.length])
+
+  useEffect(() => {
+    if (!builderAggregationOptions.length) return
+    if (!builderAggregationOptions.some((option) => option.value === builderAggMode)) {
+      setBuilderAggMode(builderAggregationOptions[0].value)
+    }
+  }, [builderAggMode, builderAggregationOptions])
 
   const corrHeatmap = useMemo(() => {
     if (!correlations?.length) return null
@@ -605,6 +1324,7 @@ export default function UniversalDashboardPage() {
     const n = columns.filter((c: any) => numericish(c.name)).length
     return columns.length >= 6 && n / columns.length >= 0.5
   }, [columns])
+  const universalSupportOpen = !summary?.filename || !!uploadError
 
   const isCsv = !file ? true : file.name.toLowerCase().endsWith('.csv')
   const isXlsx = !file ? false : file.name.toLowerCase().endsWith('.xlsx')
@@ -638,7 +1358,7 @@ export default function UniversalDashboardPage() {
         if (sheetIndex == null && prev.sheetIndex != null) setSheetIndex(prev.sheetIndex)
         if (headerRow == null && prev.headerRow != null) setHeaderRow(prev.headerRow)
       } catch (e: any) {
-        if (!cancelled) setUploadError(e?.message || 'No se pudo previsualizar el XLSX.')
+        if (!cancelled) setUploadError(e?.message || 'No se pudo previsualizar.')
       } finally {
         if (!cancelled) setXlsxLoading(false)
       }
@@ -696,7 +1416,7 @@ export default function UniversalDashboardPage() {
       const res = await getUniversalRows(companyId, limit, activeImportId)
       setRowsPreview(res)
     } catch (e: any) {
-      setRowsError(e?.message || 'No se pudo cargar la vista de filas.')
+      setRowsError(e?.message || 'No se pudo cargar.')
     } finally {
       setRowsLoading(false)
     }
@@ -728,10 +1448,11 @@ export default function UniversalDashboardPage() {
         type: builderType,
         dateColumn: builderType === 'TIME_SERIES' || builderType === 'PIVOT_MONTHLY' ? builderDateCol : undefined,
         categoryColumn: builderType === 'CATEGORY_BAR' || builderType === 'PIVOT_MONTHLY' ? builderCatCol : undefined,
-        valueColumn: builderValueCol || undefined,
+        valueColumn: builderNeedsValue ? builderValueCol || undefined : undefined,
         xColumn: builderType === 'SCATTER' || builderType === 'HEATMAP' ? builderXCol : undefined,
         yColumn: builderType === 'SCATTER' || builderType === 'HEATMAP' ? builderYCol : undefined,
-        aggregation: builderAgg,
+        aggregationMode: builderAggMode,
+        aggregation: builderAggMode === 'AVG_VALUE' ? 'avg' : 'sum',
         filters: filters.length ? (filters as any) : undefined,
         topN: builderType === 'PIVOT_MONTHLY' || builderType === 'HEATMAP' ? builderTopN : undefined,
         maxPoints: builderType === 'SCATTER' ? builderMaxPoints : undefined
@@ -741,7 +1462,7 @@ export default function UniversalDashboardPage() {
       setBuilderPreview(res)
     } catch (e: any) {
       setBuilderPreview(null)
-      setBuilderError(e?.message || 'No se pudo previsualizar el dashboard.')
+      setBuilderError(e?.message || 'No se pudo previsualizar.')
     } finally {
       setBuilderLoading(false)
     }
@@ -758,7 +1479,7 @@ export default function UniversalDashboardPage() {
         (builderType === 'TIME_SERIES'
           ? 'Serie temporal'
           : builderType === 'CATEGORY_BAR'
-            ? 'Ranking categorias'
+            ? 'Ranking categorÃ­as'
             : builderType === 'KPI_CARDS'
               ? 'KPIs'
               : builderType === 'SCATTER'
@@ -771,10 +1492,11 @@ export default function UniversalDashboardPage() {
         type: builderType,
         dateColumn: builderType === 'TIME_SERIES' || builderType === 'PIVOT_MONTHLY' ? builderDateCol : undefined,
         categoryColumn: builderType === 'CATEGORY_BAR' || builderType === 'PIVOT_MONTHLY' ? builderCatCol : undefined,
-        valueColumn: builderValueCol || undefined,
+        valueColumn: builderNeedsValue ? builderValueCol || undefined : undefined,
         xColumn: builderType === 'SCATTER' || builderType === 'HEATMAP' ? builderXCol : undefined,
         yColumn: builderType === 'SCATTER' || builderType === 'HEATMAP' ? builderYCol : undefined,
-        aggregation: builderAgg,
+        aggregationMode: builderAggMode,
+        aggregation: builderAggMode === 'AVG_VALUE' ? 'avg' : 'sum',
         filters: filters.length ? (filters as any) : undefined,
         topN: builderType === 'PIVOT_MONTHLY' || builderType === 'HEATMAP' ? builderTopN : undefined,
         maxPoints: builderType === 'SCATTER' ? builderMaxPoints : undefined
@@ -790,6 +1512,43 @@ export default function UniversalDashboardPage() {
     }
   }
 
+  async function previewPreset(request: UniversalViewRequest, successMessage = 'Preview cargada.') {
+    if (!companyId) return
+    setBuilderLoading(true)
+    setBuilderError(null)
+    try {
+      const res = await previewUniversalViewForImport(companyId as number, request, activeImportId)
+      setBuilderPreview(res)
+      setBuilderLastRequest(request)
+      toast.push({ tone: 'success', title: 'Vista previa', message: successMessage })
+    } catch (e: any) {
+      setBuilderPreview(null)
+      setBuilderError(e?.message || 'No se pudo previsualizar.')
+      toast.push({ tone: 'danger', title: 'Error', message: e?.message || 'No se pudo abrir la vista.' })
+    } finally {
+      setBuilderLoading(false)
+    }
+  }
+
+  async function createPreset(request: UniversalViewRequest, fallbackName: string) {
+    if (!companyId) return
+    try {
+      const created = await createUniversalViewForImport(
+        companyId as number,
+        {
+          ...request,
+          name: (request?.name || fallbackName || 'Dashboard').trim()
+        },
+        activeImportId
+      )
+      await queryClient.invalidateQueries({ queryKey: ['universal-views', companyId] })
+      setSelectedViewId(created.id)
+      toast.push({ tone: 'success', title: 'Dashboard', message: 'Plantilla creada.' })
+    } catch (e: any) {
+      toast.push({ tone: 'danger', title: 'Error', message: e?.message || 'No se pudo guardar.' })
+    }
+  }
+
   async function loadView(id: number) {
     if (!companyId) return
     setSelectedViewId(id)
@@ -799,7 +1558,7 @@ export default function UniversalDashboardPage() {
       const res = await getUniversalViewDataForImport(companyId as number, id, activeImportId)
       setBuilderPreview(res)
     } catch (e: any) {
-      setBuilderError(e?.message || 'No se pudo cargar el dashboard guardado.')
+      setBuilderError(e?.message || 'No se pudo cargar.')
     } finally {
       setBuilderLoading(false)
     }
@@ -810,14 +1569,14 @@ export default function UniversalDashboardPage() {
       ? true
       : builderType === 'SCATTER'
         ? !!builderXCol && !!builderYCol
-        : builderType === 'HEATMAP'
-          ? !!builderXCol && !!builderYCol && !!builderValueCol
+      : builderType === 'HEATMAP'
+          ? !!builderXCol && !!builderYCol && (!builderNeedsValue || !!builderValueCol)
           : builderType === 'PIVOT_MONTHLY'
-            ? !!builderDateCol && !!builderCatCol && !!builderValueCol
+            ? !!builderDateCol && !!builderCatCol && (!builderNeedsValue || !!builderValueCol)
             : builderType === 'TIME_SERIES'
-              ? !!builderDateCol && !!builderValueCol
+              ? !!builderDateCol && (!builderNeedsValue || !!builderValueCol)
               : builderType === 'CATEGORY_BAR'
-                ? !!builderCatCol && !!builderValueCol
+                ? !!builderCatCol && (!builderNeedsValue || !!builderValueCol)
                 : false
 
   function renderPanelState(title: string, detail?: string, tone: 'default' | 'loading' | 'locked' = 'default', className = 'mt-12') {
@@ -832,8 +1591,8 @@ export default function UniversalDashboardPage() {
   return (
     <div>
       <PageHeader
-        title="Analisis universal"
-        subtitle="Sube un CSV o XLSX y te enseno primero lo importante. El detalle tecnico queda plegado."
+        title="Universal"
+        subtitle="Sube una base, valida la lectura y abre una vista util."
         actions={
           <div className="row row-wrap row-center row-end gap-2">
             <span className="badge">{plan}</span>
@@ -858,29 +1617,26 @@ export default function UniversalDashboardPage() {
                       setBuilderPreview(null)
                       setBuilderError(null)
                     }}
-                    title="Elige dataset (import) para construir dashboards"
+                    title="Elige dataset"
                   >
                     <option value="">Ultimo (auto)</option>
                     {importsList.slice(0, 20).map((imp) => (
                       <option key={imp.id} value={imp.id}>
-                        #{imp.id} · {imp.filename}
+                        #{imp.id}  -  {imp.filename}
                       </option>
                     ))}
                   </select>
                   <div className="upload-hint">
                     {activeImportId ? (
                       <>
-                        {activeImport?.filename || `Import #${activeImportId}`} ·{' '}
-                        {activeImport?.createdAt ? new Date(activeImport.createdAt).toLocaleString() : '-'}
-                        {activeImport ? ` · ${activeImport.rowCount} filas · ${activeImport.columnCount} columnas` : ''}
+                        {activeImport?.filename || `Import #${activeImportId}`}  - {activeImport?.createdAt ? formatDateTime(activeImport.createdAt) : EMPTY_VALUE}
                       </>
                     ) : summary?.filename ? (
                       <>
-                        {summary.filename} · {summary.createdAt ? new Date(summary.createdAt).toLocaleString() : '-'} ·{' '}
-                        {summary.rowCount} filas · {summary.columnCount} columnas
+                        {summary.filename}  -  {summary.createdAt ? formatDateTime(summary.createdAt) : EMPTY_VALUE}  - {summary.rowCount} filas
                       </>
                     ) : (
-                      '-'
+                      EMPTY_VALUE
                     )}
                   </div>
                 </div>
@@ -892,584 +1648,205 @@ export default function UniversalDashboardPage() {
 
       <div className="card section soft">
         <div className="mini-row row-baseline">
-          <h3 className="m-0">Ruta recomendada</h3>
-          <span className="upload-hint">Para no perderte: sigue este orden.</span>
+          <h3 className="m-0">Estado actual</h3>
+          <span className="upload-hint">Lectura principal y siguiente paso.</span>
         </div>
-        <div className="row row-wrap gap-2 mt-12">
-          <span className="badge">1. Subir dataset</span>
-          <span className="badge">2. Revisar calidad</span>
-          <span className="badge">3. Leer insights</span>
-          <span className="badge">4. Crear dashboard</span>
-          <span className="badge">5. Abrir avanzado si hace falta</span>
+        <div className="universal-executive-shell mt-12">
+          <div className="universal-executive-main">
+            <div className="upload-hint">Situacion</div>
+            <div className="fw-900 mt-1">{universalDecisionState.title}</div>
+            <div className="upload-hint mt-1">{universalDecisionState.detail}</div>
+            <div className="universal-executive-metrics">
+              <div className="universal-executive-metric">
+                <span>Calidad</span>
+                <strong>
+                  {summary?.filename
+                    ? universalQuality
+                      ? `${universalQuality.score}/100`
+                      : 'Pendiente'
+                    : 'Sin datos'}
+                </strong>
+                <small>
+                  {summary?.filename
+                    ? universalQuality
+                      ? qualitySummary(universalQuality)?.label || 'Lista para revisar'
+                      : 'Pendiente de leer'
+                    : 'Sin base'}
+                </small>
+              </div>
+              <div className="universal-executive-metric">
+                <span>Unidad</span>
+                <strong>{summary?.rowGranularity ? semanticLabel(summary.rowGranularity) : 'Sin granularidad'}</strong>
+                <small>
+                  {summary?.filename
+                    ? intakeDiagnosis
+                      ? `${intakeDisplayLabel(intakeDiagnosis, 'Base detectada')} · ${entitySummary(summary)}`
+                      : entitySummary(summary)
+                    : 'Aun no hay entidad detectada.'}
+                </small>
+              </div>
+            </div>
+          </div>
+          <div className="universal-executive-action">
+            <div className="upload-hint">Siguiente paso</div>
+            <strong>{primaryAction.label}</strong>
+            <p>{primaryAction.helper}</p>
+            <Button onClick={primaryAction.action}>{primaryAction.label}</Button>
+          </div>
+        </div>
+
+        <div className="universal-executive-insights mt-12">
+          {!executiveInsights.length ? (
+            <div className="universal-playbook-card">
+              <strong>Sin lectura automatica</strong>
+              <p>Sube un CSV o XLSX para empezar.</p>
+            </div>
+          ) : (
+            executiveInsights.map((it: any, idx: number) => (
+              <div key={`${it.title}-${idx}`} className={`universal-executive-insight tone-${insightTone(it.level)}`}>
+                <span className="badge">{insightAudienceLabel(it.level)}</span>
+                <strong>{it.title}</strong>
+                <p>{trimInsightMessage(it.message)}</p>
+              </div>
+            ))
+          )}
         </div>
       </div>
 
-      {companyId ? (
-        <div className="card section">
-          <div className="mini-row row-baseline">
-            <h3 className="m-0">Eventos (imports + alertas)</h3>
-            <span className="upload-hint">Click en un mes para ir al detalle</span>
-          </div>
-          <div className="upload-hint mt-2">
-            Markers: <span className="code-inline">I</span> = import, <span className="code-inline">A</span> = alertas.
-          </div>
-
-          <div className="mt-3">
-            <EChart
-              module="universal"
-              option={activityOption as any}
-              actions
-              onAxisHover={(p) => setActivityFocus(String(p || '').slice(0, 7) || null)}
-              onLeave={() => setActivityFocus(activityMonths[activityMonths.length - 1] || null)}
-              onClick={(params) => {
-                const period = String(params?.name ?? params?.axisValue ?? '').slice(0, 7)
-                if (!period || period.length < 7) return
-                const series = String(params?.seriesName || '')
-                if (series === 'Imports') {
-                  const imp = importsByMonth.get(period)?.[0]
-                  if (!imp) {
-                    toast.push({ tone: 'warning', title: 'Import', message: 'No hay imports en ese mes.' })
-                    return
-                  }
-                  setActiveImportId(imp.id)
-                  try {
-                    window.localStorage.setItem(`universal.activeImportId.${companyId}`, String(imp.id))
-                  } catch {}
-                  setTimeout(() => datasetRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0)
-                  toast.push({ tone: 'success', title: 'Dataset', message: `Seleccionado import #${imp.id} (${period}).` })
-                  return
-                }
-                if (series === 'Alertas') {
-                  navigate(`/alerts?period=${encodeURIComponent(period)}`)
-                }
-              }}
-            />
-            <ChartNarrative
-              title={`Lectura rapida · ${activityFocus || '-'}`}
-              see={activityNarrative.see}
-              why={activityNarrative.why}
-              todo={activityNarrative.todo}
-            />
-          </div>
-
-          <div className="grid mt-3">
-            <div className="card soft">
-              <div className="upload-hint">Imports ultimo mes</div>
-              <div className="fw-900 mt-1">{impLast}</div>
-              <div className="upload-hint mt-1">
-                {impDelta == null ? '-' : `Delta vs mes anterior: ${impDelta >= 0 ? '+' : ''}${impDelta}`}
-              </div>
-            </div>
-            <div className="card soft">
-              <div className="upload-hint">Alertas ultimo mes</div>
-              <div className="fw-900 mt-1">{alertLast}</div>
-              <div className="upload-hint mt-1">
-                {alertDelta == null ? '-' : `Delta vs mes anterior: ${alertDelta >= 0 ? '+' : ''}${alertDelta}`}
-              </div>
-            </div>
-          </div>
+      <div className="card section soft">
+        <div className="mini-row row-baseline">
+          <h3 className="m-0">1. Cargar dataset</h3>
+          <span className="upload-hint">Primero sube la base.</span>
         </div>
-      ) : null}
-
-      {companyId && (crossPick || crossDefaults?.dateCandidates?.length || crossDefaults?.numCandidates?.length || crossDefaults?.catCandidates?.length) ? (
-        <div className="card section">
-          <div className="mini-row row-baseline">
-            <h3 className="m-0">Cruce entre graficos</h3>
-            <span className="upload-hint">Selecciona una barra o un mes y el otro grafico se actualiza solo.</span>
-          </div>
-
-          <div className="grid grid-autofit-220 mt-12">
-            <div className="card soft card-pad-sm">
-              <div className="upload-hint">Columna fecha</div>
-              <select
-                className="input mt-6"
-                value={xfDateCol}
-                onChange={(e) => {
-                  setXfDateCol(String(e.target.value || ''))
-                  setXfMonth(null)
-                }}
-              >
-                <option value="">—</option>
-                {(crossDefaults?.dateCandidates || []).map((c: string) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="card soft card-pad-sm">
-              <div className="upload-hint">Columna numérica</div>
-              <select className="input mt-6" value={xfNumCol} onChange={(e) => setXfNumCol(String(e.target.value || ''))}>
-                <option value="">—</option>
-                {(crossDefaults?.numCandidates || []).map((c: string) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="card soft card-pad-sm">
-              <div className="upload-hint">Columna categoría</div>
-              <select
-                className="input mt-6"
-                value={xfCatCol}
-                onChange={(e) => {
-                  setXfCatCol(String(e.target.value || ''))
-                  setXfCategory(null)
-                }}
-              >
-                <option value="">—</option>
-                {(crossDefaults?.catCandidates || []).map((c: string) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-          <div className="row row-wrap gap-2 mt-2">
-            <span className="badge">{xfCategory ? `Categoría: ${xfCategory}` : 'Categoría: —'}</span>
-            <span className="badge">{xfMonth ? `Mes: ${xfMonth}` : 'Mes: —'}</span>
-            <button
-              className="badge"
-              onClick={() => {
-                setXfCategory(null)
-                setXfMonth(null)
-              }}
-              disabled={!xfCategory && !xfMonth}
-            >
-              Limpiar
-            </button>
-          </div>
-
-          {crossTimeError || crossBarError ? (
-            <div className="mt-12">
-              <Alert tone="warning">
-                No se pudo cargar el cruce: {String((crossTimeError as any)?.message || (crossBarError as any)?.message || '')}
-              </Alert>
-            </div>
-          ) : null}
-
-          {!crossPick ? (
-            <div className="mt-12">
-              <Alert tone="warning" title="Falta configurar el cruce">
-                Elige una columna de fecha, una numerica y una categoria. Si el fichero es raro, revisa los nombres detectados arriba.
-              </Alert>
-            </div>
-          ) : null}
-
-          <div className="grid grid-autofit-320 mt-12">
-            <div className="card soft">
-              <div className="upload-hint">
-                Serie temporal · <span className="code-inline">{crossPick?.dateCol || '—'}</span> →{' '}
-                <span className="code-inline">{crossPick?.numCol || '—'}</span>
-              </div>
-              {!crossPick ? (
-                renderPanelState('Grafico pendiente de configurar', 'Define primero las 3 columnas para activar esta vista.')
-              ) : crossTimeLoading ? (
-                renderPanelState('Preparando serie temporal', 'Estoy calculando la evolucion temporal para las columnas elegidas.', 'loading')
-              ) : (crossTime as any)?.labels?.length ? (
-                <EChart
-                  module="universal"
-                  height={320}
-                  actions
-                  onClick={(params) => {
-                    const p = String(params?.name ?? params?.axisValue ?? '').slice(0, 7)
-                    if (!p || p.length < 7) return
-                    setXfMonth(p)
-                  }}
-                  option={
-                    {
-                      tooltip: { trigger: 'axis' },
-                      xAxis: { type: 'category', data: (crossTime as any).labels || [] },
-                      yAxis: { type: 'value' },
-                      series: [
-                        {
-                          name: (crossTime as any)?.series?.[0]?.name || 'Valor',
-                          type: 'line',
-                          smooth: true,
-                          data: (crossTime as any)?.series?.[0]?.data || []
-                        }
-                      ]
-                    } as any
-                  }
-                />
-              ) : (
-                renderPanelState('Sin datos para esta vista', 'Prueba otro mes, otra categoria o cambia las columnas elegidas.')
-              )}
-              <div className="upload-hint mt-2">Consejo: haz click en un mes para fijarlo como filtro.</div>
-            </div>
-
-            <div className="card soft">
-              <div className="upload-hint">
-                Ranking · <span className="code-inline">{crossPick?.catCol || '—'}</span> →{' '}
-                <span className="code-inline">{crossPick?.numCol || '—'}</span>
-              </div>
-              {!crossPick ? (
-                renderPanelState('Grafico pendiente de configurar', 'Define primero las 3 columnas para activar esta vista.')
-              ) : crossBarLoading ? (
-                renderPanelState('Preparando ranking', 'Estoy agrupando categorias y recalculando el ranking.', 'loading')
-              ) : (crossBar as any)?.labels?.length ? (
-                <EChart
-                  module="universal"
-                  height={320}
-                  actions
-                  onClick={(params) => {
-                    const label = String(params?.name ?? params?.axisValue ?? '').trim()
-                    if (!label) return
-                    setXfCategory(label)
-                  }}
-                  option={
-                    {
-                      tooltip: { trigger: 'axis' },
-                      xAxis: { type: 'category', data: (crossBar as any).labels || [] },
-                      yAxis: { type: 'value' },
-                      series: [
-                        {
-                          name: (crossBar as any)?.series?.[0]?.name || 'Valor',
-                          type: 'bar',
-                          data: (crossBar as any)?.series?.[0]?.data || []
-                        }
-                      ]
-                    } as any
-                  }
-                />
-              ) : (
-                renderPanelState('Sin datos para esta vista', 'Prueba otro mes, otra categoria o cambia las columnas elegidas.')
-              )}
-              <div className="upload-hint mt-2">Consejo: haz click en una barra para filtrar la serie temporal.</div>
-            </div>
-          </div>
-        </div>
-      ) : null}
-      <div className="card section">
-        <h3 className="h3-reset">Crear dashboard (Auto -&gt; Guiado)</h3>
-        <div className="upload-hint">
-          Si el fichero no viene preparado, eliges 2-3 columnas y te preparo un dashboard reutilizable para los proximos meses.
-        </div>
-
-        {!companyId ? (
-          <div className="mt-12">
-            <Alert tone="warning">Selecciona una empresa.</Alert>
-          </div>
-        ) : null}
-
-        {suggestionsAllowed.length || (plan === 'BRONZE' && suggestionsList.length) ? (
-          <div className="card soft mt-12">
-            <div className="row row-between row-center row-wrap gap-3">
-              <div>
-                <div className="fw-800">Sugerencias AUTO</div>
-                <div className="upload-hint">Te propongo 1-2 lecturas utiles segun las columnas detectadas. Puedes crearlas con un click.</div>
-                {suggestionsBlockedCount ? (
-                  <div className="upload-hint mt-1">
-                    En plan BRONZE ocultamos {suggestionsBlockedCount} sugerencia{suggestionsBlockedCount === 1 ? '' : 's'} avanzada{suggestionsBlockedCount === 1 ? '' : 's'} (scatter/heatmap/pivote).
-                  </div>
-                ) : null}
-              </div>
-            </div>
-            <div className="stack stack-2 mt-2">
-              {!suggestionsAllowed.length ? (
-                <div className="upload-hint">
-                  No veo una sugerencia clara para este dataset. Puedes usar el modo guiado o subir de plan para vistas avanzadas.
-                </div>
-              ) : null}
-              {suggestionsAllowed.slice(0, 2).map((sug, idx) => (
-                <div key={`${sug.title}-${idx}`} className="card card-pad-sm">
-                  <div className="row row-between row-center row-wrap gap-3">
-                    <div>
-                      <div className="fw-800">{sug.title}</div>
-                      <div className="upload-hint">{sug.description}</div>
-                    </div>
-                    <div className="row row-center gap-2 row-wrap">
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onClick={async () => {
-                          if (!companyId) return
-                          try {
-                            const res = await previewUniversalViewForImport(companyId as number, sug.request, activeImportId)
-                            setBuilderPreview(res)
-                            setBuilderLastRequest(sug.request)
-                            toast.push({ tone: 'success', title: 'Vista previa', message: 'Preview cargada.' })
-                          } catch (e: any) {
-                            toast.push({ tone: 'danger', title: 'Error', message: e?.message || 'No se pudo previsualizar.' })
-                          }
-                        }}
-                      >
-                        Previsualizar
-                      </Button>
-                      <Button
-                        size="sm"
-                        onClick={async () => {
-                          if (!companyId) return
-                          try {
-                            const created = await createUniversalViewForImport(companyId as number, {
-                              ...sug.request,
-                              name: (sug.request?.name || sug.title || 'Dashboard').trim()
-                            }, activeImportId)
-                            await queryClient.invalidateQueries({ queryKey: ['universal-views', companyId] })
-                            setSelectedViewId(created.id)
-                            toast.push({ tone: 'success', title: 'Dashboard', message: 'Plantilla creada.' })
-                          } catch (e: any) {
-                            toast.push({ tone: 'danger', title: 'Error', message: e?.message || 'No se pudo crear.' })
-                          }
-                        }}
-                      >
-                        Crear con 1 click
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : null}
-
-        <div className="upload-row align-end">
-          <label className="field">
-            <span className="field-label">Tipo</span>
-            <select value={builderType} onChange={(e) => setBuilderType(e.target.value as any)}>
-              <option value="TIME_SERIES">Serie temporal (fecha -&gt; valor)</option>
-              <option value="CATEGORY_BAR">Ranking por categoria (texto -&gt; valor)</option>
-              <option value="KPI_CARDS">KPIs (count/sum/avg) + filtro</option>
-              {plan === 'BRONZE' ? null : (
-                <>
-                  <option value="SCATTER">Scatter (X vs Y)</option>
-                  <option value="HEATMAP">Heatmap simple (X x Y)</option>
-                  <option value="PIVOT_MONTHLY">Tabla pivote (categoria x mes)</option>
-                </>
-              )}
-            </select>
-          </label>
-          <label className="field minw-220">
-            <span className="field-label">Nombre (opcional)</span>
-            <input value={builderName} onChange={(e) => setBuilderName(e.target.value)} placeholder="Ej: Ventas por mes" />
-          </label>
-          <label className="field">
-            <span className="field-label">Agregacion</span>
-            <select value={builderAgg} onChange={(e) => setBuilderAgg(e.target.value as any)}>
-              <option value="sum">Suma</option>
-              <option value="avg">Media</option>
-            </select>
-          </label>
-        </div>
-
-        <div className="upload-row tight align-end">
-          {builderType === 'TIME_SERIES' || builderType === 'PIVOT_MONTHLY' ? (
-            <label className="field">
-              <span className="field-label">Fecha</span>
-              <select value={builderDateCol} onChange={(e) => setBuilderDateCol(e.target.value)}>
-                <option value="">-</option>
-                {dateCols.map((c: string) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
-
-          {builderType === 'CATEGORY_BAR' || builderType === 'PIVOT_MONTHLY' ? (
-            <label className="field">
-              <span className="field-label">Categoria</span>
-              <select value={builderCatCol} onChange={(e) => setBuilderCatCol(e.target.value)}>
-                <option value="">-</option>
-                {textCols.map((c: string) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
-
-          {builderType === 'SCATTER' || builderType === 'HEATMAP' ? (
-            <label className="field">
-              <span className="field-label">X</span>
-              <select value={builderXCol} onChange={(e) => setBuilderXCol(e.target.value)}>
-                <option value="">-</option>
-                {(builderType === 'HEATMAP' ? textCols : numberCols).map((c: string) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
-
-          {builderType === 'SCATTER' || builderType === 'HEATMAP' ? (
-            <label className="field">
-              <span className="field-label">Y</span>
-              <select value={builderYCol} onChange={(e) => setBuilderYCol(e.target.value)}>
-                <option value="">-</option>
-                {(builderType === 'HEATMAP' ? textCols : numberCols).map((c: string) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
-
-          {builderType !== 'SCATTER' ? (
-            <label className="field">
-              <span className="field-label">{builderType === 'KPI_CARDS' ? 'Valor (opcional)' : 'Valor'}</span>
-              <select value={builderValueCol} onChange={(e) => setBuilderValueCol(e.target.value)}>
-                <option value="">-</option>
-                {numberCols.map((c: string) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
-
-          {builderType === 'PIVOT_MONTHLY' || builderType === 'HEATMAP' ? (
-            <label className="field w-90">
-              <span className="field-label">Top N</span>
+        <div className="universal-executive-shell mt-12">
+          <div className="universal-executive-main">
+            <div className="upload-row">
               <input
-                type="number"
-                min={1}
-                max={30}
-                value={builderTopN}
-                onChange={(e) => setBuilderTopN(Number(e.target.value || 0))}
+                type="file"
+                accept=".csv,.xlsx"
+                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
               />
-            </label>
-          ) : null}
-
-          {builderType === 'SCATTER' ? (
-            <label className="field w-110">
-              <span className="field-label">Max puntos</span>
-              <input
-                type="number"
-                min={50}
-                max={10000}
-                value={builderMaxPoints}
-                onChange={(e) => setBuilderMaxPoints(Number(e.target.value || 0))}
-              />
-            </label>
-          ) : null}
-
-          <div className="card soft card-pad-sm minw-420">
-            <div className="upload-hint mb-8">
-              Filtros guardados (AND)
+              <Button onClick={handleUpload} disabled={!file || uploading || !companyId || !isAllowed} loading={uploading}>
+                Analizar
+              </Button>
             </div>
-            <div className="stack stack-2">
-              {(builderFilters || []).map((f, idx) => (
-                <div key={`f-${idx}`} className="upload-row flush align-end">
-                  <label className="field minw-180">
-                    <span className="field-label">Columna</span>
-                    <select
-                      value={f.column}
-                      onChange={(e) => {
-                        const v = e.target.value
-                        setBuilderFilters((arr) => arr.map((it, i) => (i === idx ? { ...it, column: v } : it)))
-                      }}
-                    >
-                      <option value="">(seleccionar)</option>
-                      {allCols.map((c: string) => (
-                        <option key={`${c}-${idx}`} value={c}>
-                          {c}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="field w-130">
-                    <span className="field-label">Op</span>
-                    <select
-                      value={f.op}
-                      onChange={(e) => {
-                        const v = e.target.value as any
-                        setBuilderFilters((arr) => arr.map((it, i) => (i === idx ? { ...it, op: v } : it)))
-                      }}
-                    >
-                      <option value="eq">=</option>
-                      <option value="contains">contiene</option>
-                      <option value="year_eq">ano =</option>
-                      <option value="gt">&gt;</option>
-                      <option value="gte">&gt;=</option>
-                      <option value="lt">&lt;</option>
-                      <option value="lte">&lt;=</option>
-                    </select>
-                  </label>
-                  <label className="field minw-150">
-                    <span className="field-label">Valor</span>
-                    <input
-                      value={f.value}
-                      onChange={(e) => {
-                        const v = e.target.value
-                        setBuilderFilters((arr) => arr.map((it, i) => (i === idx ? { ...it, value: v } : it)))
-                      }}
-                      placeholder={f.op === 'year_eq' ? '2025' : 'Ej: Ventas'}
-                    />
-                  </label>
-                  <button
-                    className="badge"
-                    onClick={() => setBuilderFilters((arr) => arr.filter((_, i) => i !== idx))}
-                    disabled={(builderFilters || []).length <= 1}
-                    title="Quitar filtro"
-                  >
-                    Quitar
-                  </button>
+            {!companyId ? (
+              <div className="mt-12">
+                <Alert tone="warning">Selecciona una empresa.</Alert>
+              </div>
+            ) : null}
+            {uploadError ? (
+              <div className="mt-12">
+                <Alert tone="danger">{uploadError}</Alert>
+              </div>
+            ) : null}
+            {uploadOk ? (
+              <div className="mt-12">
+                <Alert tone="success">{uploadOk}</Alert>
+              </div>
+            ) : null}
+            {likelyBadHeaders ? (
+              <div className="mt-12">
+                <Alert tone="warning" title="Revisa la cabecera">
+                  El Excel parece tener la fila de encabezado mal tomada.
+                </Alert>
+              </div>
+            ) : null}
+          </div>
+          <div className="universal-executive-action">
+            <div className="upload-hint">Estado</div>
+            <strong>{summary?.filename ? 'Base cargada' : 'Sin base'}</strong>
+            <p>
+              {summary?.filename
+                ? `${summary.filename} - ${summary.rowCount ?? 0} filas - ${summary.columnCount ?? 0} columnas`
+                : 'Aun no hay base activa.'}
+            </p>
+            {file && isXlsx ? (
+              <details className="universal-inline-details">
+                <summary>Ajustar XLSX</summary>
+                <div className="mt-12">
+                  {!!xlsxPreview?.sheets?.length ? (
+                    <div className="upload-row tight">
+                      <label className="row row-center gap-2">
+                        <span className="w-110 inline-block">Hoja</span>
+                        <select
+                          value={sheetIndex ?? xlsxPreview.sheetIndex ?? 0}
+                          onChange={(e) => setSheetIndex(Number(e.target.value))}
+                          disabled={xlsxLoading}
+                        >
+                          {xlsxPreview.sheets.map((s, idx) => (
+                            <option key={`${s}-${idx}`} value={idx}>
+                              {idx + 1}. {s}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="row row-center gap-2">
+                        <span className="w-110 inline-block">Encabezado</span>
+                        <input
+                          type="number"
+                          min={1}
+                          value={headerRow ?? xlsxPreview.headerRow ?? 1}
+                          onChange={(e) => setHeaderRow(Number(e.target.value))}
+                          disabled={xlsxLoading}
+                          className="w-90"
+                        />
+                      </label>
+                    </div>
+                  ) : null}
                 </div>
-              ))}
-              <div>
-                <button
-                  className="badge"
-                  onClick={() => setBuilderFilters((arr) => [...arr, { column: '', op: 'eq', value: '' }])}
-                  title="Anadir filtro"
-                >
-                  + Anadir filtro
-                </button>
+              </details>
+            ) : null}
+          </div>
+        </div>
+      </div>
+
+      <div className="card section soft">
+        <div className="mini-row row-baseline">
+          <h3 className="m-0">2. Abrir una vista util</h3>
+          <span className="upload-hint">Una sola recomendacion visible.</span>
+        </div>
+        <div className="mt-12">
+          {!primaryQuickStartView ? (
+            <div className="universal-playbook-card">
+              <strong>Sin recomendacion</strong>
+              <p>Primero carga una base legible.</p>
+            </div>
+          ) : (
+            <div className="card card-pad-sm universal-preset-card universal-preset-card-primary">
+              <div className="row row-between row-center row-wrap gap-3">
+                <div>
+                  <div className="upload-hint">Vista recomendada</div>
+                  <div className="fw-800">{primaryQuickStartView.title}</div>
+                  <div className="upload-hint">{primaryQuickStartView.description}</div>
+                </div>
+                <div className="row row-center gap-2 row-wrap">
+                  <Button size="sm" onClick={() => previewPreset(primaryQuickStartView.request)}>
+                    Abrir recomendacion
+                  </Button>
+                  <Button variant="secondary" size="sm" onClick={() => createPreset(primaryQuickStartView.request, primaryQuickStartView.title)}>
+                    Guardar vista
+                  </Button>
+                </div>
               </div>
             </div>
-          </div>
-
-          <Button variant="secondary" size="sm" onClick={runBuilderPreview} disabled={!companyId || !canBuild || builderLoading}>
-            Previsualizar
-          </Button>
-          <Button size="sm" onClick={saveBuilderView} disabled={!companyId || !canBuild || builderLoading}>
-            Guardar plantilla
-          </Button>
-
-          {views?.length ? (
-            <label className="field">
-              <span className="field-label">Plantillas</span>
-              <select
-                value={selectedViewId ?? ''}
-                onChange={(e) => {
-                  const v = e.target.value ? Number(e.target.value) : null
-                  if (v) loadView(v)
-                }}
-              >
-                <option value="">(seleccionar)</option>
-                {(views || []).map((v) => (
-                  <option key={v.id} value={v.id}>
-                    {v.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
+          )}
         </div>
+      </div>
 
-        {builderError ? (
-          <div className="mt-12">
-            <Alert tone="danger">{builderError}</Alert>
+      {builderPreview ? (
+        <div ref={previewRef} className="card section soft">
+          <div className="mini-row row-baseline">
+            <h3 className="m-0">3. Validar la lectura</h3>
+            <span className="upload-hint">Solo el grafico principal.</span>
           </div>
-        ) : null}
-
-        {builderPreview ? (
           <div className="card mt-12">
-            <h3 className="h3-reset">Vista previa</h3>
+            <h3 className="h3-reset">Resultado</h3>
             {String(builderPreview.type || '').toUpperCase() === 'KPI_CARDS' ? (
               <div className="grid grid-min-160 grid-gap-12">
                 {builderPreview.labels.map((k, idx) => (
                   <div key={`${k}-${idx}`} className="card soft">
-                    <div className="upload-hint ttu">
-                      {k}
-                    </div>
+                    <div className="upload-hint ttu">{k}</div>
                     <div className="fs-22 fw-700 mt-1">
                       {String(((builderPreview.series as any)?.[0]?.data || [])[idx] ?? '-')}
                     </div>
@@ -1485,132 +1862,36 @@ export default function UniversalDashboardPage() {
                   const labels = builderPreview?.labels || []
                   setBuilderFocusLabel(labels.length ? String(labels[labels.length - 1] || '') : '')
                 }}
-                onClick={(params) => {
-                  const t = String(builderPreview?.type || '').toUpperCase()
-                  if (t === 'SCATTER') {
-                    const v = params?.value
-                    if (Array.isArray(v) && v.length >= 2) setBuilderFocusLabel(`${v[0]},${v[1]}`)
-                    return
-                  }
-                  if (t === 'HEATMAP') {
-                    const v = params?.value
-                    const ix = Array.isArray(v) ? v[0] : null
-                    const iy = Array.isArray(v) ? v[1] : null
-                    const xLabels = builderPreview?.labels || []
-                    const yLabels = ((builderPreview?.meta as any)?.yLabels || []) as any[]
-                    const xLabel = xLabels?.[Number(ix)] ?? ''
-                    const yLabel = yLabels?.[Number(iy)] ?? ''
-                    if (xLabel && yLabel) setBuilderFocusLabel(`${xLabel}||${yLabel}`)
-                    return
-                  }
-                  if (t === 'PIVOT_MONTHLY') {
-                    const month = String(params?.name ?? params?.axisValue ?? '').trim()
-                    const cat = String(params?.seriesName ?? '').trim()
-                    if (cat && month) setBuilderFocusLabel(`${cat}||${month}`)
-                  }
-                }}
                 option={
-                  String(builderPreview.type || '').toUpperCase() === 'SCATTER'
+                  builderPreview.type === 'CATEGORY_BAR'
                     ? ({
-                        tooltip: { trigger: 'item' },
-                        xAxis: { type: 'value', name: (builderPreview.meta as any)?.xColumn || 'X' },
-                        yAxis: { type: 'value', name: (builderPreview.meta as any)?.yColumn || 'Y' },
-                        series: [
-                          {
-                            name: (builderPreview.series as any)?.[0]?.name || 'Puntos',
-                            type: 'scatter',
-                            symbolSize: 6,
-                            data: (builderPreview.series as any)?.[0]?.data || []
-                          }
-                        ]
+                        tooltip: { trigger: 'axis' },
+                        xAxis: { type: 'category', data: builderPreview.labels },
+                        yAxis: { type: 'value' },
+                        series: [{ name: (builderPreview.series as any)?.[0]?.name || 'Valor', type: 'bar', data: (builderPreview.series as any)?.[0]?.data || [] }]
                       } as any)
-                    : String(builderPreview.type || '').toUpperCase() === 'HEATMAP'
-                      ? (() => {
-                          const pts = ((builderPreview.series as any)?.[0]?.data || []) as any[]
-                          const max =
-                            pts.reduce((acc, p) => Math.max(acc, Number(Array.isArray(p) ? p[2] : 0) || 0), 0) || 1
-                          return {
-                            tooltip: { position: 'top' },
-                            grid: { height: '70%', top: 30 },
-                            xAxis: { type: 'category', data: builderPreview.labels, splitArea: { show: true } },
-                            yAxis: { type: 'category', data: (builderPreview.meta as any)?.yLabels || [], splitArea: { show: true } },
-                            visualMap: { min: 0, max, calculable: true, orient: 'horizontal', left: 'center', bottom: 0 },
-                            series: [
-                              {
-                                name: (builderPreview.series as any)?.[0]?.name || 'Heatmap',
-                                type: 'heatmap',
-                                data: pts,
-                                emphasis: { itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0, 0, 0, 0.5)' } }
-                              }
-                            ]
-                          } as any
-                        })()
-                      : String(builderPreview.type || '').toUpperCase() === 'PIVOT_MONTHLY'
-                        ? ({
-                            tooltip: { trigger: 'axis' },
-                            legend: { type: 'scroll' },
-                            xAxis: { type: 'category', data: builderPreview.labels },
-                            yAxis: { type: 'value' },
-                            series: (builderPreview.series as any[]).map((s) => ({
-                              name: s?.name,
-                              type: 'bar',
-                              stack: 'total',
-                              data: s?.data || []
-                            }))
-                          } as any)
-                        : builderPreview.type === 'CATEGORY_BAR'
-                          ? ({
-                              tooltip: { trigger: 'axis' },
-                              xAxis: { type: 'category', data: builderPreview.labels },
-                              yAxis: { type: 'value' },
-                              series: [
-                                {
-                                  name: (builderPreview.series as any)?.[0]?.name || 'Valor',
-                                  type: 'bar',
-                                  data: (builderPreview.series as any)?.[0]?.data || []
-                                }
-                              ]
-                            } as any)
-                          : ({
-                              tooltip: { trigger: 'axis' },
-                              xAxis: { type: 'category', data: builderPreview.labels },
-                              yAxis: { type: 'value' },
-                              series: [
-                                {
-                                  name: (builderPreview.series as any)?.[0]?.name || 'Valor',
-                                  type: 'line',
-                                  smooth: true,
-                                  data: (builderPreview.series as any)?.[0]?.data || []
-                                }
-                              ]
-                            } as any)
+                    : ({
+                        tooltip: { trigger: 'axis' },
+                        xAxis: { type: 'category', data: builderPreview.labels },
+                        yAxis: { type: 'value' },
+                        series: [{ name: (builderPreview.series as any)?.[0]?.name || 'Valor', type: 'line', smooth: true, data: (builderPreview.series as any)?.[0]?.data || [] }]
+                      } as any)
                 }
               />
             )}
-            <ChartNarrative
-              title={`Lectura del grafico · ${builderFocusLabel || '-'}`}
-              see={builderNarrative.see}
-              why={builderNarrative.why}
-              todo={builderNarrative.todo}
-              className="mt-2"
-            />
-            {builderPreview.meta ? (
-              <div className="upload-hint mt-8">
-                Filas usadas en el calculo: {(builderPreview.meta as any).rowsUsed ?? '-'} · Agregacion: {(builderPreview.meta as any).aggregation ?? '-'}
+            <div className="mt-12">
+              <div className="upload-hint">Que mide esta vista</div>
+              <div className="fw-800 mt-1">
+                {aggregationLabel((builderPreview.meta as any)?.aggregationMode || (builderPreview.meta as any)?.aggregation || '-')}
               </div>
-            ) : null}
-            {builderPreview.meta &&
-            ((builderPreview.meta as any).badDateCount ||
-              (builderPreview.meta as any).badNumberCount ||
-              (builderPreview.meta as any).badXCount ||
-              (builderPreview.meta as any).badYCount) ? (
               <div className="upload-hint mt-1">
-                Invalidos: fecha={(builderPreview.meta as any).badDatePct ?? 0}% · num={(builderPreview.meta as any).badNumberPct ?? 0}% · X={(builderPreview.meta as any).badXPct ?? 0}% · Y={(builderPreview.meta as any).badYPct ?? 0}%
+                {builderNarrative.see?.[0] || 'Lectura lista para revisar.'}
               </div>
-            ) : null}
-            {builderLastRequest ? (
-              <div className="row row-wrap gap-2 mt-2">
-                {canUseEvidence ? (
+            </div>
+            {builderLastRequest && canUseEvidence ? (
+              <details className="universal-inline-details mt-12">
+                <summary>Ver soporte</summary>
+                <div className="row row-wrap gap-2 mt-12">
                   <Button
                     variant="secondary"
                     size="sm"
@@ -1618,794 +1899,21 @@ export default function UniversalDashboardPage() {
                     disabled={!companyId || builderEvidenceLoading}
                     loading={builderEvidenceLoading}
                   >
-                    Ver filas detras del punto
+                    Ver filas de soporte
                   </Button>
-                ) : (
-                  renderPanelState('Evidencia bloqueada por plan', 'Las filas detras del punto se habilitan en GOLD y PLATINUM.', 'locked', 'mt-0')
-                )}
-                {builderEvidence?.rows?.length ? (
-                  <Button variant="secondary" size="sm" onClick={() => downloadEvidenceCsv(builderEvidence)}>
-                    Descargar evidencia CSV
-                  </Button>
-                ) : null}
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={async () => {
-                    if (!companyId) return
-                    try {
-                      const blob = await downloadUniversalBuilderProblemsCsvForImport(companyId as number, builderLastRequest, 120, activeImportId)
-                      const url = URL.createObjectURL(blob)
-                      const a = document.createElement('a')
-                      a.href = url
-                      a.download = `universal-problemas-${new Date().toISOString().slice(0, 10)}.csv`
-                      document.body.appendChild(a)
-                      a.click()
-                      a.remove()
-                      URL.revokeObjectURL(url)
-                    } catch (e: any) {
-                      toast.push({ tone: 'danger', title: 'Error', message: e?.message || 'No se pudo descargar.' })
-                    }
-                  }}
-                >
-                  Descargar filas problematicas
-                </Button>
-              </div>
-            ) : null}
-            {builderEvidenceError ? (
-              <div className="mt-2">
-                <Alert tone="danger" title="Evidencia">
-                  {builderEvidenceError}
-                </Alert>
-              </div>
-            ) : null}
-            {builderEvidence?.rows?.length ? (
-              <details className="card soft mt-2">
-                <summary className="upload-hint cursor-pointer">
-                  Filas que explican este punto · {builderEvidence.rows.length} filas
-                </summary>
-                <div className="upload-hint mt-2">
-                  {(builderEvidence.meta as any)?.rowsMatched != null ? `Coinciden: ${(builderEvidence.meta as any).rowsMatched}` : ''}
-                  {(builderEvidence.meta as any)?.rowsScanned != null ? ` · Revisadas: ${(builderEvidence.meta as any).rowsScanned}` : ''}
-                </div>
-                <div className="overflow-auto mt-12">
-                  <table className="table">
-                    <thead>
-                      <tr>
-                        <th>#</th>
-                        {(builderEvidence.headers || []).map((h) => (
-                          <th key={h}>{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(builderEvidence.rows || []).slice(0, 60).map((r, idx) => (
-                        <tr key={`${idx}`}>
-                          <td className="upload-hint">{String((builderEvidence.rowNumbers || [])[idx] ?? '')}</td>
-                          {(r || []).map((cell, j) => (
-                            <td key={`${idx}-${j}`}>{String(cell ?? '')}</td>
-                          ))}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                  {builderEvidence?.rows?.length ? (
+                    <Button variant="secondary" size="sm" onClick={() => downloadEvidenceCsv(builderEvidence)}>
+                      Descargar soporte CSV
+                    </Button>
+                  ) : null}
                 </div>
               </details>
             ) : null}
-            {Array.isArray((builderPreview.meta as any)?.warnings) && (builderPreview.meta as any).warnings.length ? (
-              <div className="mt-2">
-                <Alert tone="warning" title="Avisos">
-                  <ul className="m-0 pl-18">
-                    {(builderPreview.meta as any).warnings.slice(0, 6).map((w: any, idx: number) => (
-                      <li key={`${idx}`}>{String(w)}</li>
-                    ))}
-                  </ul>
-                </Alert>
-              </div>
-            ) : null}
           </div>
-        ) : null}
-      </div>
-
-      <div className="hero">
-        <div>
-          <div className="upload-row">
-            <input
-              type="file"
-              accept=".csv,.xlsx"
-              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-            />
-            <Button onClick={handleUpload} disabled={!file || uploading || !companyId || !isAllowed} loading={uploading}>
-              Analizar
-            </Button>
-          </div>
-          {!companyId && (
-            <div className="mt-12">
-              <Alert tone="warning">Selecciona una empresa para subir el archivo.</Alert>
-            </div>
-          )}
-          {file && isXlsx ? (
-            <details className="card soft mt-12">
-              <summary className="upload-hint cursor-pointer">
-                Ajustes XLSX (si las columnas salen raras)
-              </summary>
-              <div className="mt-2">
-                {xlsxLoading ? <div className="upload-hint">Detectando estructura del Excel...</div> : null}
-                {!!xlsxPreview?.sheets?.length ? (
-                  <div className="upload-row tight">
-                    <label className="row row-center gap-2">
-                      <span className="w-110 inline-block">Hoja</span>
-                      <select
-                        value={sheetIndex ?? xlsxPreview.sheetIndex ?? 0}
-                        onChange={(e) => setSheetIndex(Number(e.target.value))}
-                        disabled={xlsxLoading}
-                      >
-                        {xlsxPreview.sheets.map((s, idx) => (
-                          <option key={`${s}-${idx}`} value={idx}>
-                            {idx + 1}. {s}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="row row-center gap-2">
-                      <span className="w-110 inline-block">Encabezado</span>
-                      <input
-                        type="number"
-                        min={1}
-                        value={headerRow ?? xlsxPreview.headerRow ?? 1}
-                        onChange={(e) => setHeaderRow(Number(e.target.value))}
-                        disabled={xlsxLoading}
-                        className="w-90"
-                      />
-                      <small className="upload-hint">Fila (1-based)</small>
-                    </label>
-                  </div>
-                ) : null}
-                {!!xlsxPreview?.headers?.length ? (
-                  <div className="upload-hint mt-2">
-                    Headers detectados: {xlsxPreview.headers.slice(0, 8).join(' · ')}
-                    {xlsxPreview.headers.length > 8 ? '...' : ''}
-                  </div>
-                ) : null}
-                {!!xlsxPreview?.sampleRows?.length ? (
-                  <div className="mt-2 overflow-auto">
-                    <table className="table">
-                      <thead>
-                        <tr>
-                          {(xlsxPreview.headers || []).slice(0, 8).map((h) => (
-                            <th key={h}>{h}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {xlsxPreview.sampleRows.slice(0, 5).map((row, idx) => (
-                          <tr key={idx}>
-                            {row.slice(0, 8).map((cell, cidx) => (
-                              <td key={`${idx}-${cidx}`}>{cell}</td>
-                            ))}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : null}
-              </div>
-            </details>
-          ) : null}
-          {uploadError && (
-            <div className="mt-12">
-              <Alert tone="danger">{uploadError}</Alert>
-            </div>
-          )}
-          {uploadOk && (
-            <div className="mt-12">
-              <Alert tone="success">{uploadOk}</Alert>
-            </div>
-          )}
-        </div>
-        <div className="card soft">
-          <h3 className="h3-reset">Resumen</h3>
-          <div className="grid">
-            <div className="kpi">
-              <h4>Filas</h4>
-              <strong>{summary?.rowCount ?? '-'}</strong>
-            </div>
-            <div className="kpi">
-              <h4>Columnas</h4>
-              <strong>{summary?.columnCount ?? '-'}</strong>
-            </div>
-            <div className="kpi">
-              <h4>Archivo</h4>
-              <strong className="fs-14">{summary?.filename ?? '-'}</strong>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {error && <p className="error">{String((error as any).message)}</p>}
-
-      {likelyBadHeaders ? (
-        <div className="section">
-          <Alert tone="warning" title="El Excel parece mal interpretado">
-            Los nombres de columna parecen numeros (posible fila de datos en vez de encabezado). Abre "Ajustes XLSX" y prueba a cambiar la fila de
-            encabezado (o exporta a CSV con titulos).
-          </Alert>
         </div>
       ) : null}
-
-      <details className="card section">
-        <summary className="mini-row cursor-pointer mt-0">
-          <strong>Analisis avanzado</strong>
-          <span className="upload-hint">assistant, estructura completa y relaciones</span>
-        </summary>
-
-      <div className="grid section">
-        <div className="card">
-          <h3 className="h3-reset">Insights & asesoramiento</h3>
-          {!insights.length ? (
-            renderPanelState('Sin lectura automatica todavia', 'Sube un CSV o XLSX para generar insights, alertas y primeras recomendaciones.', 'default', 'mt-0')
-          ) : (
-            <ul className="m-0 pl-18">
-              {insights.slice(0, showAllInsights ? insights.length : 3).map((it: any, idx: number) => (
-                <li key={`${it.title}-${idx}`} className="mb-8">
-                  <strong>{it.title}:</strong> {it.message}
-                </li>
-              ))}
-            </ul>
-          )}
-          {insights.length > 3 ? (
-            <div className="mt-2">
-              <Button size="sm" variant="ghost" onClick={() => setShowAllInsights((v) => !v)}>
-                {showAllInsights ? 'Ver menos' : `Ver todos (${insights.length})`}
-              </Button>
-            </div>
-          ) : null}
-          {plan === 'BRONZE' && (
-            <div className="upload-hint mt-2">
-              En GOLD/PLATINUM se habilitan correlaciones, distribuciones completas y asesoramiento mas accionable.
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div className="grid section">
-        <div className="card">
-          <h3 className="h3-reset">Assistant (reglas · PLATINUM)</h3>
-          <div className="upload-hint mt-1">
-            Motor de reglas/heuristicas (no IA generativa). Ver `docs/assistant-vs-ai.md`.
-          </div>
-          {assistantDisclosure ? <div className="upload-hint mt-2">{assistantDisclosure}</div> : null}
-          {!hasPlatinum ? (
-            renderPanelState('Assistant bloqueado por plan', 'El asistente consultivo completo se habilita en PLATINUM.', 'locked', 'mt-0')
-          ) : (
-            <div>
-              <div className="row row-wrap gap-2 mb-2">
-                <Button variant="secondary" size="sm" onClick={handleDownloadNormalizedCsv}>Descargar CSV normalizado</Button>
-                <Button variant="ghost" size="sm" onClick={() => handleLoadRows(50)} disabled={rowsLoading} loading={rowsLoading}>
-                  Ver 50 filas
-                </Button>
-                <Button size="sm" onClick={handleGenerateAdvisorReport}>Descargar informe consultivo</Button>
-              </div>
-              {rowsError && <div className="error">{rowsError}</div>}
-              {!!rowsPreview?.rows?.length && (
-                <div className="mb-3 overflow-auto">
-                  <table className="table">
-                    <thead>
-                      <tr>
-                        {rowsPreview.headers.slice(0, 10).map((h) => (
-                          <th key={h}>{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {rowsPreview.rows.slice(0, 8).map((row, idx) => (
-                        <tr key={idx}>
-                          {row.slice(0, 10).map((cell, cidx) => (
-                            <td key={`${idx}-${cidx}`}>{cell}</td>
-                          ))}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  <div className="upload-hint mt-8">
-                    Preview de filas del CSV normalizado (drill-down). Para analisis completo usa la descarga.
-                  </div>
-                </div>
-              )}
-
-              <div className="maxh-260 overflow-auto pr-1">
-                {assistantMessages.map((m, idx) => (
-                  <div key={idx} className="mb-2">
-                    <div className="badge inline-block mb-1">
-                      {m.role === 'user' ? 'Tu' : 'Assistant'}
-                    </div>
-                    <div className="pre-wrap">{m.content}</div>
-                  </div>
-                ))}
-              </div>
-
-              {!!assistantPrompts.length && (
-                <div className="row row-wrap gap-2 mt-2">
-                  {assistantPrompts.slice(0, 6).map((p) => (
-                    <Button key={p} variant="ghost" size="sm" onClick={() => sendAssistantMessage(p)} disabled={assistantLoading}>
-                      {p}
-                    </Button>
-                  ))}
-                </div>
-              )}
-
-              {!!assistantQuestions.length && (
-                <div className="mt-2">
-                  <div className="upload-hint">Preguntas para afinar:</div>
-                  <div className="row row-wrap gap-2 mt-1">
-                    {assistantQuestions.slice(0, 6).map((q) => (
-                      <Button key={q} variant="ghost" size="sm" onClick={() => sendAssistantMessage(q)} disabled={assistantLoading}>
-                        {q}
-                      </Button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <div className="upload-row tight">
-                <input
-                  value={assistantInput}
-                  onChange={(e) => setAssistantInput(e.target.value)}
-                  placeholder="Ej: Quiero mejorar margen este trimestre"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault()
-                      const t = assistantInput
-                      setAssistantInput('')
-                      sendAssistantMessage(t)
-                    }
-                  }}
-                />
-                <Button
-                  onClick={() => {
-                    const t = assistantInput
-                    setAssistantInput('')
-                    sendAssistantMessage(t)
-                  }}
-                  disabled={assistantLoading || !assistantInput.trim()}
-                >
-                  Enviar
-                </Button>
-                <Button variant="secondary" onClick={() => sendAssistantMessage('Plan 30/60/90')} disabled={assistantLoading}>
-                  Plan 30/60/90
-                </Button>
-              </div>
-
-              {!!assistantActions.length && (
-                <div className="mt-3">
-                  <h4 className="m-0 mb-8">Plan recomendado</h4>
-                  <div className="grid">
-                    {assistantActions.slice(0, 6).map((a, idx) => (
-                      <div key={`${a.title}-${idx}`} className="kpi">
-                        <h4>{a.title}</h4>
-                        <div className="mini-row">
-                          <span className="badge">{a.horizon}</span>
-                          <span className="badge">{a.priority}</span>
-                        </div>
-                        <div className="mt-1">{a.detail}</div>
-                        {a.kpi && <div className="upload-hint mt-8">KPI: {a.kpi}</div>}
-                        {!!a.evidence?.length && (
-                          <div className="mt-2">
-                            <div className="upload-hint">Evidencias</div>
-                            <div className="mt-1">
-                              <ul className="m-0 pl-18">
-                                {a.evidence.slice(0, 6).map((e, eidx) => {
-                                  const meta = [e.subtitle, e.metric].filter(Boolean).join(' · ')
-                                  return (
-                                    <li key={`${e.type}-${e.title}-${eidx}`} className="mb-1">
-                                      <strong>{e.title}</strong>{meta ? <span className="upload-hint"> ({meta})</span> : null}
-                                      {e.detail ? <div className="upload-hint">{e.detail}</div> : null}
-                                    </li>
-                                  )
-                                })}
-                              </ul>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div className="section">
-        <div className="card">
-          <div className="row row-between row-center row-wrap gap-10">
-            <div>
-              <div className="fw-800">Calidad de dato (semaforo)</div>
-              <div className="upload-hint">
-                {universalQualityLoading ? 'Analizando...' : universalQuality ? `Score: ${universalQuality.score}/100` : '-'}
-                {universalQuality?.minDate && universalQuality?.maxDate ? ` · Rango fechas: ${universalQuality.minDate} -> ${universalQuality.maxDate}` : ''}
-              </div>
-            </div>
-            {universalQuality ? (
-              <span className={`badge ${qualitySummary(universalQuality)?.badge || ''}`}>
-                {qualitySummary(universalQuality)?.label || 'OK'}
-              </span>
-            ) : (
-              <span className="badge">-</span>
-            )}
-          </div>
-
-          {universalQualityError ? (
-            <div className="mt-12">
-              <Alert tone="danger">No se pudo calcular la calidad: {String((universalQualityError as any)?.message || universalQualityError)}</Alert>
-            </div>
-          ) : null}
-
-          {universalQuality ? (
-            <div className="grid grid-autofit-180 mt-12">
-              <div className="card soft card-pad-sm">
-                <div className="upload-hint">Filas analizadas</div>
-                <div className="fw-700">{universalQuality.rowsScanned}</div>
-              </div>
-              <div className="card soft card-pad-sm">
-                <div className="upload-hint">Errores fecha/num</div>
-                <div className="fw-700">
-                  {universalQuality.dateParseErrors}/{universalQuality.numberParseErrors}
-                </div>
-              </div>
-              <div className="card soft card-pad-sm">
-                <div className="upload-hint">Filas irregulares</div>
-                <div className="fw-700">{universalQuality.irregularRows}</div>
-              </div>
-              <div className="card soft card-pad-sm">
-                <div className="upload-hint">Celdas vacias</div>
-                <div className="fw-700">
-                  {universalQuality.totalCells ? Math.round((universalQuality.nullCells / Math.max(1, universalQuality.totalCells)) * 100) : 0}%
-                </div>
-              </div>
-            </div>
-          ) : null}
-
-          {universalQuality?.issues?.length ? (
-            <div className="mt-12">
-              <div className="upload-hint">Que revisar</div>
-              <ul className="m-0 pl-18 mt-6">
-                {universalQuality.issues.slice(0, 6).map((it, idx) => (
-                  <li key={`${it.code}-${idx}`}>
-                    <strong>{it.title}</strong> <span className="upload-hint">({it.severity})</span>
-                    {it.detail ? <div className="upload-hint">{it.detail}</div> : null}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-
-          {universalQuality?.examples?.length ? (
-            <details className="mt-12">
-              <summary className="upload-hint cursor-pointer">Ejemplos</summary>
-              <pre className="code-block mt-12">{universalQuality.examples.join('\n')}</pre>
-            </details>
-          ) : null}
-
-          <LineagePanel lineage={universalLineage as any} />
-        </div>
-      </div>
-
-      <div className="section">
-        <details className="card">
-          <summary className="mini-row cursor-pointer mt-0">
-            <strong>Columnas</strong>
-            <span className="badge">{columns.length || 0}</span>
-          </summary>
-          {!columns.length ? (
-            renderPanelState('Sin estructura detectada', 'Sube un CSV o XLSX para ver columnas, tipos, nulos y rangos.')
-          ) : (
-            <>
-              <div className="mt-12">
-                <Button size="sm" variant="ghost" onClick={() => setShowAllColumns((v) => !v)}>
-                  {showAllColumns ? 'Ver menos' : `Ver todas (${columns.length})`}
-                </Button>
-              </div>
-              <div className="mt-12 overflow-auto">
-                <table className="table">
-                  <thead>
-                    <tr>
-                      <th>Columna</th>
-                      <th>Tipo</th>
-                      <th>Nulos</th>
-                      <th>Unicos</th>
-                      <th>Min</th>
-                      <th>Max</th>
-                      <th>Media</th>
-                      <th>Mediana</th>
-                      <th>P90</th>
-                      <th>Fecha min</th>
-                      <th>Fecha max</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(showAllColumns ? columns : columns.slice(0, 12)).map((c: any) => (
-                      <tr key={c.name}>
-                        <td>{c.name}</td>
-                        <td>{c.detectedType}</td>
-                        <td>{c.nullCount}</td>
-                        <td>{c.uniqueCount}</td>
-                        <td>{c.min ?? '-'}</td>
-                        <td>{c.max ?? '-'}</td>
-                        <td>{c.mean ?? '-'}</td>
-                        <td>{c.median ?? '-'}</td>
-                        <td>{c.p90 ?? '-'}</td>
-                        <td>{c.dateMin ?? '-'}</td>
-                        <td>{c.dateMax ?? '-'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </>
-          )}
-        </details>
-      </div>
-
-      <div className="section">
-        <details className="card">
-          <summary className="mini-row cursor-pointer mt-0">
-            <strong>Graficos</strong>
-            <span className="upload-hint">distribuciones y fechas</span>
-          </summary>
-          <div className="grid mt-12">
-            <div className="card soft">
-              <h3 className="h3-reset">Distribuciones numericas</h3>
-              {!numericColumns.length ? (
-                renderPanelState('Sin columnas numericas claras', 'Revisa si los importes vienen como texto o con formatos mixtos.', 'default', 'mt-0')
-              ) : (
-                <div className="grid">
-                  {numericColumns.map((c: any) => (
-                    <div key={`${c.name}-hist`} className="kpi">
-                      <h4>{c.name}</h4>
-                      {!c.histogram?.length ? (
-                        <span className="badge">sin histograma</span>
-                      ) : (
-                        <EChart
-                          module="universal"
-                          height={220}
-                          option={{
-                            xAxis: {
-                              type: 'category',
-                              data: (c.histogram || []).map((b: any) => String(b.label)),
-                              axisLine: { lineStyle: { color: 'rgba(148, 163, 184, 0.25)' } },
-                              axisLabel: { color: 'rgba(226, 232, 240, 0.65)', interval: 0, rotate: 22 }
-                            },
-                            yAxis: {
-                              type: 'value',
-                              axisLine: { show: false },
-                              splitLine: { lineStyle: { color: 'rgba(148, 163, 184, 0.12)' } },
-                              axisLabel: { color: 'rgba(226, 232, 240, 0.65)' }
-                            },
-                            series: [
-                              {
-                                type: 'bar',
-                                data: (c.histogram || []).map((b: any) => Number(b.count || 0)),
-                                barMaxWidth: 26,
-                                itemStyle: { color: 'rgba(96, 165, 250, 0.78)' }
-                              }
-                            ]
-                          }}
-                        />
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-            <div className="card soft">
-              <h3 className="h3-reset">Series de fechas</h3>
-              {!dateColumns.length ? (
-                renderPanelState('Sin columnas de fecha claras', 'Prueba a normalizar fechas o revisa la fila de cabecera del fichero.', 'default', 'mt-0')
-              ) : (
-                <div className="grid">
-                  {dateColumns.map((c: any) => (
-                    <div key={`${c.name}-dates`} className="kpi">
-                      <h4>{c.name}</h4>
-                      {!c.dateSeries?.length ? (
-                        <span className="badge">sin serie</span>
-                      ) : (
-                        <EChart
-                          module="universal"
-                          height={240}
-                          option={{
-                            xAxis: {
-                              type: 'category',
-                              data: (c.dateSeries || []).map((d: any) => String(d.label)),
-                              axisLine: { lineStyle: { color: 'rgba(148, 163, 184, 0.25)' } },
-                              axisLabel: { color: 'rgba(226, 232, 240, 0.65)' }
-                            },
-                            yAxis: {
-                              type: 'value',
-                              axisLine: { show: false },
-                              splitLine: { lineStyle: { color: 'rgba(148, 163, 184, 0.12)' } },
-                              axisLabel: { color: 'rgba(226, 232, 240, 0.65)' }
-                            },
-                            series: [
-                              {
-                                name: 'Filas',
-                                type: 'line',
-                                smooth: true,
-                                symbol: 'circle',
-                                symbolSize: 6,
-                                data: (c.dateSeries || []).map((d: any) => Number(d.count || 0)),
-                                itemStyle: { color: 'rgba(20, 184, 166, 0.95)' },
-                                lineStyle: { width: 3 },
-                                areaStyle: { color: 'rgba(20, 184, 166, 0.12)' }
-                              }
-                            ]
-                          }}
-                        />
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </details>
-      </div>
-
-      <div className="section">
-        <details className="card">
-          <summary className="mini-row cursor-pointer mt-0">
-            <strong>Relaciones y categorias</strong>
-            <span className="upload-hint">valores frecuentes y correlaciones</span>
-          </summary>
-          <div className="grid mt-12">
-            <div className="card soft">
-              <h3 className="h3-reset">Top valores (categorias)</h3>
-              {!categoricalColumns.length ? (
-                renderPanelState('Sin columnas categoricas claras', 'Puede que el dataset tenga pocos textos utiles o demasiados valores unicos.', 'default', 'mt-0')
-              ) : (
-                <div className="grid">
-                  {categoricalColumns.map((c: any) => (
-                    <div key={`${c.name}-top`} className="kpi">
-                      <h4>{c.name}</h4>
-                      <EChart
-                        module="universal"
-                        height={220}
-                        option={{
-                          xAxis: {
-                            type: 'value',
-                            axisLine: { show: false },
-                            splitLine: { lineStyle: { color: 'rgba(148, 163, 184, 0.12)' } },
-                            axisLabel: { color: 'rgba(226, 232, 240, 0.65)' }
-                          },
-                          yAxis: {
-                            type: 'category',
-                            data: (c.topValues || [])
-                              .slice(0, 8)
-                              .map((v: any) => String(v.value).slice(0, 26))
-                              .reverse(),
-                            axisLine: { lineStyle: { color: 'rgba(148, 163, 184, 0.25)' } },
-                            axisLabel: { color: 'rgba(226, 232, 240, 0.7)' }
-                          },
-                          series: [
-                            {
-                              type: 'bar',
-                              data: (c.topValues || [])
-                                .slice(0, 8)
-                                .map((v: any) => Number(v.count || 0))
-                                .reverse(),
-                              barMaxWidth: 22,
-                              itemStyle: { color: 'rgba(20, 184, 166, 0.78)' }
-                            }
-                          ]
-                        }}
-                      />
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-            <div className="card soft">
-              <h3 className="h3-reset">Correlaciones (numericas)</h3>
-              {!correlations.length ? (
-                plan === 'BRONZE'
-                  ? renderPanelState('Correlaciones bloqueadas por plan', 'Esta lectura se habilita en GOLD o superior.', 'locked', 'mt-0')
-                  : renderPanelState('Sin correlaciones utiles', 'No veo relaciones numericas fuertes con este dataset.', 'default', 'mt-0')
-              ) : (
-                <div>
-                  {corrHeatmap ? (
-                    <div className="mb-12">
-                      <EChart
-                        module="universal"
-                        height={320}
-                        option={{
-                          tooltip: {
-                            trigger: 'item',
-                            formatter: (p: any) => {
-                              const a = corrHeatmap.cols?.[p.value?.[0]] ?? ''
-                              const b = corrHeatmap.cols?.[p.value?.[1]] ?? ''
-                              const v = Number(p.value?.[2] ?? 0)
-                              return `${a} vs ${b}\n${v.toFixed(3)}`
-                            }
-                          },
-                          grid: { left: 60, right: 18, top: 18, bottom: 58 },
-                          xAxis: {
-                            type: 'category',
-                            data: corrHeatmap.cols,
-                            axisLabel: { color: 'rgba(226, 232, 240, 0.65)', rotate: 35 }
-                          },
-                          yAxis: {
-                            type: 'category',
-                            data: corrHeatmap.cols,
-                            axisLabel: { color: 'rgba(226, 232, 240, 0.65)' }
-                          },
-                          visualMap: {
-                            min: -1,
-                            max: 1,
-                            calculable: false,
-                            orient: 'horizontal',
-                            left: 'center',
-                            bottom: 6,
-                            textStyle: { color: 'rgba(226, 232, 240, 0.75)' },
-                            inRange: { color: ['rgba(239, 68, 68, 0.9)', 'rgba(15, 23, 42, 0.92)', 'rgba(34, 197, 94, 0.9)'] }
-                          },
-                          series: [
-                            {
-                              type: 'heatmap',
-                              data: corrHeatmap.data,
-                              emphasis: { itemStyle: { borderColor: 'rgba(148, 163, 184, 0.6)', borderWidth: 1 } }
-                            }
-                          ]
-                        }}
-                      />
-                      <div className="upload-hint mt-1">
-                        Matriz de correlacion (subconjunto). Valores cerca de 1/-1 implican relacion fuerte.
-                      </div>
-                    </div>
-                  ) : null}
-                  <div className="insight-grid">
-                    {topCorrelations.map((c: any, idx: number) => (
-                      <div key={`${c.columnA}-${c.columnB}-${idx}`} className="kpi">
-                        <h4>
-                          {c.columnA} vs {c.columnB}
-                        </h4>
-                        <strong>{c.correlation?.toFixed ? c.correlation.toFixed(3) : c.correlation}</strong>
-                      </div>
-                    ))}
-                  </div>
-                  <details className="mt-12">
-                    <summary className="upload-hint cursor-pointer">
-                      Ver tabla completa
-                    </summary>
-                    <div className="mt-2 overflow-auto">
-                      <table className="table">
-                        <thead>
-                          <tr>
-                            <th>Columna A</th>
-                            <th>Columna B</th>
-                            <th>Correlacion</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {correlations.map((c: any, idx: number) => (
-                            <tr key={`${c.columnA}-${c.columnB}-${idx}`}>
-                              <td>{c.columnA}</td>
-                              <td>{c.columnB}</td>
-                              <td>{c.correlation?.toFixed ? c.correlation.toFixed(3) : c.correlation}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </details>
-                </div>
-              )}
-            </div>
-          </div>
-        </details>
-      </div>
-      </details>
     </div>
   )
-}
 
+
+}

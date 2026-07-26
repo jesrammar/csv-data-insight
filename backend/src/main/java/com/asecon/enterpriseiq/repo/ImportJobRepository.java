@@ -13,13 +13,48 @@ import org.springframework.data.repository.query.Param;
 public interface ImportJobRepository extends JpaRepository<ImportJob, Long> {
     List<ImportJob> findByCompanyIdOrderByCreatedAtDesc(Long companyId);
 
+    List<ImportJob> findByCompanyIdInAndPeriodInOrderByCompanyIdAscPeriodAscCreatedAtDesc(List<Long> companyIds, List<String> periods);
+
     Optional<ImportJob> findFirstByCompanyIdOrderByCreatedAtDesc(Long companyId);
+
+    Optional<ImportJob> findFirstByCompanyIdAndPeriodOrderByVersionNoDescCreatedAtDesc(Long companyId, String period);
+
+    Optional<ImportJob> findFirstByCompanyIdAndPeriodAndAppliedAtNotNullOrderByAppliedAtDesc(Long companyId, String period);
 
     Optional<ImportJob> findFirstByCompanyIdAndProcessedAtNotNullOrderByProcessedAtDesc(Long companyId);
 
     Optional<ImportJob> findFirstByCompanyIdAndStatusInOrderByRunAfterAscIdAsc(Long companyId, List<ImportStatus> status);
 
     List<ImportJob> findTop25ByStatusInAndRunAfterBeforeOrderByRunAfterAscIdAsc(List<ImportStatus> status, Instant now);
+
+    @Query("""
+        select j
+          from ImportJob j
+         where j.company.id = :companyId
+           and j.period = :period
+           and j.contentHash = :contentHash
+           and j.id <> :excludeId
+         order by j.createdAt desc
+        """)
+    List<ImportJob> findDuplicatesByContentHash(@Param("companyId") Long companyId,
+                                                @Param("period") String period,
+                                                @Param("contentHash") String contentHash,
+                                                @Param("excludeId") Long excludeId);
+
+    @Query("""
+        select j
+          from ImportJob j
+         where j.company.id = :companyId
+           and j.period = :period
+           and j.normalizedHash = :normalizedHash
+           and j.appliedAt is not null
+           and j.id <> :excludeId
+         order by j.appliedAt desc
+        """)
+    List<ImportJob> findAppliedDuplicatesByNormalizedHash(@Param("companyId") Long companyId,
+                                                          @Param("period") String period,
+                                                          @Param("normalizedHash") String normalizedHash,
+                                                          @Param("excludeId") Long excludeId);
 
     @Modifying
     @Query("""

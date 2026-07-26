@@ -1,4 +1,10 @@
+debug: false
+trace: false
+
 spring:
+  main:
+    banner-mode: "off"
+    log-startup-info: false
   datasource:
     url: jdbc:h2:mem:enterpriseiq_test;MODE=PostgreSQL;NON_KEYWORDS=YEAR,VALUE;DB_CLOSE_DELAY=-1
     username: sa
@@ -33,9 +39,15 @@ app:
     universal: ./target/test-storage/universal
     inbox: ./target/test-storage/inbox
   scheduler:
+    enabled: false
     import-fixed-delay-ms: 120000
     token-cleanup-fixed-delay-ms: 86400000
     refresh-revoked-retention-days: 7
+  import-guard:
+    min-valid-rows: 1
+    max-warning-rate: 0.15
+    max-duplicate-rate: 0.5
+    block-on-outside-period-rows: true
 
 cors:
   allowed-origins: "http://localhost:5173"
@@ -43,3 +55,11 @@ cors:
 management:
   server:
     port: 0
+
+logging:
+  level:
+    root: WARN
+    org.springframework: WARN
+    org.hibernate: WARN
+    org.hibernate.SQL: OFF
+    com.asecon.enterpriseiq: INFO

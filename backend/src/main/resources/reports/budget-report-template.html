@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+  <title>Plan anual</title>
+  <style>
+{{REPORT_CSS}}
+  </style>
+</head>
+<body>
+  <section class="cover page-break-after">
+    <div class="cover-topline">EnterpriseIQ</div>
+    <div class="cover-title">Plan anual</div>
+    <div class="cover-subtitle">Lectura ejecutiva para validar si el plan aguanta, donde se desvía y que revisar primero.</div>
+
+    <div class="cover-meta-grid">
+      <div class="meta-card">
+        <div class="meta-label">Empresa</div>
+        <div class="meta-value">{{COMPANY_NAME}}</div>
+      </div>
+      <div class="meta-card">
+        <div class="meta-label">Fuente</div>
+        <div class="meta-value">{{SOURCE_FILENAME}}</div>
+      </div>
+      <div class="meta-card">
+        <div class="meta-label">Generado</div>
+        <div class="meta-value">{{GENERATED_AT}}</div>
+      </div>
+    </div>
+
+    <div class="pill-row">
+      <span class="pill">Ingresos {{TOTAL_INCOME}}</span>
+      <span class="pill">Gastos {{TOTAL_EXPENSE}}</span>
+      <span class="pill">EBITDA {{TOTAL_MARGIN}}</span>
+    </div>
+  </section>
+
+  <section class="report-section keep-together">
+    <div class="section-kicker">Vision general</div>
+    <div class="section-title">1. Resumen ejecutivo</div>
+    <div class="card">
+      {{EXECUTIVE_HTML}}
+      {{MINI_TOTALS_HTML}}
+      <div class="hr"></div>
+      <div class="small muted">
+        Mejor mes por margen: <b>{{BEST_MONTH}}</b> · Peor mes por margen: <b>{{WORST_MONTH}}</b>
+      </div>
+    </div>
+  </section>
+
+  <section class="report-section">
+    <div class="section-kicker">Decision</div>
+    <div class="section-title">2. Acciones recomendadas</div>
+    <div class="card">
+      {{RECOMMENDATIONS_HTML}}
+      <div class="hr"></div>
+      {{ZERO_HEAVY_HTML}}
+    </div>
+  </section>
+
+  <section class="report-section">
+    <div class="section-kicker">Seguimiento</div>
+    <div class="section-title">3. Resumen por mes</div>
+    {{MONTH_TABLE_HTML}}
+  </section>
+
+  <section class="report-section">
+    <div class="section-kicker">Concentracion</div>
+    <div class="section-title">4. Drivers principales</div>
+    {{TOP_DRIVERS_HTML}}
+  </section>
+
+  <section class="report-section keep-together">
+    <div class="section-kicker">Uso responsable</div>
+    <div class="section-title">5. Nota de fiabilidad</div>
+    <div class="card note-card small muted">
+      Este informe parte de un XLSX o CSV anual cargado en Universal. Si faltan meses,
+      cabeceras o partidas, conviene rehacer la carga guiada antes de usar este documento
+      como base de decision.
+    </div>
+  </section>
+</body>
+</html>

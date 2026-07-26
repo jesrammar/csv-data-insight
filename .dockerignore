@@ -1,7 +1,19 @@
-﻿# Java/Maven
+# Java/Maven
 /target/
+backend/target/
 *.class
 *.log
+
+# Frontend build/deps
+frontend/dist/
+frontend/node_modules/
+frontend/.vite/
+frontend/coverage/
+frontend/tsconfig.tsbuildinfo
+
+# Backend local/build output
+backend/.mvn/
+backend/storage/
 
 # IDE
 .idea/
@@ -10,6 +22,10 @@
 .classpath
 .project
 .settings/
+
+# Temp
+tmp-*.pdf
+.codex_tmp/
 
 # OS
 .DS_Store

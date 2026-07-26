@@ -12,6 +12,7 @@ import org.springframework.web.server.ResponseStatusException;
 @Service
 public class CompanySavedMappingService {
     public static final String KEY_IMPORTS_SMART = "imports.smart";
+    public static final String KEY_PIPELINE_RULES = "pipeline.rules";
 
     private final CompanySavedMappingRepository mappingRepository;
     private final CompanyRepository companyRepository;

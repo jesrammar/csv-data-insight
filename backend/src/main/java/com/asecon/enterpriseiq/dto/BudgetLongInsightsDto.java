@@ -7,6 +7,8 @@ import java.util.List;
 public record BudgetLongInsightsDto(
     String filename,
     Instant createdAt,
+    Long sourceImportId,
+    String analysisVersion,
     int itemCount,
     BigDecimal totalAbsAnnual,
     String bestMonth,
@@ -14,6 +16,7 @@ public record BudgetLongInsightsDto(
     BigDecimal concentrationTop3AbsPct,
     List<BudgetMonthTotalDto> monthTotals,
     List<BudgetItemInsightDto> topDrivers,
-    List<BudgetItemInsightDto> zeroHeavyItems
+    List<BudgetItemInsightDto> zeroHeavyItems,
+    List<BudgetItemInsightDto> accountingAdjustments
 ) {}
 

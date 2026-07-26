@@ -4,21 +4,22 @@ import com.asecon.enterpriseiq.dto.UniversalAutoSuggestionDto;
 import com.asecon.enterpriseiq.dto.UniversalColumnDto;
 import com.asecon.enterpriseiq.dto.UniversalFilter;
 import com.asecon.enterpriseiq.dto.UniversalSummaryDto;
-import com.asecon.enterpriseiq.dto.UniversalTopValueDto;
 import com.asecon.enterpriseiq.dto.UniversalViewRequest;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Locale;
 import java.util.Optional;
 import org.springframework.stereotype.Service;
 
 @Service
 public class UniversalAutoSuggestionService {
     private final UniversalCsvService universalCsvService;
+    private final UniversalViewService universalViewService;
 
-    public UniversalAutoSuggestionService(UniversalCsvService universalCsvService) {
+    public UniversalAutoSuggestionService(UniversalCsvService universalCsvService,
+                                          UniversalViewService universalViewService) {
         this.universalCsvService = universalCsvService;
+        this.universalViewService = universalViewService;
     }
 
     public List<UniversalAutoSuggestionDto> suggest(Long companyId) {
@@ -51,25 +52,27 @@ public class UniversalAutoSuggestionService {
             req.setAggregation("sum");
             req.setTopN(8);
             req.setFilters(defaultYearFilter(bestDate));
-            out.add(new UniversalAutoSuggestionDto(
-                "Tabla pivote (categoría × mes)",
-                "Ideal para presupuestos/ventas: compara categorías por mes" + yearSuffix(bestDate) + ".",
-                req
+            out.add(suggestion(
+                "Tabla pivote (categoria x mes)",
+                "Ideal para presupuestos o ventas: compara categorias por mes" + yearSuffix(bestDate) + ".",
+                req,
+                summary
             ));
         }
 
         if (bestDate != null && bestNum != null && out.size() < 2) {
             UniversalViewRequest req = new UniversalViewRequest();
             req.setType("TIME_SERIES");
-            req.setName("Evolución mensual: " + bestNum.name());
+            req.setName("Evolucion mensual: " + bestNum.name());
             req.setDateColumn(bestDate.name());
             req.setValueColumn(bestNum.name());
             req.setAggregation("sum");
             req.setFilters(defaultYearFilter(bestDate));
-            out.add(new UniversalAutoSuggestionDto(
-                "Serie temporal (fecha → valor)",
+            out.add(suggestion(
+                "Serie temporal (fecha a valor)",
                 "Tendencia mensual de " + bestNum.name() + yearSuffix(bestDate) + ".",
-                req
+                req,
+                summary
             ));
         }
 
@@ -80,10 +83,11 @@ public class UniversalAutoSuggestionService {
             req.setCategoryColumn(bestText.name());
             req.setValueColumn(bestNum.name());
             req.setAggregation("sum");
-            out.add(new UniversalAutoSuggestionDto(
-                "Ranking por categoría",
-                "Top categorías en " + bestText.name() + " por " + bestNum.name() + ".",
-                req
+            out.add(suggestion(
+                "Ranking por categoria",
+                "Top categorias en " + bestText.name() + " por " + bestNum.name() + ".",
+                req,
+                summary
             ));
         }
 
@@ -94,10 +98,11 @@ public class UniversalAutoSuggestionService {
             req.setValueColumn(bestNum.name());
             req.setAggregation("sum");
             if (bestDate != null) req.setFilters(defaultYearFilter(bestDate));
-            out.add(new UniversalAutoSuggestionDto(
+            out.add(suggestion(
                 "KPIs (count/sum/avg)",
-                "Resumen rápido de " + bestNum.name() + (bestDate != null ? yearSuffix(bestDate) : "") + ".",
-                req
+                "Resumen rapido de " + bestNum.name() + (bestDate != null ? yearSuffix(bestDate) : "") + ".",
+                req,
+                summary
             ));
         }
 
@@ -109,16 +114,27 @@ public class UniversalAutoSuggestionService {
             req.setYColumn(secondNum.name());
             req.setMaxPoints(1200);
             if (bestDate != null) req.setFilters(defaultYearFilter(bestDate));
-            out.add(new UniversalAutoSuggestionDto(
+            out.add(suggestion(
                 "Scatter (X vs Y)",
-                "Relación entre " + bestNum.name() + " y " + secondNum.name() + (bestDate != null ? yearSuffix(bestDate) : "") + ".",
-                req
+                "Relacion entre " + bestNum.name() + " y " + secondNum.name() + (bestDate != null ? yearSuffix(bestDate) : "") + ".",
+                req,
+                summary
             ));
         }
 
-        // Cap to 2
         if (out.size() > 2) return out.subList(0, 2);
         return out;
+    }
+
+    private UniversalAutoSuggestionDto suggestion(String title,
+                                                  String description,
+                                                  UniversalViewRequest request,
+                                                  UniversalSummaryDto summary) {
+        return new UniversalAutoSuggestionDto(
+            title,
+            description,
+            universalViewService.canonicalizeRequest(request, summary)
+        );
     }
 
     private static UniversalColumnDto pickBestNumeric(List<UniversalColumnDto> nums) {
@@ -147,17 +163,17 @@ public class UniversalAutoSuggestionService {
     private static List<UniversalFilter> defaultYearFilter(UniversalColumnDto dateCol) {
         Integer year = latestYear(dateCol);
         if (year == null) return null;
-        UniversalFilter f = new UniversalFilter();
-        f.setColumn(dateCol.name());
-        f.setOp("year_eq");
-        f.setValue(String.valueOf(year));
-        return List.of(f);
+        UniversalFilter filter = new UniversalFilter();
+        filter.setColumn(dateCol.name());
+        filter.setOp("year_eq");
+        filter.setValue(String.valueOf(year));
+        return List.of(filter);
     }
 
     private static String yearSuffix(UniversalColumnDto dateCol) {
         Integer year = latestYear(dateCol);
         if (year == null) return "";
-        return " (año " + year + ")";
+        return " (ano " + year + ")";
     }
 
     private static Integer latestYear(UniversalColumnDto dateCol) {
@@ -174,16 +190,17 @@ public class UniversalAutoSuggestionService {
     private static Integer parseYear(String date) {
         if (date == null || date.isBlank()) return null;
         String s = date.trim();
-        // expect yyyy-MM-dd or yyyy-MM
         if (s.length() >= 4) {
             try {
                 return Integer.parseInt(s.substring(0, 4));
-            } catch (Exception ignored) {}
+            } catch (Exception ignored) {
+                return null;
+            }
         }
         return null;
     }
 
-    private static String safe(String s) {
-        return s == null ? null : s.trim();
+    private static String safe(String value) {
+        return value == null ? null : value.trim();
     }
 }

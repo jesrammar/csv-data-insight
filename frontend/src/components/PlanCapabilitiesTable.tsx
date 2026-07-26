@@ -1,27 +1,27 @@
-type MatrixRow = { item: string; bronze: string; gold: string; platinum: string }
+ï»¿type MatrixRow = { item: string; bronze: string; gold: string; platinum: string }
 
-const CHECK = '?'
-const CROSS = '?'
+const CHECK = 'SÃ­'
+const CROSS = 'No'
 
 export const CAPABILITY_MATRIX: MatrixRow[] = [
   { item: 'KPIs de caja (in/out/net/saldo)', bronze: CHECK, gold: CHECK, platinum: CHECK },
-  { item: 'Histórico recomendado', bronze: '6 meses', gold: '12 meses', platinum: '24 meses' },
+  { item: 'HistÃ³rico recomendado', bronze: '6 meses', gold: '12 meses', platinum: '24 meses' },
   { item: 'Alertas', bronze: CHECK, gold: CHECK, platinum: CHECK },
-  { item: 'Informes mensuales (HTML)', bronze: CHECK, gold: CHECK, platinum: '? + consultivo' },
+  { item: 'Informes mensuales (HTML)', bronze: CHECK, gold: CHECK, platinum: 'SÃ­ + consultivo' },
   { item: 'Tribunal (cumplimiento)', bronze: CROSS, gold: CHECK, platinum: CHECK },
-  { item: 'Drill-down transacciones + analítica', bronze: CROSS, gold: CROSS, platinum: CHECK },
+  { item: 'Drill-down transacciones + analÃ­tica', bronze: CROSS, gold: CROSS, platinum: CHECK },
   { item: 'Export transacciones (CSV)', bronze: CROSS, gold: CROSS, platinum: CHECK },
   { item: 'Export Power BI (ZIP) con detalle', bronze: CROSS, gold: CROSS, platinum: CHECK },
-  { item: 'Universal: análisis + preview XLSX', bronze: CHECK, gold: CHECK, platinum: CHECK },
+  { item: 'Universal: anÃ¡lisis + preview XLSX', bronze: CHECK, gold: CHECK, platinum: CHECK },
   { item: 'Universal: correlaciones', bronze: CROSS, gold: CHECK, platinum: CHECK },
   { item: 'Universal: CSV normalizado + preview filas', bronze: CROSS, gold: CROSS, platinum: CHECK },
-  { item: 'Assistant (reglas · chat)', bronze: CROSS, gold: CROSS, platinum: CHECK },
+  { item: 'Assistant (reglas Â· chat)', bronze: CROSS, gold: CROSS, platinum: CHECK },
   { item: 'Soporte objetivo', bronze: '48h', gold: '12h', platinum: '4h' }
 ]
 
 export default function PlanCapabilitiesTable({
   title = 'Comparativa por plan',
-  subtitle = 'Diferencias visibles y medibles en análisis y asesoramiento.',
+  subtitle = 'Diferencias visibles y medibles en anÃ¡lisis y asesoramiento.',
   compact = false
 }: {
   title?: string

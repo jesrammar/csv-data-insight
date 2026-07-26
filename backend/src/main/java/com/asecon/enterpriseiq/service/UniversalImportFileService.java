@@ -1,8 +1,10 @@
 package com.asecon.enterpriseiq.service;
 
+import com.asecon.enterpriseiq.dto.UniversalImportAnalysisDto;
 import com.asecon.enterpriseiq.dto.UniversalRowsDto;
 import com.asecon.enterpriseiq.model.UniversalImport;
 import com.asecon.enterpriseiq.repo.UniversalImportRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
 import java.io.InputStreamReader;
@@ -21,14 +23,43 @@ import org.springframework.web.server.ResponseStatusException;
 public class UniversalImportFileService {
     private final UniversalImportRepository importRepository;
     private final UniversalStorageService universalStorageService;
+    private final ObjectMapper objectMapper;
 
-    public UniversalImportFileService(UniversalImportRepository importRepository, UniversalStorageService universalStorageService) {
+    public UniversalImportFileService(UniversalImportRepository importRepository,
+                                      UniversalStorageService universalStorageService,
+                                      ObjectMapper objectMapper) {
         this.importRepository = importRepository;
         this.universalStorageService = universalStorageService;
+        this.objectMapper = objectMapper;
     }
 
     public Optional<UniversalImport> latest(Long companyId) {
         return importRepository.findFirstByCompanyIdOrderByCreatedAtDesc(companyId);
+    }
+
+    public List<UniversalImport> latestList(Long companyId, int limit) {
+        if (limit <= 0) return List.of();
+        List<UniversalImport> all = importRepository.findByCompanyIdOrderByCreatedAtDesc(companyId);
+        if (all.size() <= limit) return all;
+        return all.subList(0, limit);
+    }
+
+    public Optional<UniversalImport> latestAnnualBudget(Long companyId) {
+        List<UniversalImport> list = latestAnnualBudgetList(companyId, 1);
+        return list.isEmpty() ? Optional.empty() : Optional.of(list.get(0));
+    }
+
+    public List<UniversalImport> latestAnnualBudgetList(Long companyId, int limit) {
+        if (limit <= 0) return List.of();
+        List<UniversalImport> all = importRepository.findByCompanyIdOrderByCreatedAtDesc(companyId);
+        List<UniversalImport> matches = new ArrayList<>();
+        for (UniversalImport imp : all) {
+            if (imp == null) continue;
+            if (!looksLikeAnnualBudget(imp)) continue;
+            matches.add(imp);
+            if (matches.size() >= limit) break;
+        }
+        return matches;
     }
 
     public Optional<UniversalImport> find(Long companyId, Long importId) {
@@ -96,6 +127,34 @@ public class UniversalImportFileService {
             throw ex;
         } catch (Exception ex) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No se pudo leer el CSV normalizado");
+        }
+    }
+
+    private boolean looksLikeAnnualBudget(UniversalImport imp) {
+        UniversalImportAnalysisDto analysis = parseAnalysis(imp);
+        String diagnosisKind = analysis == null || analysis.intakeDiagnosis() == null ? null : analysis.intakeDiagnosis().kind();
+        if ("ANNUAL_BUDGET".equalsIgnoreCase(String.valueOf(diagnosisKind))) return true;
+
+        if (imp.getStorageRef() == null || imp.getStorageRef().isBlank()) return false;
+        try {
+            byte[] bytes = universalStorageService.readBytes(imp.getStorageRef());
+            BudgetLongNormalizer.Result result = BudgetLongNormalizer.normalizeToLongCsv(bytes, 5_000, 0);
+            return result.longCsvBytes() != null
+                && result.longCsvBytes().length > 0
+                && result.labelHeader() != null
+                && result.monthKeys() != null
+                && !result.monthKeys().isEmpty();
+        } catch (Exception ex) {
+            return false;
+        }
+    }
+
+    private UniversalImportAnalysisDto parseAnalysis(UniversalImport imp) {
+        if (imp == null || imp.getAnalysisJson() == null || imp.getAnalysisJson().isBlank()) return null;
+        try {
+            return objectMapper.readValue(imp.getAnalysisJson(), UniversalImportAnalysisDto.class);
+        } catch (Exception ex) {
+            return null;
         }
     }
 }

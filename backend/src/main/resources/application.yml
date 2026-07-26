@@ -80,6 +80,11 @@ app:
     require-upper: true
     require-lower: true
     require-digit: true
+  import-guard:
+    min-valid-rows: 1
+    max-warning-rate: 0.15
+    max-duplicate-rate: 0.5
+    block-on-outside-period-rows: true
   metrics:
     error-tag:
       max-unique: 40

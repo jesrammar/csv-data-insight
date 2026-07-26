@@ -285,6 +285,123 @@ export async function getCompanies() {
   return request('/api/companies/mine')
 }
 
+export type PortfolioMonthFlow = {
+  period: string
+  importStatus: string | null
+  hasReading: boolean
+  hasReport: boolean
+  portfolioStep?: PortfolioWorkflowStepDto | null
+}
+
+export type PortfolioCompanyOperation = {
+  companyId: number
+  companyName: string
+  companyPlan: 'BRONZE' | 'GOLD' | 'PLATINUM' | string
+  items: PortfolioMonthFlow[]
+  blockedCount: number
+  warningCount: number
+  readyCount: number
+  pendingPdfCount: number
+  missingDataCount: number
+  priorityScore: number
+  statusLabel: string
+}
+
+export type PortfolioOperationsSummary = {
+  activeCompanies: number
+  blockedCompanies: number
+  readyCompanies: number
+  topPriorityCompanyId: number | null
+  topPriorityCompanyName: string | null
+  topPriorityBlockedCount: number | null
+  topPriorityPendingPdfCount: number | null
+}
+
+export type PortfolioOperationsDto = {
+  months: string[]
+  summary: PortfolioOperationsSummary
+  companies: PortfolioCompanyOperation[]
+}
+
+export type PeriodWorkflowStatus =
+  | 'PENDING_DATA'
+  | 'INGESTING'
+  | 'EXCEPTIONS'
+  | 'READY_FOR_REVIEW'
+  | 'REVIEWED'
+  | 'REPORT_GENERATING'
+  | 'REPORT_READY'
+  | 'CLOSED'
+  | string
+
+export type PortfolioWorkflowStepStatus = 'NOT_APPLICABLE' | 'PENDING' | 'LOADED' | 'STALE' | string
+
+export type PortfolioWorkflowStepDto = {
+  applicable: boolean
+  status: PortfolioWorkflowStepStatus
+  title: string
+  detail: string
+  updatedAt?: string | null
+  badgeTone?: 'ok' | 'warn' | 'err' | '' | string
+  actionLabel?: string | null
+  shortLabel?: string | null
+}
+
+export type PeriodWorkflowDto = {
+  id: number
+  companyId: number
+  period: string
+  status: PeriodWorkflowStatus
+  statusTitle?: string | null
+  statusDetail?: string | null
+  statusBadgeTone?: 'ok' | 'warn' | 'err' | '' | string
+  primaryActionLabel?: string | null
+  orchestrationStatus?: 'BLOCKED' | 'RUNNING' | 'AVAILABLE' | 'WAITING_PORTFOLIO' | 'AUTO_CLOSE_READY' | 'DONE' | string
+  orchestrationRunnable?: boolean
+  autoCloseReady?: boolean
+  orchestrationTitle?: string | null
+  orchestrationDetail?: string | null
+  orchestrationActionLabel?: string | null
+  priority: number
+  blockingCode?: string | null
+  blockingReason?: string | null
+  exceptionCount: number
+  sourceImportId?: number | null
+  sourceImportStatus?: string | null
+  reportId?: number | null
+  reportStatus?: string | null
+  recommendationSnapshotId?: number | null
+  recommendationSummary?: string | null
+  recommendationCreatedAt?: string | null
+  portfolioStep?: PortfolioWorkflowStepDto | null
+  ownerUserId?: number | null
+  startedAt: string
+  updatedAt?: string | null
+  reviewedAt?: string | null
+  closedAt?: string | null
+  notes?: string | null
+}
+
+export async function getPortfolioOperations(months = 4) {
+  return request<PortfolioOperationsDto>(`/api/companies/mine/operations?months=${encodeURIComponent(String(months))}`)
+}
+
+export async function getPeriodWorkflows(companyId: number) {
+  return request<PeriodWorkflowDto[]>(`/api/companies/${companyId}/period-workflows`)
+}
+
+export async function getPeriodWorkflow(companyId: number, period: string) {
+  return request<PeriodWorkflowDto>(`/api/companies/${companyId}/period-workflows/${encodeURIComponent(period)}`)
+}
+
+export async function reviewPeriodWorkflow(companyId: number, period: string) {
+  return request<PeriodWorkflowDto>(`/api/companies/${companyId}/period-workflows/${encodeURIComponent(period)}/review`, { method: 'POST' })
+}
+
+export async function closePeriodWorkflow(companyId: number, period: string) {
+  return request<PeriodWorkflowDto>(`/api/companies/${companyId}/period-workflows/${encodeURIComponent(period)}/close`, { method: 'POST' })
+}
+
 export async function getUsers() {
   return request<UserDto[]>('/api/users')
 }
@@ -337,6 +454,83 @@ export async function downloadPowerBiExportZip(companyId: number, from: string, 
 
 export async function getImports(companyId: number) {
   return request<ImportJob[]>(`/api/companies/${companyId}/imports`)
+}
+
+export type PipelineFileStatus = 'PENDING' | 'PROCESSING' | 'DONE' | 'ERROR' | 'SKIPPED' | string
+export type PipelineFileKind = 'TRANSACTIONS' | 'TRIBUNAL' | 'UNIVERSAL' | 'UNKNOWN' | string
+
+export type PipelineFileDto = {
+  id: number
+  companyId: number
+  sourceType: string
+  detectedKind: PipelineFileKind
+  filename: string
+  inboxPath: string
+  archivedPath?: string | null
+  period?: string | null
+  status: PipelineFileStatus
+  statusTitle?: string | null
+  statusDetail?: string | null
+  badgeTone?: 'ok' | 'warn' | 'err' | '' | string
+  actionLabel?: string | null
+  message?: string | null
+  importJobId?: number | null
+  detectedAt: string
+  processedAt?: string | null
+  updatedAt: string
+}
+
+export type PipelineSummaryDto = {
+  generatedAt: string
+  totalFiles: number
+  doneFiles: number
+  errorFiles: number
+  pendingFiles: number
+  processingFiles: number
+  skippedFiles: number
+  lastDetectedAt?: string | null
+  headline?: string | null
+  detail?: string | null
+  badgeTone?: 'ok' | 'warn' | 'err' | '' | string
+  actionLabel?: string | null
+}
+
+export type PipelineScanResultDto = {
+  scannedAt: string
+  discovered: number
+  imported: number
+  failed: number
+  skipped: number
+}
+
+export async function getPipelineFiles(companyId: number) {
+  return request<PipelineFileDto[]>(`/api/companies/${companyId}/pipeline/files`)
+}
+
+export async function getPipelineSummary(companyId: number) {
+  return request<PipelineSummaryDto>(`/api/companies/${companyId}/pipeline/summary`)
+}
+
+export async function scanPipeline(companyId: number) {
+  return request<PipelineScanResultDto>(`/api/companies/${companyId}/pipeline/scan`, { method: 'POST' })
+}
+
+export async function retryPipelineFile(companyId: number, fileId: number) {
+  return request<PipelineFileDto>(`/api/companies/${companyId}/pipeline/files/${fileId}/retry`, { method: 'POST' })
+}
+
+export async function updatePipelineFilePeriod(companyId: number, fileId: number, period: string) {
+  return request<PipelineFileDto>(`/api/companies/${companyId}/pipeline/files/${fileId}/period`, {
+    method: 'POST',
+    body: JSON.stringify({ period })
+  })
+}
+
+export async function updatePipelineFileKind(companyId: number, fileId: number, kind: string) {
+  return request<PipelineFileDto>(`/api/companies/${companyId}/pipeline/files/${fileId}/kind`, {
+    method: 'POST',
+    body: JSON.stringify({ kind })
+  })
 }
 
 export async function uploadImport(companyId: number, period: string, file: File) {
@@ -519,6 +713,11 @@ export type BudgetSummary = {
   totalIncome: number
   totalExpense: number
   totalMargin: number
+  totalCapex?: number | null
+  totalDepreciation?: number | null
+  totalEbit?: number | null
+  financialResult?: number | null
+  netResult?: number | null
   bestMonth?: string | null
   worstMonth?: string | null
 }
@@ -555,12 +754,98 @@ export async function getCashflowSummary(companyId: number) {
   return request<CashflowSummary>(`/api/companies/${companyId}/budget/cashflow`)
 }
 
+export type BudgetComparisonMonth = {
+  monthKey: string
+  monthLabel: string
+  actualPeriod?: string | null
+  hasActual: boolean
+  plannedInflow?: number | null
+  actualInflow?: number | null
+  inflowVariance?: number | null
+  plannedOutflow?: number | null
+  actualOutflow?: number | null
+  outflowVariance?: number | null
+  plannedNet?: number | null
+  actualNet?: number | null
+  netVariance?: number | null
+  plannedEndingBalance?: number | null
+  actualEndingBalance?: number | null
+  endingBalanceVariance?: number | null
+}
+
+export type BudgetComparisonSummary = {
+  comparisonYear?: number | null
+  plannedMonths?: number | null
+  actualMonths?: number | null
+  commonMonths?: number | null
+  assumption?: string | null
+  latestComparedPeriod?: string | null
+  plannedInflowYtd?: number | null
+  actualInflowYtd?: number | null
+  inflowVarianceYtd?: number | null
+  plannedOutflowYtd?: number | null
+  actualOutflowYtd?: number | null
+  outflowVarianceYtd?: number | null
+  plannedNetYtd?: number | null
+  actualNetYtd?: number | null
+  netVarianceYtd?: number | null
+  plannedEndingBalanceLatest?: number | null
+  actualEndingBalanceLatest?: number | null
+  endingBalanceVarianceLatest?: number | null
+  strongestPositiveMonth?: string | null
+  strongestPositiveVariance?: number | null
+  strongestNegativeMonth?: string | null
+  strongestNegativeVariance?: number | null
+}
+
+export type BudgetWorkflowDto = {
+  companyId: number
+  status: string
+  statusTitle: string
+  statusDetail: string
+  statusBadgeTone?: 'ok' | 'warn' | 'err' | '' | string
+  nextActionLabel?: string | null
+  sourceFilename?: string | null
+  sourceCreatedAt?: string | null
+  sourceSheetIndex?: number | null
+  sourceHeaderRow?: number | null
+  sourceAttemptTrend?: string | null
+  sourceAttemptTrendTitle?: string | null
+  sourceAttemptTrendDetail?: string | null
+  sourcePresent: boolean
+  structureValidated: boolean
+  annualInsightsReady: boolean
+  plannedCashflowReady: boolean
+  comparisonReady: boolean
+  plannedMonthsAvailable?: number | null
+  actualMonthsAvailable?: number | null
+  comparisonSummary?: BudgetComparisonSummary | null
+  comparisonMonths: BudgetComparisonMonth[]
+}
+
+export async function getBudgetWorkflow(companyId: number) {
+  return request<BudgetWorkflowDto>(`/api/companies/${companyId}/budget/workflow`)
+}
+
 export type BudgetItemInsight = {
   code?: string | null
   label?: string | null
+  normalizedLabel?: string | null
+  semanticKind?: string | null
+  financialNature?: string | null
+  cashflowNature?: string | null
   annualTotal: number
   zeroMonths: number
   shareAbsPct: number
+  zeroInterpretation?: string | null
+  rowType?: string | null
+  sectionKind?: string | null
+  mappingStatus?: string | null
+  sourceRow?: number | null
+  blockId?: string | null
+  exclusionReason?: string | null
+  canonicalIdentity?: string | null
+  canonicalRowId?: string | null
 }
 
 export type BudgetMonthTotal = {
@@ -572,6 +857,8 @@ export type BudgetMonthTotal = {
 export type BudgetLongInsights = {
   filename?: string | null
   createdAt?: string | null
+  sourceImportId?: number | null
+  analysisVersion?: string | null
   itemCount: number
   totalAbsAnnual: number
   bestMonth?: string | null
@@ -580,19 +867,60 @@ export type BudgetLongInsights = {
   monthTotals: BudgetMonthTotal[]
   topDrivers: BudgetItemInsight[]
   zeroHeavyItems: BudgetItemInsight[]
+  accountingAdjustments: BudgetItemInsight[]
 }
 
 export async function getBudgetLongInsights(companyId: number) {
   return request<BudgetLongInsights>(`/api/companies/${companyId}/budget/long/insights`)
 }
 
-export type BudgetLongRow = {
-  rowType: 'ITEM' | 'TOTAL' | 'TEXT'
-  code?: string | null
-  label?: string | null
+export type BudgetItemDetailMonth = {
   monthKey: string
   monthLabel: string
   amount: number
+}
+
+export type BudgetItemDetail = {
+  sourceImportId?: number | null
+  analysisVersion?: string | null
+  lookupStrategy?: string | null
+  canonicalRowId?: string | null
+  canonicalIdentity?: string | null
+  code?: string | null
+  label?: string | null
+  normalizedLabel?: string | null
+  rowType?: string | null
+  semanticKind?: string | null
+  financialNature?: string | null
+  cashflowNature?: string | null
+  sectionKind?: string | null
+  mappingStatus?: string | null
+  blockId?: string | null
+  aggregationPolicy?: string | null
+  declaredAnnualTotal?: number | null
+  computedAnnualTotal?: number | null
+  sourceRowCount: number
+  sourceRows: number[]
+  reconciliationWarnings: string[]
+  months: BudgetItemDetailMonth[]
+}
+
+export async function getBudgetItemDetail(companyId: number, canonicalRowId: string) {
+  const params = new URLSearchParams({ canonicalRowId })
+  return request<BudgetItemDetail>(`/api/companies/${companyId}/budget/long/detail?${params.toString()}`)
+}
+
+export type BudgetLongRow = {
+  rowType: 'DETAIL' | 'SUBTOTAL' | 'TOTAL' | 'DERIVED_KPI' | 'ASSUMPTION' | 'TEXT'
+  code?: string | null
+  label?: string | null
+  semanticKind?: string | null
+  sectionKind?: string | null
+  monthKey: string
+  monthLabel: string
+  amount: number
+  confidence?: string | null
+  mappingStatus?: string | null
 }
 
 export type BudgetLongPreview = {
@@ -602,6 +930,8 @@ export type BudgetLongPreview = {
   labelHeader: string
   totalRowsProduced: number
   sampleRows: BudgetLongRow[]
+  requiresConfirmation?: boolean
+  mappingNotes?: string[]
 }
 
 export async function getBudgetLongPreview(companyId: number) {
@@ -786,7 +1116,7 @@ export type ImportJob = {
   id: number
   companyId: number
   period: string
-  status: 'PENDING' | 'RUNNING' | 'RETRY' | 'OK' | 'WARNING' | 'ERROR' | 'DEAD'
+  status: 'PENDING' | 'RUNNING' | 'RETRY' | 'BLOCKED' | 'OK' | 'WARNING' | 'ERROR' | 'DEAD'
   createdAt: string
   updatedAt?: string | null
   runAfter?: string | null
@@ -799,6 +1129,16 @@ export type ImportJob = {
   lastError?: string | null
   storageRef?: string | null
   originalFilename?: string | null
+  versionNo?: number | null
+  contentHash?: string | null
+  normalizedHash?: string | null
+  supersedesImportId?: number | null
+  duplicateOfImportId?: number | null
+  blockingCode?: string | null
+  blockingReason?: string | null
+  rowsReceived?: number | null
+  rowsValid?: number | null
+  appliedAt?: string | null
 }
 
 export type ImportQualityIssue = { severity: 'HIGH' | 'MEDIUM' | 'LOW' | string; code: string; title: string; detail: string }
@@ -925,13 +1265,58 @@ export type UniversalImportDto = {
   columnCount: number
 }
 
+export type UniversalIntakeCandidate = {
+  kind: string
+  label: string
+  confidence?: number | null
+  confidenceLabel?: string | null
+  recommendedRoute?: string | null
+  primaryActionLabel?: string | null
+  reasons?: string[]
+}
+
+export type UniversalIntakeDiagnosis = {
+  kind: string
+  label: string
+  confidence?: number | null
+  confidenceLabel?: string | null
+  needsConfirmation?: boolean
+  structureRecognized?: boolean
+  headline?: string | null
+  detail?: string | null
+  recommendedModule?: string | null
+  recommendedRoute?: string | null
+  primaryActionLabel?: string | null
+  canonicalStatus?: string | null
+  canonicalDetail?: string | null
+  reasons?: string[]
+  warnings?: string[]
+  candidates?: UniversalIntakeCandidate[]
+}
+
+export type UniversalSummaryDto = {
+  importId?: number | null
+  filename?: string | null
+  createdAt?: string | null
+  rowCount?: number | null
+  columnCount?: number | null
+  columns?: any[]
+  correlations?: any[]
+  rowGranularity?: string | null
+  detectedEntities?: any[]
+  relationships?: any[]
+  semanticWarnings?: string[]
+  insights?: any[]
+  intakeDiagnosis?: UniversalIntakeDiagnosis | null
+}
+
 export async function listUniversalImports(companyId: number) {
   return request<UniversalImportDto[]>(`/api/companies/${companyId}/universal/imports`)
 }
 
 export async function getUniversalSummaryForImport(companyId: number, importId?: number | null) {
   const qs = importId ? `?importId=${encodeURIComponent(String(importId))}` : ''
-  return request(`/api/companies/${companyId}/universal/summary${qs}`)
+  return request<UniversalSummaryDto | null>(`/api/companies/${companyId}/universal/summary${qs}`)
 }
 
 export async function getUniversalSuggestionsForImport(companyId: number, importId?: number | null) {
@@ -1001,6 +1386,30 @@ export type AdvisorRecommendationSnapshot = {
   actions: AdvisorAction[]
 }
 
+export type AdvisorActionFollowUpStatus = 'PENDING' | 'IN_PROGRESS' | 'RESOLVED' | string
+
+export type AdvisorActionFollowUp = {
+  id: number
+  companyId: number | null
+  recommendationSnapshotId: number | null
+  period: string
+  source: string
+  actionIndex: number | null
+  actionKey: string
+  horizon: string | null
+  priority: string | null
+  title: string
+  detail: string | null
+  kpi: string | null
+  status: AdvisorActionFollowUpStatus
+  carriedOver: boolean
+  originFollowUpId: number | null
+  originPeriod: string | null
+  createdAt: string | null
+  updatedAt: string | null
+  resolvedAt: string | null
+}
+
 export type MacroMetric = {
   label: string
   value: number | null
@@ -1025,6 +1434,11 @@ export async function getLatestRecommendations(companyId: number) {
   return request<AdvisorRecommendationSnapshot>(`/api/companies/${companyId}/recommendations/latest`)
 }
 
+export async function getRecommendationSnapshotByPeriod(companyId: number, period: string, objective?: string) {
+  const q = objective ? `?objective=${encodeURIComponent(objective)}` : ''
+  return request<AdvisorRecommendationSnapshot>(`/api/companies/${companyId}/recommendations/period/${encodeURIComponent(period)}${q}`)
+}
+
 export async function getLatestRecommendationsByObjective(companyId: number, objective?: string) {
   const q = objective ? `?objective=${encodeURIComponent(objective)}` : ''
   return request<AdvisorRecommendationSnapshot>(`/api/companies/${companyId}/recommendations/latest${q}`)
@@ -1044,6 +1458,18 @@ export async function snapshotRecommendations(companyId: number, period: string,
     `/api/companies/${companyId}/recommendations/snapshot/${encodeURIComponent(period)}${q}`,
     { method: 'POST' }
   )
+}
+
+export async function getRecommendationFollowUps(companyId: number, period: string, objective?: string) {
+  const q = objective ? `?objective=${encodeURIComponent(objective)}` : ''
+  return request<AdvisorActionFollowUp[]>(`/api/companies/${companyId}/recommendations/period/${encodeURIComponent(period)}/follow-ups${q}`)
+}
+
+export async function updateRecommendationFollowUpStatus(companyId: number, followUpId: number, status: AdvisorActionFollowUpStatus) {
+  return request<AdvisorActionFollowUp>(`/api/companies/${companyId}/recommendations/follow-ups/${encodeURIComponent(String(followUpId))}/status`, {
+    method: 'POST',
+    body: JSON.stringify({ status })
+  })
 }
 
 export type AutomationJob = {
@@ -1071,6 +1497,11 @@ export async function runRecomputeKpis(companyId: number, monthsBack = 2) {
 export async function runMonthlyReport(companyId: number, period?: string) {
   const q = period ? `?period=${encodeURIComponent(period)}` : ''
   return request(`/api/companies/${companyId}/automation/reports/monthly${q}`, { method: 'POST' })
+}
+
+export async function runPeriodCloseFlow(companyId: number, period?: string) {
+  const resolved = (period || '').trim() || new Date().toISOString().slice(0, 7)
+  return request(`/api/companies/${companyId}/automation/periods/${encodeURIComponent(resolved)}/close-flow`, { method: 'POST' })
 }
 
 export async function runSnapshotRecommendations(companyId: number, period?: string, objective?: string) {
@@ -1125,7 +1556,7 @@ export async function uploadUniversalImport(
     const text = await res.text()
     throw new Error(text || `HTTP ${res.status}`)
   }
-  return res.json()
+  return res.json() as Promise<UniversalSummaryDto>
 }
 
 export type UniversalAutoSuggestion = {
@@ -1184,6 +1615,19 @@ export type UniversalViewDto = {
   sourceImportId?: number | null
   sourceFilename?: string | null
   sourceImportedAt?: string | null
+  aggregationMode?:
+    | 'ROW_COUNT'
+    | 'DISTINCT_ENTRY_COUNT'
+    | 'DISTINCT_DOCUMENT_COUNT'
+    | 'DISTINCT_INVOICE_COUNT'
+    | 'DISTINCT_PARTY_COUNT'
+    | 'SUM_DEBIT'
+    | 'SUM_CREDIT'
+    | 'NET_BALANCE'
+    | 'SUM_AMOUNT'
+    | 'AVG_VALUE'
+    | string
+    | null
 }
 
 export type UniversalViewRequest = {
@@ -1194,6 +1638,17 @@ export type UniversalViewRequest = {
   categoryColumn?: string | null
   xColumn?: string | null
   yColumn?: string | null
+  aggregationMode?:
+    | 'ROW_COUNT'
+    | 'DISTINCT_ENTRY_COUNT'
+    | 'DISTINCT_DOCUMENT_COUNT'
+    | 'DISTINCT_INVOICE_COUNT'
+    | 'DISTINCT_PARTY_COUNT'
+    | 'SUM_DEBIT'
+    | 'SUM_CREDIT'
+    | 'NET_BALANCE'
+    | 'SUM_AMOUNT'
+    | 'AVG_VALUE'
   aggregation?: 'sum' | 'avg'
   filterColumn?: string | null
   filterValue?: string | null
@@ -1251,6 +1706,7 @@ export type UniversalImportAnalysisDto = {
   removedEmptyColumns?: number | null
   convertedFromXlsx?: boolean | null
   xlsx?: UniversalXlsxOptionsDto | null
+  intakeDiagnosis?: UniversalIntakeDiagnosis | null
 }
 
 export type UniversalImportLineageDto = {
@@ -1357,10 +1813,10 @@ export async function getUniversalViewEvidenceForImport(
   return request<UniversalEvidenceDto>(`/api/companies/${companyId}/universal/views/${viewId}/evidence${suffix}`, { method: 'POST' })
 }
 
-export async function generateReport(companyId: number, period: string) {
-  return request(`/api/companies/${companyId}/reports`, {
+export async function generateReport(companyId: number, period: string, universalViewId?: number | null) {
+  return request<ReportDto>(`/api/companies/${companyId}/reports`, {
     method: 'POST',
-    body: JSON.stringify({ period })
+    body: JSON.stringify({ period, universalViewId: universalViewId ?? null })
   })
 }
 
@@ -1385,6 +1841,10 @@ export type ReportDto = {
   format: string
   status: string
   createdAt: string
+  versionNo?: number | null
+  selectedUniversalViewId?: number | null
+  selectedUniversalViewName?: string | null
+  selectedUniversalAggregationMode?: string | null
 }
 
 export async function generateAdvisorReport(companyId: number) {
