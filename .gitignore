@@ -61,3 +61,7 @@ qc
 
 # Local sample inputs
 /samples/incoming/
+
+# Local Codex / scratch
+.codex/
+.tmp_*
