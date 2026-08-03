@@ -1,8 +1,10 @@
 package com.asecon.enterpriseiq.service;
 
+import com.asecon.enterpriseiq.dto.BudgetAnalysisBundleDto;
 import com.asecon.enterpriseiq.dto.BudgetComparisonMonthDto;
 import com.asecon.enterpriseiq.dto.BudgetComparisonSummaryDto;
 import com.asecon.enterpriseiq.dto.BudgetLongInsightsDto;
+import com.asecon.enterpriseiq.dto.BudgetSourceMetaDto;
 import com.asecon.enterpriseiq.dto.BudgetSummaryDto;
 import com.asecon.enterpriseiq.dto.BudgetWorkflowDto;
 import com.asecon.enterpriseiq.dto.CashflowMonthDto;
@@ -17,6 +19,7 @@ import java.io.InputStreamReader;
 import java.io.BufferedReader;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Instant;
 import java.time.Year;
 import java.time.YearMonth;
 import java.util.ArrayList;
@@ -48,6 +51,12 @@ public class BudgetWorkflowService {
     }
 
     public BudgetWorkflowDto getWorkflow(Long companyId) {
+        try {
+            return buildWorkflowFromSnapshot(companyId, budgetService.latestAnalysisSnapshot(companyId));
+        } catch (ResponseStatusException ignored) {
+            // Fall back to lightweight metadata-based workflow.
+        }
+
         List<UniversalImport> latestImports = universalImportFileService.latestList(companyId, 2);
         List<UniversalImport> latestAnnualImports = universalImportFileService.latestAnnualBudgetList(companyId, 2);
         UniversalImport latestImport = latestImports.isEmpty() ? null : latestImports.get(0);
@@ -62,31 +71,7 @@ public class BudgetWorkflowService {
         String cashflowError = null;
         String insightsError = null;
 
-        try {
-            summary = budgetService.latestBudget(companyId);
-        } catch (ResponseStatusException ex) {
-            summaryError = reasonOf(ex, "No se pudo validar la estructura anual.");
-        }
-
-        try {
-            cashflow = budgetService.latestCashflow(companyId);
-        } catch (ResponseStatusException ex) {
-            cashflowError = reasonOf(ex, "No se pudo leer la tesorería prevista.");
-        }
-
-        try {
-            insights = budgetService.latestBudgetLongInsights(companyId);
-        } catch (ResponseStatusException ex) {
-            insightsError = reasonOf(ex, "No se pudo generar la lectura anual.");
-        }
-
         BudgetService.LongBudgetSource annualSource = null;
-        try {
-            annualSource = budgetService.latestLongBudgetSource(companyId);
-        } catch (Exception ignored) {
-            annualSource = null;
-        }
-
         BudgetComparisonBundle comparison = cashflow == null ? null : buildComparison(companyId, cashflow, annualSource);
 
         UniversalImportAnalysisDto latestUploadAnalysis = parseAnalysis(latestImport);
@@ -99,7 +84,10 @@ public class BudgetWorkflowService {
         boolean structureValidated = summary != null;
         boolean annualInsightsReady = insights != null;
         boolean plannedCashflowReady = cashflow != null;
-        boolean comparisonReady = comparison != null && comparison.summary().commonMonths() != null && comparison.summary().commonMonths() > 0;
+        boolean comparisonReady = comparison != null
+            && comparison.summary().commonMonths() != null
+            && comparison.summary().commonMonths() > 0
+            && !"NO_ACTUAL_DATA".equalsIgnoreCase(nonBlank(comparison.summary().actualDataStatus(), ""));
         int plannedMonths = cashflow != null
             ? cashflow.months().size()
             : summary != null ? summary.months().size() : 0;
@@ -108,7 +96,7 @@ public class BudgetWorkflowService {
         UniversalImportAnalysisDto sourceAnalysis = parseAnalysis(officialSourceImport);
         Integer sourceSheetIndex = sourceAnalysis == null || sourceAnalysis.xlsx() == null ? null : sourceAnalysis.xlsx().sheetIndex();
         Integer sourceHeaderRow = sourceAnalysis == null || sourceAnalysis.xlsx() == null ? null : sourceAnalysis.xlsx().headerRow1Based();
-        AttemptTrend sourceTrend = compareAttempts(companyId, latestAnnualImport != null ? latestAnnualImport : latestImport, latestAnnualImport != null ? previousAnnualImport : previousImport);
+        AttemptTrend sourceTrend = new AttemptTrend(null, null, null);
 
         String status;
         String title;
@@ -129,40 +117,40 @@ public class BudgetWorkflowService {
             } else {
             status = "MISSING_SOURCE";
             title = "Presupuesto anual pendiente";
-            detail = "Todavía no hay un XLSX anual cargado en Universal para esta empresa.";
+            detail = "Todavia no hay un XLSX anual cargado en Universal para esta empresa.";
             badgeTone = "warn";
             nextAction = "Subir presupuesto";
             }
         } else if (!structureValidated) {
             status = "NEEDS_VALIDATION";
             title = "Estructura anual pendiente de validar";
-            detail = nonBlank(summaryError, "Hay un fichero cargado, pero no se ha podido convertir en una lectura anual fiable.");
+            detail = "El fichero anual esta cargado, pero todavia no se ha podido convertir en una lectura fiable. Revisa hoja y cabecera desde el analisis tecnico.";
             badgeTone = "err";
             nextAction = "Corregir carga";
         } else if (!annualInsightsReady) {
             status = "READY_FOR_READING";
             title = "Presupuesto detectado, falta lectura anual";
-            detail = nonBlank(insightsError, "La estructura mínima ya existe, pero todavía no hay lectura anual consultiva preparada.");
+            detail = "La estructura minima ya existe, pero todavia falta cerrar la lectura consultiva del plan anual.";
             badgeTone = "warn";
             nextAction = "Generar lectura";
         } else if (!plannedCashflowReady) {
             status = "ANNUAL_READING_READY";
             title = "Lectura anual lista";
-            detail = nonBlank(cashflowError, "Ya existe lectura anual, pero la tesorería prevista no está disponible para comparar contra el real.");
+            detail = "La lectura anual ya esta lista, pero todavia falta una tesoreria prevista fiable para completar el flujo.";
             badgeTone = "warn";
-            nextAction = "Revisar tesorería";
+            nextAction = "Revisar tesoreria";
         } else if (!comparisonReady) {
             status = "WAITING_ACTUALS";
             title = "Plan anual listo, falta contraste con el real";
             detail = actualMonths > 0
-                ? "Hay meses reales cargados, pero todavía no se solapan suficientemente con el presupuesto para una comparación útil."
-                : "El presupuesto anual ya está leído. En cuanto entren KPIs reales del ejercicio, se abrirá la comparativa.";
+                ? "Hay meses reales cargados, pero todavia no se solapan suficientemente con el presupuesto para una comparacion util."
+                : "El presupuesto anual ya esta leido. En cuanto entren KPIs reales del ejercicio, se abrira la comparativa.";
             badgeTone = "warn";
             nextAction = "Cargar meses reales";
         } else {
             status = "COMPARISON_READY";
             title = "Comparativa real vs presupuesto activa";
-            detail = "El flujo anual ya puede leerse como planificación más contraste contra los meses reales disponibles.";
+            detail = "El flujo anual ya puede leerse como planificacion mas contraste contra los meses reales disponibles.";
             badgeTone = "ok";
             nextAction = "Descargar informe anual";
         }
@@ -193,12 +181,243 @@ public class BudgetWorkflowService {
         );
     }
 
+    public BudgetAnalysisBundleDto getAnalysisBundle(Long companyId) {
+        BudgetService.BudgetAnalysisSnapshot snapshot = null;
+        BudgetWorkflowDto workflow;
+        try {
+            snapshot = budgetService.latestAnalysisSnapshot(companyId);
+            workflow = buildWorkflowFromSnapshot(companyId, snapshot);
+        } catch (ResponseStatusException ex) {
+            workflow = getWorkflow(companyId);
+        }
+
+        BudgetAnalysisBundleDto bundle = new BudgetAnalysisBundleDto(
+            companyId,
+            snapshot == null || snapshot.meta() == null ? null : snapshot.meta().sourceImportId(),
+            null,
+            snapshot == null || snapshot.meta() == null ? null : snapshot.meta().sourceImportId(),
+            snapshot == null || snapshot.meta() == null ? null : snapshot.meta().analysisVersion(),
+            Instant.now(),
+            workflow.comparisonSummary() == null ? null : workflow.comparisonSummary().actualDataStatus(),
+            snapshot == null || snapshot.meta() == null ? workflow.sourceFilename() : snapshot.meta().sourceFilename(),
+            snapshot == null || snapshot.meta() == null ? null : snapshot.meta().sourceType(),
+            snapshot == null || snapshot.meta() == null ? workflow.sourceCreatedAt() : snapshot.meta().sourceCreatedAt(),
+            snapshot == null || snapshot.meta() == null ? workflow.sourceSheetIndex() : snapshot.meta().sourceSheetIndex(),
+            snapshot == null || snapshot.meta() == null ? null : snapshot.meta().sourceSheetName(),
+            snapshot == null || snapshot.meta() == null ? workflow.sourceHeaderRow() : snapshot.meta().sourceHeaderRow(),
+            snapshot == null || snapshot.meta() == null ? null : snapshot.meta().sourceHeaderLabel(),
+            workflow,
+            snapshot == null ? null : snapshot.summary(),
+            snapshot == null ? null : snapshot.cashflow(),
+            snapshot == null ? null : snapshot.longInsights()
+        );
+        validateAnalysisBundle(bundle);
+        return bundle;
+    }
+
     private UniversalImportAnalysisDto parseAnalysis(UniversalImport latestImport) {
         if (latestImport == null || latestImport.getAnalysisJson() == null || latestImport.getAnalysisJson().isBlank()) return null;
         try {
             return objectMapper.readValue(latestImport.getAnalysisJson(), UniversalImportAnalysisDto.class);
         } catch (Exception ignored) {
             return null;
+        }
+    }
+
+    private BudgetWorkflowDto buildWorkflowFromSnapshot(Long companyId, BudgetService.BudgetAnalysisSnapshot snapshot) {
+        BudgetSourceMetaDto meta = snapshot.meta();
+        BudgetSummaryDto summary = snapshot.summary();
+        CashflowSummaryDto cashflow = snapshot.cashflow();
+        BudgetLongInsightsDto insights = snapshot.longInsights();
+
+        boolean sourcePresent = meta != null || summary != null || cashflow != null || insights != null;
+        boolean structureValidated = summary != null;
+        boolean annualInsightsReady = insights != null;
+        boolean plannedCashflowReady = cashflow != null;
+        int plannedMonths = meta != null && meta.plannedMonthsAvailable() != null
+            ? meta.plannedMonthsAvailable()
+            : cashflow != null ? cashflow.months().size()
+            : summary != null ? summary.months().size()
+            : 0;
+
+        BudgetComparisonBundle comparison = buildPlanOnlyComparison(cashflow, summary, plannedMonths);
+        BudgetComparisonSummaryDto comparisonSummary = comparison == null ? null : comparison.summary();
+        List<BudgetComparisonMonthDto> comparisonMonths = comparison == null ? List.of() : comparison.months();
+        int actualMonths = comparisonSummary == null || comparisonSummary.actualMonths() == null ? 0 : comparisonSummary.actualMonths();
+        boolean comparisonReady = comparisonSummary != null
+            && comparisonSummary.commonMonths() != null
+            && comparisonSummary.commonMonths() > 0
+            && !"NO_ACTUAL_DATA".equalsIgnoreCase(nonBlank(comparisonSummary.actualDataStatus(), ""));
+
+        String status;
+        String title;
+        String detail;
+        String badgeTone;
+        String nextAction;
+
+        if (!sourcePresent) {
+            status = "MISSING_SOURCE";
+            title = "Presupuesto anual pendiente";
+            detail = "Todavia no hay un fichero anual valido cargado para esta empresa.";
+            badgeTone = "warn";
+            nextAction = "Subir presupuesto";
+        } else if (!structureValidated) {
+            status = "NEEDS_VALIDATION";
+            title = "Estructura anual pendiente de validar";
+            detail = "Hay un fichero anual cargado, pero aun no deja una lectura fiable.";
+            badgeTone = "err";
+            nextAction = "Corregir carga";
+        } else if (!annualInsightsReady) {
+            status = "READY_FOR_READING";
+            title = "Presupuesto detectado, falta lectura anual";
+            detail = "La estructura ya existe, pero aun falta generar la lectura tecnica anual.";
+            badgeTone = "warn";
+            nextAction = "Abrir analisis tecnico";
+        } else if (!plannedCashflowReady) {
+            status = "ANNUAL_READING_READY";
+            title = "Lectura anual lista";
+            detail = "Ya existe lectura anual, pero todavia no hay tesoreria prevista disponible.";
+            badgeTone = "warn";
+            nextAction = "Revisar tesoreria";
+        } else if (!comparisonReady) {
+            status = "WAITING_ACTUALS";
+            title = "Plan anual listo, falta contraste con el real";
+            detail = "El plan anual ya esta interpretado. Cuando entren datos reales del mismo ejercicio se abrira la comparativa.";
+            badgeTone = "warn";
+            nextAction = "Cargar meses reales";
+        } else {
+            status = "COMPARISON_READY";
+            title = "Comparativa real vs presupuesto activa";
+            detail = "El flujo anual ya esta listo para contrastar plan y real.";
+            badgeTone = "ok";
+            nextAction = "Descargar informe anual";
+        }
+
+        return new BudgetWorkflowDto(
+            companyId,
+            status,
+            title,
+            detail,
+            badgeTone,
+            nextAction,
+            meta == null ? null : meta.sourceFilename(),
+            meta == null ? null : meta.sourceCreatedAt(),
+            meta == null ? null : meta.sourceSheetIndex(),
+            meta == null ? null : meta.sourceHeaderRow(),
+            null,
+            null,
+            null,
+            sourcePresent,
+            structureValidated,
+            annualInsightsReady,
+            plannedCashflowReady,
+            comparisonReady,
+            plannedMonths,
+            actualMonths,
+            comparisonSummary,
+            comparisonMonths
+        );
+    }
+
+    private BudgetComparisonBundle buildPlanOnlyComparison(CashflowSummaryDto cashflow, BudgetSummaryDto summary, int plannedMonths) {
+        if (cashflow == null && summary == null) {
+            return null;
+        }
+
+        List<BudgetComparisonMonthDto> months = new ArrayList<>();
+        if (cashflow != null && cashflow.months() != null && !cashflow.months().isEmpty()) {
+            for (CashflowMonthDto planned : cashflow.months()) {
+                months.add(new BudgetComparisonMonthDto(
+                    planned.monthKey(),
+                    planned.label(),
+                    null,
+                    false,
+                    "NO_ACTUAL_DATA",
+                    scale(planned.inflow()),
+                    null,
+                    null,
+                    scale(planned.outflow()),
+                    null,
+                    null,
+                    scale(planned.net()),
+                    null,
+                    null,
+                    scale(planned.endingBalance()),
+                    null,
+                    null
+                ));
+            }
+        } else if (summary != null && summary.months() != null) {
+            summary.months().forEach(month -> months.add(new BudgetComparisonMonthDto(
+                month.monthKey(),
+                month.label(),
+                null,
+                false,
+                "NO_ACTUAL_DATA",
+                scale(month.income()),
+                null,
+                null,
+                scale(month.expense()),
+                null,
+                null,
+                scale(month.margin()),
+                null,
+                null,
+                null,
+                null,
+                null
+            )));
+        }
+
+        int resolvedPlannedMonths = plannedMonths > 0 ? plannedMonths : months.size();
+        return new BudgetComparisonBundle(
+            new BudgetComparisonSummaryDto(
+                null,
+                resolvedPlannedMonths,
+                0,
+                0,
+                "NO_ACTUAL_DATA",
+                "Todavia no hay datos reales vinculados a esta lectura anual.",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                scale(cashflow == null ? null : cashflow.endingBalance()),
+                null,
+                null,
+                null,
+                null,
+                null,
+                null
+            ),
+            months
+        );
+    }
+
+    private void validateAnalysisBundle(BudgetAnalysisBundleDto bundle) {
+        if (bundle == null || bundle.workflow() == null || bundle.workflow().comparisonSummary() == null) {
+            return;
+        }
+        BudgetComparisonSummaryDto summary = bundle.workflow().comparisonSummary();
+        if (bundle.actualImportId() == null) {
+            if (summary.commonMonths() != null && summary.commonMonths() > 0) {
+                throw new IllegalStateException("Budget analysis bundle incoherente: plan-only no puede exponer commonMonths > 0.");
+            }
+            if (bundle.workflow().actualMonthsAvailable() != null && bundle.workflow().actualMonthsAvailable() > 0) {
+                throw new IllegalStateException("Budget analysis bundle incoherente: plan-only no puede exponer actualMonthsAvailable > 0.");
+            }
+            if (bundle.workflow().comparisonReady()) {
+                throw new IllegalStateException("Budget analysis bundle incoherente: plan-only no puede marcar comparisonReady.");
+            }
+            if (!"NO_ACTUAL_DATA".equalsIgnoreCase(nonBlank(summary.actualDataStatus(), ""))) {
+                throw new IllegalStateException("Budget analysis bundle incoherente: plan-only debe quedar en NO_ACTUAL_DATA.");
+            }
         }
     }
 
@@ -352,6 +571,7 @@ public class BudgetWorkflowService {
                 planned.label(),
                 period,
                 hasActual,
+                hasActual ? "ACTUAL_DATA" : "NO_ACTUAL_DATA",
                 plannedInflow,
                 actualInflow,
                 inflowVariance,
@@ -372,6 +592,7 @@ public class BudgetWorkflowService {
             cashflow.months().size(),
             actualMonths,
             commonMonths,
+            commonMonths > 0 ? "ACTUAL_DATA" : "NO_ACTUAL_DATA",
             "Comparativa alineada al último año real detectado en KPIs: " + comparisonYear + ". Si el presupuesto pertenece a otro ejercicio, carga el real del mismo año o ajusta el periodo de trabajo.",
             latestComparedPeriod,
             scale(plannedInflowYtd),
@@ -436,9 +657,6 @@ public class BudgetWorkflowService {
         int commonMonths = 0;
         int forecastMonths = 0;
 
-        BigDecimal rollingObservedBalance = BigDecimal.ZERO;
-        boolean rollingObservedActive = false;
-
         for (CashflowMonthDto planned : cashflow.months()) {
             int monthNumber = toMonthNumber(planned.monthKey());
             String period = monthNumber > 0 ? comparisonYear + "-" + String.format(Locale.ROOT, "%02d", monthNumber) : null;
@@ -463,7 +681,7 @@ public class BudgetWorkflowService {
             boolean hasKpiActual = kpiActual != null;
             boolean hasCsvActual = csvActualInflow != null || csvActualOutflow != null;
             boolean hasCsvForecast = csvForecastInflow != null || csvForecastOutflow != null;
-            boolean hasObservedValue = hasKpiActual || hasCsvActual || hasCsvForecast;
+            boolean hasObservedValue = hasKpiActual || hasCsvActual;
 
             BigDecimal actualInflow;
             BigDecimal actualOutflow;
@@ -477,21 +695,17 @@ public class BudgetWorkflowService {
             } else if (hasCsvActual) {
                 actualInflow = zero(csvActualInflow);
                 actualOutflow = zero(csvActualOutflow);
-                rollingObservedBalance = rollingObservedBalance.add(actualInflow.subtract(actualOutflow));
-                rollingObservedActive = true;
-                actualEndingBalance = scale(rollingObservedBalance);
+                actualEndingBalance = null;
                 actualMonths++;
             } else if (hasCsvForecast) {
-                actualInflow = zero(csvForecastInflow);
-                actualOutflow = zero(csvForecastOutflow);
-                rollingObservedBalance = rollingObservedBalance.add(actualInflow.subtract(actualOutflow));
-                rollingObservedActive = true;
-                actualEndingBalance = scale(rollingObservedBalance);
+                actualInflow = null;
+                actualOutflow = null;
+                actualEndingBalance = null;
                 forecastMonths++;
             } else {
                 actualInflow = null;
                 actualOutflow = null;
-                actualEndingBalance = rollingObservedActive ? scale(rollingObservedBalance) : null;
+                actualEndingBalance = null;
             }
 
             BigDecimal actualNet = actualInflow == null || actualOutflow == null ? null : scale(actualInflow.subtract(actualOutflow));
@@ -528,6 +742,7 @@ public class BudgetWorkflowService {
                 planned.label(),
                 period,
                 hasObservedValue,
+                hasObservedValue ? "ACTUAL_DATA" : "NO_ACTUAL_DATA",
                 plannedInflow,
                 actualInflow,
                 inflowVariance,
@@ -546,8 +761,9 @@ public class BudgetWorkflowService {
         BudgetComparisonSummaryDto summary = new BudgetComparisonSummaryDto(
             comparisonYear,
             cashflow.months().size(),
-            actualMonths + forecastMonths,
+            actualMonths,
             commonMonths,
+            commonMonths > 0 ? "ACTUAL_DATA" : "NO_ACTUAL_DATA",
             buildComparisonAssumption(comparisonYear, actualMonths, forecastMonths),
             latestComparedPeriod,
             scale(plannedInflowYtd),
@@ -581,7 +797,7 @@ public class BudgetWorkflowService {
 
     private static String buildComparisonAssumption(int comparisonYear, int actualMonths, int forecastMonths) {
         if (forecastMonths > 0 && actualMonths > 0) {
-            return "Comparativa anual " + comparisonYear + ": meses cerrados con real detectado y meses abiertos apoyados en forecast del propio plan.";
+            return "Comparativa anual " + comparisonYear + ": todavía no hay suficiente real externo y la lectura se apoya en forecast del propio plan.";
         }
         if (forecastMonths > 0) {
             return "Comparativa anual " + comparisonYear + ": todavía no hay suficiente real externo y la lectura se apoya en forecast del propio plan.";
@@ -636,3 +852,4 @@ public class BudgetWorkflowService {
 
     private record BudgetComparisonBundle(BudgetComparisonSummaryDto summary, List<BudgetComparisonMonthDto> months) {}
 }
+

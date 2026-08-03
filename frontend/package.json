@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:budget-cash-chart": "node scripts/test-budget-cash-chart.mjs",
+    "test:budget-flow": "node scripts/validate-budget-flow.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.56.0",

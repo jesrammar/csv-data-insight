@@ -7,10 +7,42 @@ const dateTimeEs = new Intl.DateTimeFormat('es-ES', {
   minute: '2-digit'
 })
 
-export const EMPTY_VALUE = '‚Äî'
+export const EMPTY_VALUE = 'ó'
 export const EMPTY_DATA_TEXT = 'Sin datos'
 export const EMPTY_MESSAGE_TEXT = 'Sin mensaje'
-export const EMPTY_ACTIVITY_TEXT = 'Sin actividad todav√≠a'
+export const EMPTY_ACTIVITY_TEXT = 'Sin actividad todavÌa'
+
+export function normalizeText(value: unknown, fallback = EMPTY_VALUE) {
+  const raw = String(value ?? '').trim()
+  if (!raw) return fallback
+
+  let candidate = raw
+  try {
+    const parsed = JSON.parse(raw)
+    if (typeof parsed === 'string' && parsed.trim()) candidate = parsed.trim()
+  } catch {
+    // preserve raw text
+  }
+
+  return candidate
+    .replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(Number.parseInt(hex, 16)))
+    .replace(/√°/g, '·')
+    .replace(/√©/g, 'È')
+    .replace(/√≠/g, 'Ì')
+    .replace(/√≥/g, 'Û')
+    .replace(/√∫/g, '˙')
+    .replace(/√Å/g, '¡')
+    .replace(/√â/g, '…')
+    .replace(/√ç/g, 'Õ')
+    .replace(/√ì/g, '”')
+    .replace(/√ö/g, '⁄')
+    .replace(/√±/g, 'Ò')
+    .replace(/√ë/g, '—')
+    .replace(/¬ø/g, 'ø')
+    .replace(/¬°/g, '°')
+    .replace(/¬∑/g, '∑')
+    .replace(/¬/g, '')
+}
 
 export function formatMoney(value: unknown) {
   const n = typeof value === 'string' && value.trim() === '' ? NaN : Number(value)
@@ -32,7 +64,6 @@ export function formatDateTime(value: unknown, fallback = EMPTY_VALUE) {
 }
 
 export function formatText(value: unknown, fallback = EMPTY_VALUE) {
-  const text = String(value ?? '').trim()
+  const text = normalizeText(value, '').trim()
   return text || fallback
 }
-

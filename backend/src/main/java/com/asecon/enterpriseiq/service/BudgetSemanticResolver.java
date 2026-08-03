@@ -36,16 +36,43 @@ public final class BudgetSemanticResolver {
     private static final Set<String> TEXT_CONCEPTS = Set.of("CONCEPT_CODE", "CONCEPT_NAME", "COST_CENTER", "DEPARTMENT", "CURRENCY");
     private static final List<String> ROW_SEMANTIC_CONCEPTS = List.of(
         "REVENUE",
+        "OTHER_OPERATING_INCOME",
         "OPEX",
+        "OPERATING_ADJUSTMENT",
         "CAPEX",
         "DEPRECIATION_AMORTIZATION",
         "CASH_INFLOW",
         "CASH_OUTFLOW",
         "FINANCING",
+        "FINANCIAL_RESULT",
         "OPENING_BALANCE",
         "CLOSING_BALANCE",
         "TAX",
         "ASSUMPTION"
+    );
+    private static final Map<String, String> EXPLICIT_NATURE_VALUES = Map.ofEntries(
+        Map.entry("revenue", "REVENUE"),
+        Map.entry("other operating income", "OTHER_OPERATING_INCOME"),
+        Map.entry("subtotal revenue", "REVENUE"),
+        Map.entry("opex", "OPEX"),
+        Map.entry("subtotal opex", "OPEX"),
+        Map.entry("operating adjustment", "OPERATING_ADJUSTMENT"),
+        Map.entry("inventory variation", "OPERATING_ADJUSTMENT"),
+        Map.entry("depreciation amortization", "DEPRECIATION_AMORTIZATION"),
+        Map.entry("depreciation", "DEPRECIATION_AMORTIZATION"),
+        Map.entry("financial result", "FINANCIAL_RESULT"),
+        Map.entry("financial expense", "FINANCING"),
+        Map.entry("financial income", "FINANCING"),
+        Map.entry("capex", "CAPEX"),
+        Map.entry("cashflow inflow", "CASH_INFLOW"),
+        Map.entry("cashflow outflow", "CASH_OUTFLOW"),
+        Map.entry("cashflow tax", "TAX"),
+        Map.entry("opening balance", "OPENING_BALANCE"),
+        Map.entry("closing balance", "CLOSING_BALANCE"),
+        Map.entry("financing inflow", "FINANCING"),
+        Map.entry("financing outflow", "FINANCING"),
+        Map.entry("derived kpi", "FINANCIAL_RESULT"),
+        Map.entry("total net result", "FINANCIAL_RESULT")
     );
     private static final Set<String> CATEGORY_HEADER_ALIASES = Set.of(
         "tipo", "tipo partida", "tipo registro", "categoria", "subcategoria", "naturaleza", "line type", "category", "record type", "nature"
@@ -171,6 +198,10 @@ public final class BudgetSemanticResolver {
     }
 
     public static NatureInference classifyRowSemantic(String clientKey, String... values) {
+        NatureInference explicit = detectExplicitNature(values);
+        if (explicit != null) {
+            return explicit;
+        }
         Map<String, Double> scores = new LinkedHashMap<>();
         List<String> reasons = new ArrayList<>();
         for (String concept : ROW_SEMANTIC_CONCEPTS) {
@@ -258,7 +289,11 @@ public final class BudgetSemanticResolver {
             || normalized.startsWith("jan") || normalized.startsWith("apr")
             || normalized.startsWith("aug") || normalized.startsWith("dec")
             || normalized.matches("^(19|20)\\d{2}\\s?[\\-/]?\\s?(0?[1-9]|1[0-2])$")
-            || normalized.matches("^(0?[1-9]|1[0-2])\\s?[\\-/]?\\s?(19|20)\\d{2}$");
+            || normalized.matches("^(0?[1-9]|1[0-2])\\s?[\\-/]?\\s?(19|20)\\d{2}$")
+            || normalized.matches("^(19|20)\\d{2}[\\-/](0?[1-9]|1[0-2])[\\-/](0?[1-9]|[12]\\d|3[01])$")
+            || normalized.matches("^(0?[1-9]|[12]\\d|3[01])[\\-/](0?[1-9]|1[0-2])[\\-/](19|20)\\d{2}$")
+            || normalized.matches("^(19|20)\\d{2}\\s+(0?[1-9]|1[0-2])\\s+(0?[1-9]|[12]\\d|3[01])$")
+            || normalized.matches("^(0?[1-9]|[12]\\d|3[01])\\s+(0?[1-9]|1[0-2])\\s+(19|20)\\d{2}$");
     }
 
     public static boolean looksLikeMonthNumber(String raw) {
@@ -374,6 +409,11 @@ public final class BudgetSemanticResolver {
     private static double semanticRuleBoost(String concept, String normalized) {
         if (normalized == null || normalized.isBlank()) return 0d;
         return switch (concept) {
+            case "OTHER_OPERATING_INCOME" -> containsAll(normalized, "operating", "income")
+                || containsAll(normalized, "ingreso", "operativo")
+                || containsAll(normalized, "ingreso", "explotacion")
+                    ? 0.95d
+                    : 0d;
             case "OPENING_BALANCE" -> containsAll(normalized, "saldo", "inicial")
                 || containsAll(normalized, "opening", "balance")
                 || containsAll(normalized, "cash", "opening")
@@ -417,6 +457,11 @@ public final class BudgetSemanticResolver {
                         ? 0.98d
                         : 0.86d)
                     : 0d;
+            case "FINANCIAL_RESULT" -> containsAll(normalized, "resultado", "financ")
+                || containsAll(normalized, "financial", "result")
+                || containsAll(normalized, "net", "finance")
+                    ? 0.98d
+                    : 0d;
             case "TAX" -> normalized.contains("impuesto")
                 || normalized.contains("iva")
                 || normalized.contains("tax")
@@ -429,6 +474,11 @@ public final class BudgetSemanticResolver {
                 || normalized.contains("mercaderia")
                 || normalized.contains("materia prima")
                     ? 0.94d
+                    : 0d;
+            case "OPERATING_ADJUSTMENT" -> containsAll(normalized, "variacion", "existencias")
+                || containsAll(normalized, "variation", "inventory")
+                || containsAll(normalized, "change", "inventory")
+                    ? 0.96d
                     : 0d;
             case "CAPEX" -> normalized.contains("amortizacion")
                 || normalized.contains("depreciation")
@@ -502,6 +552,19 @@ public final class BudgetSemanticResolver {
             if (!"UNKNOWN".equals(inference.concept()) && inference.score() >= 0.55d) hits++;
         }
         return total == 0 ? 0d : hits / (double) total;
+    }
+
+    private static NatureInference detectExplicitNature(String... values) {
+        if (values == null) return null;
+        for (String value : values) {
+            String normalized = normalize(value);
+            if (normalized.isBlank()) continue;
+            String concept = EXPLICIT_NATURE_VALUES.get(normalized);
+            if (concept != null) {
+                return new NatureInference(concept, 0.99d, "HIGH", false, List.of("clasificado por naturaleza explicita de origen"));
+            }
+        }
+        return null;
     }
 
     private static double tokenOverlapScore(String normalizedHeader, Collection<String> aliases) {

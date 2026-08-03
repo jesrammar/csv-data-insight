@@ -10,29 +10,45 @@
 </head>
 <body>
   <section class="cover page-break-after">
-    <div class="cover-topline">EnterpriseIQ</div>
-    <div class="cover-title">Plan anual</div>
-    <div class="cover-subtitle">Lectura ejecutiva para validar si el plan aguanta, donde se desvía y que revisar primero.</div>
+    <table class="cover-layout">
+      <tr>
+        <td class="cover-copy">
+          <div class="cover-topline">EnterpriseIQ</div>
+          <div class="cover-title">Plan anual</div>
+          <div class="cover-subtitle">Analisis ejecutivo del presupuesto y la tesoreria.</div>
 
-    <div class="cover-meta-grid">
-      <div class="meta-card">
-        <div class="meta-label">Empresa</div>
-        <div class="meta-value">{{COMPANY_NAME}}</div>
-      </div>
-      <div class="meta-card">
-        <div class="meta-label">Fuente</div>
-        <div class="meta-value">{{SOURCE_FILENAME}}</div>
-      </div>
-      <div class="meta-card">
-        <div class="meta-label">Generado</div>
-        <div class="meta-value">{{GENERATED_AT}}</div>
-      </div>
-    </div>
+          <div class="cover-summary-card">
+            <table class="cover-meta-table">
+              <tr>
+                <td class="cover-meta-cell">
+                  <div class="meta-label">Empresa</div>
+                  <div class="meta-value">{{COMPANY_NAME}}</div>
+                </td>
+                <td class="cover-meta-cell">
+                  <div class="meta-label">Generado</div>
+                  <div class="meta-value">{{GENERATED_AT}}</div>
+                </td>
+              </tr>
+              <tr>
+                <td class="cover-meta-cell cover-meta-cell-wide" colspan="2">
+                  <div class="meta-label">Fuente</div>
+                  <div class="meta-value meta-value-file">{{SOURCE_FILENAME}}</div>
+                </td>
+              </tr>
+            </table>
+          </div>
+        </td>
+        <td class="cover-visual">
+          <div class="cover-image-shell">
+            <img class="cover-image" src="{{BRAND_IMAGE_SRC}}" alt="EnterpriseIQ" />
+          </div>
+        </td>
+      </tr>
+    </table>
 
-    <div class="pill-row">
-      <span class="pill">Ingresos {{TOTAL_INCOME}}</span>
-      <span class="pill">Gastos {{TOTAL_EXPENSE}}</span>
-      <span class="pill">EBITDA {{TOTAL_MARGIN}}</span>
+    <div class="cover-kpi-panel">
+      <div class="cover-kicker">Lectura ejecutiva</div>
+      {{COVER_KPI_HTML}}
     </div>
   </section>
 

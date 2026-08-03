@@ -4,18 +4,12 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   downloadBudgetReportPdf,
-  getBudgetLongInsights,
-  getBudgetSummary,
-  getBudgetWorkflow,
-  getUniversalLineage,
-  listUniversalImports,
+  getBudgetAnalysis,
   type BudgetComparisonMonth,
+  type BudgetAnalysisBundle,
   type BudgetLongInsights,
   type BudgetSummary,
   type BudgetWorkflowDto,
-  type UniversalImportDto,
-  type UniversalImportLineageDto,
-  type UniversalIntakeDiagnosis
 } from '../api'
 import { useCompanySelection } from '../hooks/useCompany'
 import PageHeader from '../components/ui/PageHeader'
@@ -23,10 +17,18 @@ import Alert from '../components/ui/Alert'
 import Button from '../components/ui/Button'
 import Section from '../components/ui/Section'
 import EChart from '../components/charts/EChart'
-import { EMPTY_DATA_TEXT, formatDateTime, formatMoney } from '../utils/format'
+import { EMPTY_DATA_TEXT, formatDateTime, formatMoney, formatText, normalizeText } from '../utils/format'
 import { useToast } from '../components/ui/ToastProvider'
-import { intakeDetail, intakeDisplayLabel, intakeKind, isAnnualBudgetDiagnosis } from '../utils/intakeDiagnosis'
 import { setWorkPeriod } from '../utils/workPeriod'
+
+function isGoldPlan(planRaw?: string | null) {
+  const normalized = String(planRaw || '')
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, '')
+    .replace(/[._]/g, '-')
+  return normalized === 'GOLD' || normalized === 'PLATINUM' || normalized.startsWith('GOLD-') || normalized.startsWith('PLATINUM-')
+}
 
 function fmtDeltaMoney(value?: number | null) {
   if (value == null || Number.isNaN(Number(value))) return EMPTY_DATA_TEXT
@@ -145,72 +147,33 @@ export default function AnnualPlanningPage() {
   const queryClient = useQueryClient()
   const [downloading, setDownloading] = useState(false)
 
-  const hasGold = plan === 'GOLD' || plan === 'PLATINUM'
+  const hasGold = isGoldPlan(plan)
   const cameFromAnnualUpload = new URLSearchParams(location.search).get('source') === 'upload'
 
   useEffect(() => {
     if (!cameFromAnnualUpload || !companyId || !hasGold) return
-    queryClient.invalidateQueries({ queryKey: ['budget-workflow', companyId] })
-    queryClient.invalidateQueries({ queryKey: ['budget-summary-workflow', companyId] })
-    queryClient.invalidateQueries({ queryKey: ['budget-insights-workflow', companyId] })
-    queryClient.invalidateQueries({ queryKey: ['universal-imports', companyId] })
-    queryClient.invalidateQueries({ queryKey: ['universal-lineage-latest', companyId] })
+    queryClient.invalidateQueries({ queryKey: ['budget-analysis', companyId] })
   }, [cameFromAnnualUpload, companyId, hasGold, queryClient])
 
-  const { data: workflowData, error: workflowError } = useQuery({
-    queryKey: ['budget-workflow', companyId],
-    queryFn: () => getBudgetWorkflow(companyId as number),
+  const { data: analysisData, error: workflowError, isPending: analysisPending, isFetching: analysisFetching } = useQuery({
+    queryKey: ['budget-analysis', companyId],
+    queryFn: () => getBudgetAnalysis(companyId as number),
     enabled: !!companyId && hasGold,
     refetchOnMount: 'always'
   })
+  const analysisLoading = !!companyId && hasGold && (analysisPending || analysisFetching) && !analysisData && !workflowError
 
-  const { data: summaryData } = useQuery({
-    queryKey: ['budget-summary-workflow', companyId],
-    queryFn: () => getBudgetSummary(companyId as number),
-    enabled: !!companyId && hasGold,
-    refetchOnMount: 'always'
-  })
+  const analysis = analysisData as BudgetAnalysisBundle | undefined
+  const workflow = analysis?.workflow as BudgetWorkflowDto | undefined
+  const summary = (analysis?.summary || undefined) as BudgetSummary | undefined
+  const insights = (analysis?.insights || undefined) as BudgetLongInsights | undefined
 
-  const { data: insightsData } = useQuery({
-    queryKey: ['budget-insights-workflow', companyId],
-    queryFn: () => getBudgetLongInsights(companyId as number),
-    enabled: !!companyId && hasGold,
-    refetchOnMount: 'always'
-  })
+  const sourceFilename = normalizeText(analysis?.sourceFilename || workflow?.sourceFilename || summary?.sourceFilename || '', '')
+  const sourceCreatedAt = analysis?.sourceCreatedAt || workflow?.sourceCreatedAt || summary?.sourceCreatedAt || null
+  const sourceSheetIndex = analysis?.sourceSheetIndex ?? workflow?.sourceSheetIndex ?? null
+  const sourceHeaderRow = analysis?.sourceHeaderRow ?? workflow?.sourceHeaderRow ?? null
 
-  const { data: universalImportsData } = useQuery({
-    queryKey: ['universal-imports', companyId],
-    queryFn: () => listUniversalImports(companyId as number),
-    enabled: !!companyId && hasGold,
-    refetchOnMount: 'always'
-  })
-
-  const { data: universalLineageData } = useQuery({
-    queryKey: ['universal-lineage-latest', companyId],
-    queryFn: () => getUniversalLineage(companyId as number),
-    enabled: !!companyId && hasGold,
-    refetchOnMount: 'always'
-  })
-
-  const workflow = workflowData as BudgetWorkflowDto | undefined
-  const summary = summaryData as BudgetSummary | undefined
-  const insights = insightsData as BudgetLongInsights | undefined
-  const latestUniversalImport = ((universalImportsData as UniversalImportDto[] | undefined) || [])[0]
-  const latestUniversalLineage = (universalLineageData as UniversalImportLineageDto | null | undefined) || null
-  const latestUniversalDiagnosis = (latestUniversalLineage?.analysis?.intakeDiagnosis || null) as UniversalIntakeDiagnosis | null
-  const sourceDiagnosisKind = intakeKind(latestUniversalDiagnosis)
-
-  const sourceFilename = workflow?.sourceFilename || latestUniversalImport?.filename || latestUniversalLineage?.filename || null
-  const sourceCreatedAt = workflow?.sourceCreatedAt || latestUniversalImport?.createdAt || latestUniversalLineage?.createdAt || null
-  const sourceSheetIndex = workflow?.sourceSheetIndex ?? latestUniversalLineage?.analysis?.xlsx?.sheetIndex ?? null
-  const sourceHeaderRow = workflow?.sourceHeaderRow ?? latestUniversalLineage?.analysis?.xlsx?.headerRow1Based ?? null
-
-  const wrongAnnualSource =
-    !workflow?.sourcePresent &&
-    !summary &&
-    Boolean(latestUniversalImport?.filename) &&
-    Boolean(latestUniversalDiagnosis) &&
-    !isAnnualBudgetDiagnosis(latestUniversalDiagnosis)
+  const wrongAnnualSource = workflow?.status === 'WRONG_SOURCE'
 
   const annualSourceDetected = Boolean((workflow?.sourcePresent || sourceFilename) && !wrongAnnualSource)
   const structureValidated = Boolean(workflow?.structureValidated || summary)
@@ -241,7 +204,7 @@ export default function AnnualPlanningPage() {
 
   const statusDetail =
     wrongAnnualSource
-      ? intakeDetail(latestUniversalDiagnosis, workflow?.statusDetail || 'La última carga encaja mejor en otro flujo.')
+      ? normalizeText(workflow?.statusDetail || 'La última carga encaja mejor en otro flujo.')
       : !annualSourceDetected
         ? 'Sube un presupuesto anual o una previsión mensual para activar esta vista.'
         : !structureValidated
@@ -429,18 +392,19 @@ export default function AnnualPlanningPage() {
 
       {!hasGold ? <Alert tone="warning">Disponible desde Gold.</Alert> : null}
       {!companyId ? <Alert tone="warning">Selecciona una empresa.</Alert> : null}
+      {analysisLoading ? <Alert tone="info">Leyendo la última carga anual. En ficheros XLSX complejos puede tardar un poco.</Alert> : null}
       {cameFromAnnualUpload && annualSourceDetected ? (
         <Alert tone="info">Presupuesto detectado. Esta pantalla ya relee la última carga anual válida.</Alert>
       ) : null}
       {wrongAnnualSource ? (
         <Alert tone="warning">
-          La última carga parece {intakeDisplayLabel(latestUniversalDiagnosis, 'otro tipo de base').toLowerCase()}, no un plan anual. Abre Universal o sube un presupuesto anual real.
+          La última carga no encaja como plan anual. Abre Universal o sube un presupuesto anual real.
         </Alert>
       ) : null}
       {showRecoveryHint ? (
         <Alert tone="info">El fichero anual ya está cargado. Si aún no ves una lectura útil, abre el análisis técnico o corrige hoja y cabecera.</Alert>
       ) : null}
-      {workflowError ? <Alert tone="danger">{String((workflowError as any)?.message || workflowError)}</Alert> : null}
+      {workflowError ? <Alert tone="danger">{formatText(String((workflowError as any)?.message || workflowError))}</Alert> : null}
 
       <div className="card section soft">
         <div className="mini-row row-baseline">
@@ -450,18 +414,15 @@ export default function AnnualPlanningPage() {
         <div className="grid grid-autofit-220 mt-12">
           <div className="card soft card-pad-sm">
             <div className="upload-hint">Situación</div>
-            <div className="fw-800 mt-1">{statusTitle}</div>
-            <div className="upload-hint mt-1">{statusDetail}</div>
+            <div className="fw-800 mt-1">{analysisLoading ? 'Leyendo presupuesto anual' : statusTitle}</div>
+            <div className="upload-hint mt-1">
+              {analysisLoading ? 'Estoy reconstruyendo la lectura canónica y la tesorería del último fichero anual.' : statusDetail}
+            </div>
           </div>
           <div className="card soft card-pad-sm">
             <div className="upload-hint">Fuente</div>
-            <div className="fw-800 mt-1">{sourceFilename || 'Sin fichero anual'}</div>
-            <div className="upload-hint mt-1">{sourceCreatedAt ? formatDateTime(sourceCreatedAt) : 'Carga pendiente.'}</div>
-            {latestUniversalDiagnosis ? (
-              <div className="upload-hint mt-8">
-                Tipo detectado: <strong>{intakeDisplayLabel(latestUniversalDiagnosis, 'Base detectada')}</strong>
-              </div>
-            ) : null}
+            <div className="fw-800 mt-1">{analysisLoading ? 'Procesando última carga anual' : formatText(sourceFilename, 'Sin fichero anual')}</div>
+            <div className="upload-hint mt-1">{analysisLoading ? 'La vista se actualizará sola cuando termine.' : sourceCreatedAt ? formatDateTime(sourceCreatedAt) : 'Carga pendiente.'}</div>
             {sourceSheetIndex != null || sourceHeaderRow != null ? (
               <div className="upload-hint mt-8">
                 Último intento usado: hoja {sourceSheetIndex != null ? Number(sourceSheetIndex) + 1 : '-'} · cabecera fila {sourceHeaderRow ?? '-'}
@@ -469,15 +430,15 @@ export default function AnnualPlanningPage() {
             ) : null}
             {workflow?.sourceAttemptTrendTitle ? (
               <div className="upload-hint mt-8">
-                <strong>{workflow.sourceAttemptTrendTitle}.</strong> {workflow?.sourceAttemptTrendDetail || ''}
+                  <strong>{formatText(workflow.sourceAttemptTrendTitle, '')}.</strong> {formatText(workflow?.sourceAttemptTrendDetail, '')}
               </div>
             ) : null}
           </div>
           <div className="card soft card-pad-sm">
             <div className="upload-hint">Meses comparables</div>
-            <div className="fw-800 mt-1">{comparison?.commonMonths ?? 0}</div>
+            <div className="fw-800 mt-1">{analysisLoading ? '...' : comparison?.commonMonths ?? 0}</div>
             <div className="upload-hint mt-1">
-              {plannedMonthsAvailable} plan · {actualMonthsAvailable} contraste
+              {analysisLoading ? 'Preparando lectura anual...' : `${plannedMonthsAvailable} plan · ${actualMonthsAvailable} contraste`}
             </div>
           </div>
         </div>
@@ -640,3 +601,6 @@ export default function AnnualPlanningPage() {
     </div>
   )
 }
+
+
+

@@ -47,7 +47,7 @@ import Button from '../components/ui/Button'
 import { useToast } from '../components/ui/ToastProvider'
 import { intakeDetail, intakeDisplayLabel, intakePrimaryActionLabel, intakeRecommendedRoute, intakeKind, isAnnualBudgetDiagnosis } from '../utils/intakeDiagnosis'
 import { buildUniversalChartNarrative } from '../utils/universalChartNarrative'
-import { EMPTY_DATA_TEXT, EMPTY_VALUE, formatDateTime } from '../utils/format'
+import { EMPTY_DATA_TEXT, EMPTY_VALUE, formatDateTime, normalizeText } from '../utils/format'
 
 type AggregationMode = NonNullable<UniversalViewRequest['aggregationMode']>
 
@@ -93,7 +93,7 @@ function prettyColumnName(name: string) {
     role: 'rol'
   }
   if (aliases[key]) return aliases[key]
-  return String(name || '')
+  return normalizeText(String(name || ''), '')
     .replace(/[_-]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
@@ -102,16 +102,16 @@ function prettyColumnName(name: string) {
 function semanticLabel(value: string | null | undefined) {
   const key = String(value || '').trim().toUpperCase()
   const labels: Record<string, string> = {
-    ACCOUNTING_ENTRY_LINE: 'LÃ­nea contable',
-    DOCUMENT_LINE: 'LÃ­nea de documento',
+    ACCOUNTING_ENTRY_LINE: 'Línea contable',
+    DOCUMENT_LINE: 'Línea de documento',
     INVOICE: 'Factura',
     DOCUMENT: 'Documento',
     PARTY: 'Tercero',
     ACCOUNT: 'Cuenta',
     ENTRY: 'Asiento',
-    MEASURE: 'MÃ©trica',
+    MEASURE: 'Métrica',
     TEMPORAL: 'Temporal',
-    CATEGORICAL: 'CategorÃ­a',
+    CATEGORICAL: 'Categoría',
     IDENTIFIER: 'Identificador',
     ACCOUNT_CODE: 'Cuenta contable',
     ACCOUNT_NAME: 'Nombre de cuenta',
@@ -130,7 +130,7 @@ function semanticLabel(value: string | null | undefined) {
     BOOLEAN: 'Bandera',
     TRI_STATE_BOOLEAN: 'Estado aplicable',
     STATUS: 'Estado',
-    CATEGORICAL_DIMENSION: 'DimensiÃ³n',
+    CATEGORICAL_DIMENSION: 'Dimensión',
     TAX_IDENTIFIER: 'NIF/CIF',
     FREE_TEXT: 'Texto libre'
   }
@@ -155,7 +155,7 @@ function aggregationLabel(value: string | null | undefined) {
     AVG_VALUE: 'media',
     MEDIAN: 'mediana',
     SHARE: 'porcentaje',
-    TIME_SERIES: 'evoluciÃ³n',
+    TIME_SERIES: 'evolución',
     APPLICABLE_ROW_COUNT: 'aplicables',
     APPLICABLE_RATE: '% aplicable'
   }
@@ -205,7 +205,7 @@ function entitySummary(summary: any) {
   return entities
     .slice(0, 3)
     .map((entity: any) => `${semanticLabel(entity?.entityType)} ${formatCompactNumber(Number(entity?.distinctCount || 0), 0)}`)
-    .join('  Â·  ')
+    .join('  ·  ')
 }
 
 function insightTone(value: string | null | undefined) {
@@ -248,9 +248,9 @@ function describeDistribution(column: any) {
   const total = histogram.reduce((sum: number, bucket: any) => sum + Number(bucket?.count || 0), 0)
   if (!histogram.length || total <= 0) {
     return {
-      see: ['TodavÃ­a no hay suficiente informaciÃ³n para resumir esta distribuciÃ³n.'],
-      why: ['Sin histograma no puedo decir si la mÃ©trica estÃ¡ concentrada, dispersa o tiene valores raros.'],
-      todo: ['Revisa si la columna viene bien importada como nÃºmero y no como texto.']
+      see: ['Todavía no hay suficiente información para resumir esta distribución.'],
+      why: ['Sin histograma no puedo decir si la métrica está concentrada, dispersa o tiene valores raros.'],
+      todo: ['Revisa si la columna viene bien importada como número y no como texto.']
     }
   }
 
@@ -271,19 +271,19 @@ function describeDistribution(column: any) {
         ? 'bastante concentrada'
         : 'bastante repartida'
   const dominantText = range
-    ? `La mayor concentraciÃ³n de ${prettyColumnName(column?.name)} estÃ¡ entre ${formatCompactNumber(range.from, 2)} y ${formatCompactNumber(range.to, 2)} (${formatCompactPercent(dominantShare)} de las filas).`
-    : `El tramo con mÃ¡s peso en ${prettyColumnName(column?.name)} es ${String(dominant?.label || '-')}, con ${formatCompactPercent(dominantShare)} de las filas.`
+    ? `La mayor concentración de ${prettyColumnName(column?.name)} está entre ${formatCompactNumber(range.from, 2)} y ${formatCompactNumber(range.to, 2)} (${formatCompactPercent(dominantShare)} de las filas).`
+    : `El tramo con más peso en ${prettyColumnName(column?.name)} es ${String(dominant?.label || '-')}, con ${formatCompactPercent(dominantShare)} de las filas.`
 
   const why = min != null && max != null
-    ? `La distribuciÃ³n estÃ¡ ${spreadText}: el rango observado va de ${formatCompactNumber(Number(min), 2)} a ${formatCompactNumber(Number(max), 2)} y los 3 tramos mÃ¡s frecuentes concentran ${formatCompactPercent(top3Share)}.`
-    : `La distribuciÃ³n estÃ¡ ${spreadText}: los 3 tramos mÃ¡s frecuentes concentran ${formatCompactPercent(top3Share)} del dataset.`
+    ? `La distribución está ${spreadText}: el rango observado va de ${formatCompactNumber(Number(min), 2)} a ${formatCompactNumber(Number(max), 2)} y los 3 tramos más frecuentes concentran ${formatCompactPercent(top3Share)}.`
+    : `La distribución está ${spreadText}: los 3 tramos más frecuentes concentran ${formatCompactPercent(top3Share)} del dataset.`
 
   const todo =
     nullCount > 0
-      ? `Hay ${formatCompactNumber(nullCount, 0)} filas vacÃ­as en esta mÃ©trica. Conviene revisar si faltan importes o si el origen no la rellena siempre.`
+      ? `Hay ${formatCompactNumber(nullCount, 0)} filas vacías en esta métrica. Conviene revisar si faltan importes o si el origen no la rellena siempre.`
       : nonZero.length <= 2
-        ? 'Tiene muy poca variaciÃ³n. Si esperabas mÃ¡s casuÃ­stica, revisa si la columna se ha agregado demasiado o si el origen trae valores repetidos.'
-        : 'Ãšsala para segmentar o cruzarla con una categorÃ­a/fecha: aquÃ­ hay suficiente variaciÃ³n para sacar lectura Ãºtil.'
+        ? 'Tiene muy poca variación. Si esperabas más casuística, revisa si la columna se ha agregado demasiado o si el origen trae valores repetidos.'
+        : 'Úsala para segmentar o cruzarla con una categoría/fecha: aquí hay suficiente variación para sacar lectura útil.'
 
   return { see: [dominantText], why: [why], todo: [todo] }
 }
@@ -297,9 +297,9 @@ function describeDateSeries(column: any) {
 
   if (!points.length) {
     return {
-      see: ['TodavÃ­a no hay suficiente informaciÃ³n temporal para resumir esta serie.'],
+      see: ['Todavía no hay suficiente información temporal para resumir esta serie.'],
       why: ['Sin serie temporal no puedo ver si la carga es estable, si faltan periodos o si hay picos.'],
-      todo: ['Revisa que la columna de fecha se haya detectado bien y que tenga valores vÃ¡lidos.']
+      todo: ['Revisa que la columna de fecha se haya detectado bien y que tenga valores válidos.']
     }
   }
 
@@ -319,19 +319,19 @@ function describeDateSeries(column: any) {
   const see =
     volatility < 0.35
       ? `El ritmo de ${prettyColumnName(column?.name)} es ${cadence}: media de ${formatCompactNumber(avg, 0)} filas por periodo, con pico en ${peak.label} (${formatCompactNumber(peak.count, 0)}).`
-      : `Hay picos claros en ${prettyColumnName(column?.name)}: el mÃ¡ximo estÃ¡ en ${peak.label} con ${formatCompactNumber(peak.count, 0)} filas, frente a un mÃ­nimo de ${formatCompactNumber(floor.count, 0)} en ${floor.label}.`
+      : `Hay picos claros en ${prettyColumnName(column?.name)}: el máximo está en ${peak.label} con ${formatCompactNumber(peak.count, 0)} filas, frente a un mínimo de ${formatCompactNumber(floor.count, 0)} en ${floor.label}.`
 
   const why =
     emptyPeriods > 0
-      ? `Hay ${formatCompactNumber(emptyPeriods, 0)} periodos vacÃ­os. Esto puede indicar meses sin carga, huecos en el fichero o un calendario incompleto.`
-      : `No se ven periodos vacÃ­os y el volumen total asciende a ${formatCompactNumber(total, 0)} filas. Sirve para saber si tu dataset llega de forma regular o con tandas.`
+      ? `Hay ${formatCompactNumber(emptyPeriods, 0)} periodos vacíos. Esto puede indicar meses sin carga, huecos en el fichero o un calendario incompleto.`
+      : `No se ven periodos vacíos y el volumen total asciende a ${formatCompactNumber(total, 0)} filas. Sirve para saber si tu dataset llega de forma regular o con tandas.`
 
   const todo =
     emptyPeriods > 0
-      ? 'Revisa esos periodos vacÃ­os antes de sacar conclusiones de negocio: pueden distorsionar comparativas y deltas.'
+      ? 'Revisa esos periodos vacíos antes de sacar conclusiones de negocio: pueden distorsionar comparativas y deltas.'
       : volatility >= 0.9
-        ? 'Investiga quÃ© pasÃ³ en los picos: normalmente seÃ±alan cargas masivas, cierres de periodo o campaÃ±as concretas.'
-        : 'Si esta fecha es operativa, ya estÃ¡ lista para comparar meses, detectar estacionalidad y construir alertas.'
+        ? 'Investiga qué pasó en los picos: normalmente señalan cargas masivas, cierres de periodo o campañas concretas.'
+        : 'Si esta fecha es operativa, ya está lista para comparar meses, detectar estacionalidad y construir alertas.'
 
   return { see: [see], why: [why], todo: [todo] }
 }
@@ -344,9 +344,9 @@ function describeCategory(column: any) {
 
   if (!items.length) {
     return {
-      see: ['TodavÃ­a no hay suficiente informaciÃ³n para resumir esta categorÃ­a.'],
-      why: ['Sin valores frecuentes no puedo decir quÃ© segmentos pesan mÃ¡s ni si la columna sirve para agrupar.'],
-      todo: ['Revisa si esta columna tiene demasiados valores Ãºnicos o si el texto viene sucio.']
+      see: ['Todavía no hay suficiente información para resumir esta categoría.'],
+      why: ['Sin valores frecuentes no puedo decir qué segmentos pesan más ni si la columna sirve para agrupar.'],
+      todo: ['Revisa si esta columna tiene demasiados valores únicos o si el texto viene sucio.']
     }
   }
 
@@ -356,15 +356,15 @@ function describeCategory(column: any) {
   const concentration = total > 0 ? (top3 / total) * 100 : 0
   const uniquePreview = items.length
 
-  const see = `El valor que mÃ¡s aparece en ${prettyColumnName(column?.name)} es ${leader.value} con ${formatCompactNumber(leader.count, 0)} filas (${formatCompactPercent((leader.count / total) * 100)} del top visible).`
+  const see = `El valor que más aparece en ${prettyColumnName(column?.name)} es ${leader.value} con ${formatCompactNumber(leader.count, 0)} filas (${formatCompactPercent((leader.count / total) * 100)} del top visible).`
   const why =
     concentration >= 70
-      ? `La categorÃ­a estÃ¡ muy concentrada: los 3 valores principales ya explican ${formatCompactPercent(concentration)}. Esto ayuda a priorizar segmentos rÃ¡pido.`
-      : `La categorÃ­a estÃ¡ mÃ¡s repartida: los 3 valores principales suman ${formatCompactPercent(concentration)}. Hay variedad suficiente para comparar grupos.`
+      ? `La categoría está muy concentrada: los 3 valores principales ya explican ${formatCompactPercent(concentration)}. Esto ayuda a priorizar segmentos rápido.`
+      : `La categoría está más repartida: los 3 valores principales suman ${formatCompactPercent(concentration)}. Hay variedad suficiente para comparar grupos.`
   const todo =
     uniquePreview <= 2
-      ? 'Tiene poca diversidad. QuizÃ¡ no sea la mejor columna para segmentar dashboards o filtros.'
-      : `Ãšsala para rankings, filtros y cruces: aquÃ­ sÃ­ tienes segmentos con peso real para contar una historia.`
+      ? 'Tiene poca diversidad. Quizá no sea la mejor columna para segmentar dashboards o filtros.'
+      : `Úsala para rankings, filtros y cruces: aquí sí tienes segmentos con peso real para contar una historia.`
 
   return { see: [see], why: [why], todo: [todo] }
 }
@@ -376,9 +376,9 @@ function describeCorrelation(entry: any) {
     strength >= 0.85 ? 'muy fuerte' :
     strength >= 0.65 ? 'fuerte' :
     strength >= 0.4 ? 'moderada' :
-    'dÃ©bil'
+    'débil'
   const direction = value >= 0 ? 'positiva' : 'negativa'
-  return `${prettyColumnName(entry?.columnA)} y ${prettyColumnName(entry?.columnB)} tienen una relaciÃ³n ${label} y ${direction} (${value.toFixed(3)}).`
+  return `${prettyColumnName(entry?.columnA)} y ${prettyColumnName(entry?.columnB)} tienen una relación ${label} y ${direction} (${value.toFixed(3)}).`
 }
 
 export default function UniversalDashboardPage() {
@@ -819,7 +819,7 @@ export default function UniversalDashboardPage() {
       if (normalizedColumnNames.has('gross_pay')) {
         presets.push({
           title: 'Coste bruto por mes',
-          description: 'Serie temporal para ver cuÃ¡nto cuesta la nÃ³mina en bruto cada mes.',
+          description: 'Serie temporal para ver cuánto cuesta la nómina en bruto cada mes.',
           request: {
             name: 'Coste bruto por mes',
             type: 'TIME_SERIES',
@@ -833,7 +833,7 @@ export default function UniversalDashboardPage() {
       if (normalizedColumnNames.has('net_pay')) {
         presets.push({
           title: 'Neto pagado por rol',
-          description: 'Ranking para detectar quÃ© rol concentra mÃ¡s pago neto.',
+          description: 'Ranking para detectar qué rol concentra más pago neto.',
           request: {
             name: 'Neto pagado por rol',
             type: 'CATEGORY_BAR',
@@ -848,7 +848,7 @@ export default function UniversalDashboardPage() {
       if (normalizedColumnNames.has('employee_name') && normalizedColumnNames.has('gross_pay')) {
         presets.push({
           title: 'Peso salarial por empleado',
-          description: 'Comparativa por empleado para ver quiÃ©n pesa mÃ¡s en el coste total.',
+          description: 'Comparativa por empleado para ver quién pesa más en el coste total.',
           request: {
             name: 'Peso salarial por empleado',
             type: 'CATEGORY_BAR',
@@ -862,10 +862,10 @@ export default function UniversalDashboardPage() {
       }
       if (normalizedColumnNames.has('role') && normalizedColumnNames.has('employer_cpp')) {
         presets.push({
-          title: 'CotizaciÃ³n empresa por rol',
+          title: 'Cotización empresa por rol',
           description: 'Comparativa del coste empresa adicional para explicar cargas sociales.',
           request: {
-            name: 'CotizaciÃ³n empresa por rol',
+            name: 'Cotización empresa por rol',
             type: 'CATEGORY_BAR',
             categoryColumn: 'Role',
             valueColumn: 'Employer_CPP',
@@ -892,20 +892,20 @@ export default function UniversalDashboardPage() {
       return [
         { title: '1. Subir dataset', detail: 'Empieza cargando un CSV/XLSX para que Universal detecte estructura y primeras lecturas.' },
         { title: '2. Revisar calidad', detail: 'Comprueba si fechas, importes y columnas se han entendido bien.' },
-        { title: '3. Crear una vista', detail: 'Usa una recomendaciÃ³n rÃ¡pida antes de entrar en la configuraciÃ³n avanzada.' }
+        { title: '3. Crear una vista', detail: 'Usa una recomendación rápida antes de entrar en la configuración avanzada.' }
       ]
     }
     if (looksLikePayrollDataset) {
       return [
-        { title: '1. Lee el coste mensual', detail: 'Empieza por Gross_Pay o Net_Pay por mes para entender la pelÃ­cula general.' },
-        { title: '2. Mira quiÃ©n pesa mÃ¡s', detail: 'Compara Role o Employee_Name para detectar concentraciÃ³n salarial.' },
-        { title: '3. Explica el coste empresa', detail: 'AÃ±ade Employer_CPP o Employer_EI para contar el coste oculto de nÃ³mina.' }
+        { title: '1. Lee el coste mensual', detail: 'Empieza por Gross_Pay o Net_Pay por mes para entender la película general.' },
+        { title: '2. Mira quién pesa más', detail: 'Compara Role o Employee_Name para detectar concentración salarial.' },
+        { title: '3. Explica el coste empresa', detail: 'Añade Employer_CPP o Employer_EI para contar el coste oculto de nómina.' }
       ]
     }
     return [
-      { title: '1. Revisa la calidad', detail: 'Si el score es bueno, confÃ­a en las vistas rÃ¡pidas; si no, corrige antes de interpretar.' },
-      { title: '2. Usa una sugerencia AUTO', detail: 'La forma mÃ¡s rÃ¡pida de sacar valor es empezar por una lectura ya propuesta.' },
-      { title: '3. Abre avanzado solo si hace falta', detail: 'La configuraciÃ³n manual queda para casos raros o preguntas muy concretas.' }
+      { title: '1. Revisa la calidad', detail: 'Si el score es bueno, confía en las vistas rápidas; si no, corrige antes de interpretar.' },
+      { title: '2. Usa una sugerencia AUTO', detail: 'La forma más rápida de sacar valor es empezar por una lectura ya propuesta.' },
+      { title: '3. Abre avanzado solo si hace falta', detail: 'La configuración manual queda para casos raros o preguntas muy concretas.' }
     ]
   }, [looksLikePayrollDataset, summary?.filename])
 
@@ -913,30 +913,30 @@ export default function UniversalDashboardPage() {
     if (!companyId) {
       return {
         title: 'Selecciona una empresa',
-        detail: 'Activa primero la empresa gestionada para poder leer un dataset y guardar una vista Ãºtil.'
+        detail: 'Activa primero la empresa gestionada para poder leer un dataset y guardar una vista útil.'
       }
     }
     if (!summary?.filename) {
       return {
         title: 'Sin dataset activo',
-        detail: 'Sube un CSV o XLSX y deja la exploraciÃ³n tÃ©cnica para despuÃ©s: primero necesitamos una base legible.'
+        detail: 'Sube un CSV o XLSX y deja la exploración técnica para después: primero necesitamos una base legible.'
       }
     }
     if (looksLikePayrollDataset) {
       return {
-        title: 'Dataset de nÃ³minas detectado',
-        detail: 'Universal ya estÃ¡ orientado a coste salarial, neto pagado y coste empresa. Empieza por una vista sencilla.'
+        title: 'Dataset de nóminas detectado',
+        detail: 'Universal ya está orientado a coste salarial, neto pagado y coste empresa. Empieza por una vista sencilla.'
       }
     }
     if (quickStartViews.length) {
       return {
         title: 'Lectura lista para arrancar',
-        detail: `Ya tienes ${quickStartViews.length} vista${quickStartViews.length === 1 ? '' : 's'} recomendada${quickStartViews.length === 1 ? '' : 's'} para sacar valor sin entrar aÃºn en configuraciÃ³n manual.`
+        detail: `Ya tienes ${quickStartViews.length} vista${quickStartViews.length === 1 ? '' : 's'} recomendada${quickStartViews.length === 1 ? '' : 's'} para sacar valor sin entrar aún en configuración manual.`
       }
     }
     return {
       title: 'Dataset activo',
-      detail: 'Empieza por calidad e insights, y baja al constructor solo si la lectura rÃ¡pida no responde la pregunta.'
+      detail: 'Empieza por calidad e insights, y baja al constructor solo si la lectura rápida no responde la pregunta.'
     }
   }, [companyId, looksLikePayrollDataset, quickStartViews.length, summary?.filename])
 
@@ -1009,20 +1009,20 @@ export default function UniversalDashboardPage() {
     if (!summary?.filename) {
       return {
         label: 'Subir dataset',
-        helper: 'Empieza por la carga y deja la configuraciÃ³n avanzada para despuÃ©s.',
+        helper: 'Empieza por la carga y deja la configuración avanzada para después.',
         action: () => datasetRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
       }
     }
     if (quickStartViews.length) {
       return {
         label: 'Abrir vista sugerida',
-        helper: 'La forma mÃ¡s rÃ¡pida de sacar valor es abrir una lectura ya propuesta.',
+        helper: 'La forma más rápida de sacar valor es abrir una lectura ya propuesta.',
         action: () => previewPreset(quickStartViews[0].request, 'Vista sugerida cargada.')
       }
     }
     return {
       label: 'Revisar calidad',
-      helper: 'Si la base no estÃ¡ limpia, todo lo demÃ¡s pierde valor.',
+      helper: 'Si la base no está limpia, todo lo demás pierde valor.',
       action: () => supportRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
     }
   }, [activeImportId, companyId, quickStartViews, summary?.filename])
@@ -1227,19 +1227,19 @@ export default function UniversalDashboardPage() {
       options.push({ value, label: aggregationLabel(value), detail })
     }
 
-    add('ROW_COUNT', 'Cuenta filas vÃ¡lidas del recorte activo.')
+    add('ROW_COUNT', 'Cuenta filas válidas del recorte activo.')
 
     if (detectedEntities.some((entity: any) => String(entity?.entityType || '').toUpperCase() === 'ENTRY' && entity?.keyColumn)) {
-      add('DISTINCT_ENTRY_COUNT', 'Cuenta asientos distintos sin duplicar lÃ­neas contables.')
+      add('DISTINCT_ENTRY_COUNT', 'Cuenta asientos distintos sin duplicar líneas contables.')
     }
     if (detectedEntities.some((entity: any) => String(entity?.entityType || '').toUpperCase() === 'DOCUMENT' && entity?.keyColumn)) {
-      add('DISTINCT_DOCUMENT_COUNT', 'Cuenta documentos Ãºnicos para no medir varias veces el mismo soporte.')
+      add('DISTINCT_DOCUMENT_COUNT', 'Cuenta documentos únicos para no medir varias veces el mismo soporte.')
     }
     if (detectedEntities.some((entity: any) => String(entity?.entityType || '').toUpperCase() === 'INVOICE' && entity?.keyColumn)) {
-      add('DISTINCT_INVOICE_COUNT', 'Cuenta facturas distintas aunque el dataset venga a nivel de lÃ­nea.')
+      add('DISTINCT_INVOICE_COUNT', 'Cuenta facturas distintas aunque el dataset venga a nivel de línea.')
     }
     if (detectedEntities.some((entity: any) => String(entity?.entityType || '').toUpperCase() === 'PARTY' && entity?.keyColumn)) {
-      add('DISTINCT_PARTY_COUNT', 'Cuenta terceros distintos para leer concentraciÃ³n de clientes o proveedores.')
+      add('DISTINCT_PARTY_COUNT', 'Cuenta terceros distintos para leer concentración de clientes o proveedores.')
     }
 
     const hasNumericValue = numberCols.length > 0 || columns.some((column: any) => columnSupportsAggregation(column, 'SUM_DISTINCT_VALUE'))
@@ -1248,10 +1248,10 @@ export default function UniversalDashboardPage() {
       add('AVG_VALUE', 'Calcula la media de la columna de valor seleccionada.')
     }
     if (columns.some((column: any) => String(column?.semanticType || '').toUpperCase() === 'DEBIT_AMOUNT' || columnSupportsAggregation(column, 'SUM_DEBIT'))) {
-      add('SUM_DEBIT', 'Suma el debe detectado semÃ¡nticamente.')
+      add('SUM_DEBIT', 'Suma el debe detectado semánticamente.')
     }
     if (columns.some((column: any) => String(column?.semanticType || '').toUpperCase() === 'CREDIT_AMOUNT' || columnSupportsAggregation(column, 'SUM_CREDIT'))) {
-      add('SUM_CREDIT', 'Suma el haber detectado semÃ¡nticamente.')
+      add('SUM_CREDIT', 'Suma el haber detectado semánticamente.')
     }
     if (
       columns.some(
@@ -1479,7 +1479,7 @@ export default function UniversalDashboardPage() {
         (builderType === 'TIME_SERIES'
           ? 'Serie temporal'
           : builderType === 'CATEGORY_BAR'
-            ? 'Ranking categorÃ­as'
+            ? 'Ranking categorías'
             : builderType === 'KPI_CARDS'
               ? 'KPIs'
               : builderType === 'SCATTER'

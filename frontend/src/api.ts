@@ -129,6 +129,36 @@ let refreshPromise: Promise<string | null> | null = null
 
 const DEFAULT_TIMEOUT_MS = 30_000
 
+function decodeUnicodeEscapes(text: string) {
+  return text.replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) =>
+    String.fromCharCode(Number.parseInt(hex, 16))
+  )
+}
+
+function normalizeErrorText(raw: string) {
+  const trimmed = String(raw || '').trim()
+  if (!trimmed) return ''
+
+  let candidate = trimmed
+  try {
+    const parsed = JSON.parse(trimmed)
+    if (typeof parsed === 'string') {
+      candidate = parsed
+    } else if (parsed && typeof parsed === 'object') {
+      const message =
+        (parsed as any).message ||
+        (parsed as any).error ||
+        (parsed as any).detail ||
+        (parsed as any).title
+      if (typeof message === 'string' && message.trim()) candidate = message
+    }
+  } catch {
+    // keep raw text
+  }
+
+  return decodeUnicodeEscapes(candidate)
+}
+
 function backendUnavailableMessage() {
   const api = API_URL || '(sin configurar)'
   if (!import.meta.env.DEV) return `No se pudo conectar con el servidor (${api}).`
@@ -251,7 +281,7 @@ async function request<T = any>(path: string, options: RequestInit = {}, config:
   const res = await fetchWithAuth(`${API_URL}${path}`, { ...options, headers }, { auth, retry, timeoutMs })
   if (!res.ok) {
     const text = await res.text()
-    throw new Error(text || `HTTP ${res.status}`)
+    throw new Error(normalizeErrorText(text) || `HTTP ${res.status}`)
   }
   const contentType = res.headers.get('content-type') || ''
   if (contentType.includes('application/json')) {
@@ -709,6 +739,8 @@ export type BudgetMonth = {
 export type BudgetSummary = {
   sourceFilename?: string | null
   sourceCreatedAt?: string | null
+  sourceImportId?: number | null
+  analysisVersion?: string | null
   months: BudgetMonth[]
   totalIncome: number
   totalExpense: number
@@ -732,6 +764,10 @@ export type CashflowMonth = {
   inflow: number
   outflow: number
   net: number
+  declaredNet?: number | null
+  derivedNet?: number | null
+  reconciliationStatus?: string | null
+  reconciliationWarning?: string | null
   endingBalance: number
   deltaNet?: number | null
   deltaNetPct?: number | null
@@ -740,6 +776,8 @@ export type CashflowMonth = {
 export type CashflowSummary = {
   sourceFilename?: string | null
   sourceCreatedAt?: string | null
+  sourceImportId?: number | null
+  analysisVersion?: string | null
   openingBalance: number
   months: CashflowMonth[]
   totalInflow: number
@@ -759,6 +797,7 @@ export type BudgetComparisonMonth = {
   monthLabel: string
   actualPeriod?: string | null
   hasActual: boolean
+  actualStatus?: string | null
   plannedInflow?: number | null
   actualInflow?: number | null
   inflowVariance?: number | null
@@ -778,6 +817,7 @@ export type BudgetComparisonSummary = {
   plannedMonths?: number | null
   actualMonths?: number | null
   commonMonths?: number | null
+  actualDataStatus?: string | null
   assumption?: string | null
   latestComparedPeriod?: string | null
   plannedInflowYtd?: number | null
@@ -825,6 +865,31 @@ export type BudgetWorkflowDto = {
 
 export async function getBudgetWorkflow(companyId: number) {
   return request<BudgetWorkflowDto>(`/api/companies/${companyId}/budget/workflow`)
+}
+
+export type BudgetAnalysisBundle = {
+  companyId: number
+  planImportId?: number | null
+  actualImportId?: number | null
+  sourceImportId?: number | null
+  analysisVersion?: string | null
+  generatedAt?: string | null
+  comparisonStatus?: string | null
+  sourceFilename?: string | null
+  sourceType?: string | null
+  sourceCreatedAt?: string | null
+  sourceSheetIndex?: number | null
+  sourceSheetName?: string | null
+  sourceHeaderRow?: number | null
+  sourceHeaderLabel?: string | null
+  workflow: BudgetWorkflowDto
+  summary?: BudgetSummary | null
+  cashflow?: CashflowSummary | null
+  insights?: BudgetLongInsights | null
+}
+
+export async function getBudgetAnalysis(companyId: number) {
+  return request<BudgetAnalysisBundle>(`/api/companies/${companyId}/budget/analysis`, {}, { timeoutMs: 120_000 })
 }
 
 export type BudgetItemInsight = {

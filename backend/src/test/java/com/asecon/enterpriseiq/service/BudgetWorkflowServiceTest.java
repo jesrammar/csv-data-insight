@@ -3,6 +3,7 @@ package com.asecon.enterpriseiq.service;
 import com.asecon.enterpriseiq.dto.BudgetLongInsightsDto;
 import com.asecon.enterpriseiq.dto.BudgetMonthDto;
 import com.asecon.enterpriseiq.dto.BudgetMonthTotalDto;
+import com.asecon.enterpriseiq.dto.BudgetSourceMetaDto;
 import com.asecon.enterpriseiq.dto.BudgetSummaryDto;
 import com.asecon.enterpriseiq.dto.CashflowMonthDto;
 import com.asecon.enterpriseiq.dto.CashflowSummaryDto;
@@ -71,8 +72,8 @@ class BudgetWorkflowServiceTest {
             "budget-41-1",
             new BigDecimal("500"),
             List.of(
-                new CashflowMonthDto("ENERO", "Enero", new BigDecimal("900"), new BigDecimal("700"), new BigDecimal("200"), new BigDecimal("700"), null, null),
-                new CashflowMonthDto("FEBRERO", "Febrero", new BigDecimal("1000"), new BigDecimal("850"), new BigDecimal("150"), new BigDecimal("850"), null, null)
+                new CashflowMonthDto("ENERO", "Enero", new BigDecimal("900"), new BigDecimal("700"), new BigDecimal("200"), new BigDecimal("200"), null, "DECLARED_ONLY", null, new BigDecimal("700"), null, null),
+                new CashflowMonthDto("FEBRERO", "Febrero", new BigDecimal("1000"), new BigDecimal("850"), new BigDecimal("150"), new BigDecimal("150"), null, "DECLARED_ONLY", null, new BigDecimal("850"), null, null)
             ),
             new BigDecimal("1900"),
             new BigDecimal("1550"),
@@ -189,7 +190,7 @@ class BudgetWorkflowServiceTest {
             41L,
             "budget-41-1",
             BigDecimal.ZERO,
-            List.of(new CashflowMonthDto("ENERO", "Enero", new BigDecimal("1000"), new BigDecimal("700"), new BigDecimal("300"), new BigDecimal("300"), null, null)),
+            List.of(new CashflowMonthDto("ENERO", "Enero", new BigDecimal("1000"), new BigDecimal("700"), new BigDecimal("300"), new BigDecimal("300"), null, "DECLARED_ONLY", null, new BigDecimal("300"), null, null)),
             new BigDecimal("1000"),
             new BigDecimal("700"),
             new BigDecimal("300"),
@@ -219,5 +220,118 @@ class BudgetWorkflowServiceTest {
         assertThat(workflow.status()).isNotEqualTo("WRONG_SOURCE");
         assertThat(workflow.sourcePresent()).isTrue();
         assertThat(workflow.sourceFilename()).isEqualTo("presupuesto-2026.xlsx");
+    }
+
+    @Test
+    void analysis_bundle_stays_plan_only_even_if_legacy_actual_kpis_exist() {
+        BudgetService budgetService = mock(BudgetService.class);
+        UniversalImportFileService universalImportFileService = mock(UniversalImportFileService.class);
+        KpiMonthlyRepository kpiMonthlyRepository = mock(KpiMonthlyRepository.class);
+        ObjectMapper objectMapper = new ObjectMapper();
+
+        BudgetWorkflowService service = new BudgetWorkflowService(
+            budgetService,
+            universalImportFileService,
+            kpiMonthlyRepository,
+            objectMapper
+        );
+
+        Instant createdAt = Instant.parse("2026-01-15T10:00:00Z");
+        BudgetSourceMetaDto meta = new BudgetSourceMetaDto(
+            41L,
+            "budget-41-1",
+            "presupuesto-2026.xlsx",
+            createdAt,
+            "XLSX",
+            0,
+            "Escenario 2026",
+            3,
+            "Concepto",
+            12
+        );
+
+        BudgetSummaryDto summary = new BudgetSummaryDto(
+            "presupuesto-2026.xlsx",
+            createdAt,
+            41L,
+            "budget-41-1",
+            List.of(
+                new BudgetMonthDto("ENERO", "Enero", new BigDecimal("1000"), new BigDecimal("700"), new BigDecimal("300"), null, null),
+                new BudgetMonthDto("FEBRERO", "Febrero", new BigDecimal("1200"), new BigDecimal("800"), new BigDecimal("400"), null, null)
+            ),
+            new BigDecimal("2200"),
+            new BigDecimal("1500"),
+            new BigDecimal("700"),
+            new BigDecimal("120"),
+            new BigDecimal("40"),
+            new BigDecimal("580"),
+            new BigDecimal("95"),
+            new BigDecimal("675"),
+            "FEBRERO",
+            "ENERO"
+        );
+
+        CashflowSummaryDto cashflow = new CashflowSummaryDto(
+            "presupuesto-2026.xlsx",
+            createdAt,
+            41L,
+            "budget-41-1",
+            new BigDecimal("500"),
+            List.of(
+                new CashflowMonthDto("ENERO", "Enero", new BigDecimal("900"), new BigDecimal("700"), new BigDecimal("200"), new BigDecimal("200"), null, "DECLARED_ONLY", null, new BigDecimal("700"), null, null),
+                new CashflowMonthDto("FEBRERO", "Febrero", new BigDecimal("1000"), new BigDecimal("850"), new BigDecimal("150"), new BigDecimal("150"), null, "DECLARED_ONLY", null, new BigDecimal("850"), null, null)
+            ),
+            new BigDecimal("1900"),
+            new BigDecimal("1550"),
+            new BigDecimal("350"),
+            new BigDecimal("850"),
+            "ENERO",
+            "FEBRERO"
+        );
+
+        BudgetLongInsightsDto insights = new BudgetLongInsightsDto(
+            "presupuesto-2026.xlsx",
+            createdAt,
+            41L,
+            "budget-41-1",
+            10,
+            new BigDecimal("3000"),
+            "FEBRERO",
+            "ENERO",
+            new BigDecimal("60"),
+            List.of(new BudgetMonthTotalDto("ENERO", "Enero", new BigDecimal("1600"))),
+            List.of(),
+            List.of(),
+            List.of()
+        );
+
+        when(budgetService.latestAnalysisSnapshot(7L)).thenReturn(
+            new BudgetService.BudgetAnalysisSnapshot(meta, summary, cashflow, insights, null)
+        );
+
+        KpiMonthly legacyActual = new KpiMonthly();
+        legacyActual.setPeriod("2026-01");
+        legacyActual.setInflows(new BigDecimal("999"));
+        legacyActual.setOutflows(new BigDecimal("777"));
+        when(kpiMonthlyRepository.findByCompanyIdAndPeriodBetweenOrderByPeriodAsc(7L, "2026-01", "2026-12"))
+            .thenReturn(List.of(legacyActual));
+
+        var bundle = service.getAnalysisBundle(7L);
+
+        assertThat(bundle.planImportId()).isEqualTo(41L);
+        assertThat(bundle.actualImportId()).isNull();
+        assertThat(bundle.sourceImportId()).isEqualTo(41L);
+        assertThat(bundle.analysisVersion()).isEqualTo("budget-41-1");
+        assertThat(bundle.sourceSheetIndex()).isEqualTo(0);
+        assertThat(bundle.sourceHeaderRow()).isEqualTo(3);
+        assertThat(bundle.sourceSheetName()).isEqualTo("Escenario 2026");
+        assertThat(bundle.sourceHeaderLabel()).isEqualTo("Concepto");
+        assertThat(bundle.comparisonStatus()).isEqualTo("NO_ACTUAL_DATA");
+        assertThat(bundle.workflow().status()).isEqualTo("WAITING_ACTUALS");
+        assertThat(bundle.workflow().comparisonReady()).isFalse();
+        assertThat(bundle.workflow().actualMonthsAvailable()).isEqualTo(0);
+        assertThat(bundle.workflow().comparisonSummary()).isNotNull();
+        assertThat(bundle.workflow().comparisonSummary().commonMonths()).isEqualTo(0);
+        assertThat(bundle.workflow().comparisonSummary().actualDataStatus()).isEqualTo("NO_ACTUAL_DATA");
     }
 }

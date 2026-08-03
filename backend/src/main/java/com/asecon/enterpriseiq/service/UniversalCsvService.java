@@ -195,9 +195,11 @@ public class UniversalCsvService {
         String json = objectMapper.writeValueAsString(result.summary());
         String analysisJson = null;
         try {
-            UniversalXlsxOptionsDto xlsxDto = xlsxOptions == null
-                ? null
-                : new UniversalXlsxOptionsDto(xlsxOptions.sheetIndex(), xlsxOptions.headerRow1Based());
+            UniversalXlsxOptionsDto xlsxDto = tabular.xlsxMetadata() != null
+                ? tabular.xlsxMetadata()
+                : xlsxOptions == null
+                    ? null
+                    : new UniversalXlsxOptionsDto(xlsxOptions.sheetIndex(), xlsxOptions.headerRow1Based(), null, null);
             UniversalImportAnalysisDto analysis = new UniversalImportAnalysisDto(
                 result.bytes(),
                 result.durationMs(),

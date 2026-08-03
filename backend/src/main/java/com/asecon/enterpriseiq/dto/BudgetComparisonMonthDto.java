@@ -7,6 +7,7 @@ public record BudgetComparisonMonthDto(
     String monthLabel,
     String actualPeriod,
     boolean hasActual,
+    String actualStatus,
     BigDecimal plannedInflow,
     BigDecimal actualInflow,
     BigDecimal inflowVariance,

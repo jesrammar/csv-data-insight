@@ -1,9 +1,14 @@
 package com.asecon.enterpriseiq.service;
 
+import com.asecon.enterpriseiq.dto.UniversalXlsxOptionsDto;
 import java.io.IOException;
 import java.io.StringWriter;
+import java.math.BigDecimal;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -18,7 +23,10 @@ import io.micrometer.core.instrument.Timer;
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVPrinter;
 import org.apache.poi.ss.usermodel.Cell;
+import org.apache.poi.ss.usermodel.CellType;
+import org.apache.poi.ss.usermodel.CellValue;
 import org.apache.poi.ss.usermodel.DataFormatter;
+import org.apache.poi.ss.usermodel.DateUtil;
 import org.apache.poi.ss.usermodel.FormulaEvaluator;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
@@ -35,8 +43,24 @@ import org.springframework.web.server.ResponseStatusException;
 @Service
 public class TabularFileService {
     private static final Logger log = LoggerFactory.getLogger(TabularFileService.class);
+    private static final DateTimeFormatter XLSX_DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+    private static final DateTimeFormatter XLSX_DATETIME_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+    private static final Set<String> HEADER_SEMANTIC_ALIASES = Set.of(
+        "naturaleza", "tipo", "tipo partida", "categoria", "clasificacion",
+        "financial nature", "row type", "classification", "line type"
+    );
+    private static final Set<String> HEADER_CODE_ALIASES = Set.of(
+        "codigo", "cuenta", "account", "code", "concept code", "account code"
+    );
+    private static final Set<String> HEADER_LABEL_ALIASES = Set.of(
+        "concepto", "descripcion", "description", "partida", "label", "concept", "detalle", "nombre"
+    );
 
-    public record TabularCsv(String filename, byte[] bytes, Charset charset, boolean convertedFromXlsx) {}
+    public record TabularCsv(String filename,
+                             byte[] bytes,
+                             Charset charset,
+                             boolean convertedFromXlsx,
+                             UniversalXlsxOptionsDto xlsxMetadata) {}
 
     public record XlsxOptions(Integer sheetIndex, Integer headerRow1Based) {}
 
@@ -66,7 +90,7 @@ public class TabularFileService {
             return convertXlsxToCsv(file, xlsxOptions);
         }
         String filename = file.getOriginalFilename() == null ? "data.csv" : file.getOriginalFilename();
-        return new TabularCsv(filename, file.getBytes(), null, false);
+        return new TabularCsv(filename, file.getBytes(), null, false, null);
     }
 
     public static boolean isXlsx(MultipartFile file) {
@@ -119,7 +143,7 @@ public class TabularFileService {
                 boolean any = false;
                 for (int c = 0; c < headerInfo.headerCount; c++) {
                     Cell cell = row.getCell(c);
-                    String v = cell == null ? "" : formatter.formatCellValue(cell, evaluator);
+                    String v = formatCellValueSafe(cell, formatter, evaluator);
                     v = v == null ? "" : v.trim();
                     values.add(v);
                     if (!v.isBlank()) any = true;
@@ -206,7 +230,7 @@ public class TabularFileService {
                     boolean any = false;
                     for (int c = 0; c < headerInfo.headerCount; c++) {
                         Cell cell = row.getCell(c);
-                        String v = cell == null ? "" : formatter.formatCellValue(cell, evaluator);
+                        String v = formatCellValueSafe(cell, formatter, evaluator);
                         v = v == null ? "" : v.trim();
                         values[c] = v;
                         if (!v.isBlank()) any = true;
@@ -222,7 +246,18 @@ public class TabularFileService {
             }
 
             byte[] bytes = writer.toString().getBytes(StandardCharsets.UTF_8);
-            return new TabularCsv(filename.replaceAll("(?i)\\.xlsx$", ".csv"), bytes, StandardCharsets.UTF_8, true);
+            return new TabularCsv(
+                filename.replaceAll("(?i)\\.xlsx$", ".csv"),
+                bytes,
+                StandardCharsets.UTF_8,
+                true,
+                new UniversalXlsxOptionsDto(
+                    sheetIndex,
+                    headerInfo.rowIndex + 1,
+                    safeSheetName(wb, sheetIndex),
+                    headerInfo.headers.length > 0 ? headerInfo.headers[0] : null
+                )
+            );
         } catch (ResponseStatusException ex) {
             resultTag = safeErrorTag(ex);
             throw ex;
@@ -294,7 +329,7 @@ public class TabularFileService {
                     int lastNonEmptyCol = -1;
                     for (int c = 0; c < lastCell; c++) {
                         Cell cell = row.getCell(c);
-                        String v = cell == null ? "" : formatter.formatCellValue(cell, evaluator);
+                        String v = formatCellValueSafe(cell, formatter, evaluator);
                         if (v != null && !v.trim().isEmpty()) {
                             lastNonEmptyCol = c;
                         }
@@ -328,10 +363,14 @@ public class TabularFileService {
             int lastNonEmptyCol = -1;
             int numericLike = 0;
             int textLike = 0;
+            int monthLike = 0;
+            int descriptiveLike = 0;
+            int semanticLike = 0;
+            int codeLike = 0;
             Set<String> distinct = new HashSet<>();
             for (int c = 0; c < lastCell; c++) {
                 Cell cell = row.getCell(c);
-                String v = cell == null ? "" : formatter.formatCellValue(cell, evaluator);
+                String v = formatCellValueSafe(cell, formatter, evaluator);
                 if (v != null && !v.trim().isEmpty()) {
                     nonEmpty++;
                     lastNonEmptyCol = c;
@@ -339,6 +378,10 @@ public class TabularFileService {
                     distinct.add(t.toLowerCase(Locale.ROOT));
                     if (looksNumericHeader(t) && !looksYearHeader(t)) numericLike++;
                     if (looksTextHeader(t) || looksYearHeader(t)) textLike++;
+                    if (normalizeMonthKey(t) != null) monthLike++;
+                    if (containsHeaderAlias(t, HEADER_LABEL_ALIASES)) descriptiveLike++;
+                    if (containsHeaderAlias(t, HEADER_SEMANTIC_ALIASES)) semanticLike++;
+                    if (containsHeaderAlias(t, HEADER_CODE_ALIASES)) codeLike++;
                 }
             }
 
@@ -347,15 +390,23 @@ public class TabularFileService {
             double distinctRatio = distinct.isEmpty() ? 0.0 : (double) distinct.size() / (double) nonEmpty;
             double textRatio = (double) textLike / (double) nonEmpty;
             double numericRatio = (double) numericLike / (double) nonEmpty;
+            double monthlyScore = Math.min(1.0, monthLike / 12.0);
+            double descriptiveScore = Math.min(1.0, descriptiveLike / 3.0);
+            double semanticScore = Math.min(1.0, (semanticLike + codeLike) / 3.0);
+            double downstreamDensity = downstreamNumericDensity(sheet, r, lastNonEmptyCol + 1, formatter, evaluator);
 
-            // Header rows tend to have more text labels (or years) and higher uniqueness.
             double score = 0.0;
-            score += nonEmpty * 1.0;
-            score += distinctRatio * 6.0;
-            score += textRatio * 8.0;
-            score -= numericRatio * 7.0;
-            score += Math.min(4.0, (double) lastNonEmptyCol / 50.0);
-            score -= r * 0.15; // prefer earlier rows for headers
+            score += monthlyScore * 18.0;
+            score += descriptiveScore * 8.0;
+            score += semanticScore * 8.0;
+            score += downstreamDensity * 7.0;
+            score += distinctRatio * 5.5;
+            score += textRatio * 5.0;
+            score -= numericRatio * 6.5;
+            score += Math.min(3.5, (double) lastNonEmptyCol / 55.0);
+            if (monthLike >= 6 && descriptiveLike > 0) score += 3.0;
+            if ((semanticLike > 0 || codeLike > 0) && downstreamDensity > 0.45d) score += 2.0;
+            score -= r * 0.12;
 
             if (score > bestScore) {
                 bestRow = r;
@@ -373,6 +424,33 @@ public class TabularFileService {
         if (headerRow == null || headerCount <= 0) return null;
         String[] headers = buildHeaders(headerRow, headerCount, formatter, evaluator);
         return new HeaderInfo(bestRow, headerCount, headers);
+    }
+
+    private static double downstreamNumericDensity(Sheet sheet,
+                                                   int headerRowIndex,
+                                                   int headerCount,
+                                                   DataFormatter formatter,
+                                                   FormulaEvaluator evaluator) {
+        int inspectedRows = 0;
+        int numericSlots = 0;
+        int numericHits = 0;
+        int lastRow = Math.min(sheet.getLastRowNum(), headerRowIndex + 12);
+        for (int r = headerRowIndex + 1; r <= lastRow; r++) {
+            Row row = sheet.getRow(r);
+            if (row == null) continue;
+            inspectedRows++;
+            for (int c = 0; c < Math.min(headerCount, 200); c++) {
+                Cell cell = row.getCell(c);
+                String value = formatCellValueSafe(cell, formatter, evaluator);
+                if (value == null || value.trim().isEmpty()) continue;
+                numericSlots++;
+                if (looksNumericHeader(value) || looksYearHeader(value)) {
+                    numericHits++;
+                }
+            }
+        }
+        if (inspectedRows == 0 || numericSlots == 0) return 0d;
+        return (double) numericHits / (double) numericSlots;
     }
 
     private static boolean looksYearHeader(String raw) {
@@ -412,13 +490,67 @@ public class TabularFileService {
         return s.contains("_") || s.contains(" ") || s.contains("-");
     }
 
+    private static boolean containsHeaderAlias(String raw, Set<String> aliases) {
+        String normalized = normalizeHeaderToken(raw);
+        if (normalized.isEmpty()) return false;
+        for (String alias : aliases) {
+            String normalizedAlias = normalizeHeaderToken(alias);
+            if (!normalizedAlias.isEmpty() && normalized.contains(normalizedAlias)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static String normalizeMonthKey(String raw) {
+        String normalized = normalizeHeaderToken(raw);
+        if (normalized.startsWith("ene") || normalized.startsWith("jan")) return "ENERO";
+        if (normalized.startsWith("feb")) return "FEBRERO";
+        if (normalized.startsWith("mar")) return "MARZO";
+        if (normalized.startsWith("abr") || normalized.startsWith("apr")) return "ABRIL";
+        if (normalized.startsWith("may")) return "MAYO";
+        if (normalized.startsWith("jun")) return "JUNIO";
+        if (normalized.startsWith("jul")) return "JULIO";
+        if (normalized.startsWith("ago") || normalized.startsWith("aug")) return "AGOSTO";
+        if (normalized.startsWith("sep")) return "SEPTIEMBRE";
+        if (normalized.startsWith("oct")) return "OCTUBRE";
+        if (normalized.startsWith("nov")) return "NOVIEMBRE";
+        if (normalized.startsWith("dic") || normalized.startsWith("dec")) return "DICIEMBRE";
+        return null;
+    }
+
+    private static String normalizeHeaderToken(String raw) {
+        if (raw == null) return "";
+        String normalized = java.text.Normalizer.normalize(raw, java.text.Normalizer.Form.NFD)
+            .replaceAll("\\p{M}+", "")
+            .toLowerCase(Locale.ROOT)
+            .replace('_', ' ')
+            .replace('-', ' ')
+            .replaceAll("[€$£¥]", " ")
+            .replaceAll("\\s+", " ")
+            .trim();
+        if (normalized.endsWith("s") && normalized.length() > 4) {
+            normalized = normalized.substring(0, normalized.length() - 1);
+        }
+        return normalized;
+    }
+
+    private static String safeSheetName(Workbook wb, int sheetIndex) {
+        try {
+            if (wb == null || sheetIndex < 0 || sheetIndex >= wb.getNumberOfSheets()) return null;
+            return wb.getSheetName(sheetIndex);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
     private static String[] buildHeaders(Row headerRow, int headerCount, DataFormatter formatter, FormulaEvaluator evaluator) {
         String[] headers = new String[headerCount];
         Map<String, Integer> seen = new HashMap<>();
 
         for (int c = 0; c < headerCount; c++) {
             Cell cell = headerRow.getCell(c);
-            String raw = cell == null ? "" : formatter.formatCellValue(cell, evaluator);
+            String raw = formatCellValueSafe(cell, formatter, evaluator);
             String h = raw == null ? "" : raw.trim();
             if (h.isEmpty()) {
                 h = "col_" + (c + 1);
@@ -434,5 +566,105 @@ public class TabularFileService {
             }
         }
         return headers;
+    }
+
+    private static String formatCellValueSafe(Cell cell, DataFormatter formatter, FormulaEvaluator evaluator) {
+        if (cell == null) return "";
+        try {
+            if (shouldBypassExcelFormat(cell)) {
+                return rawCellValue(cell, evaluator);
+            }
+            return formatter.formatCellValue(cell, evaluator);
+        } catch (RuntimeException ex) {
+            return rawCellValue(cell, evaluator);
+        }
+    }
+
+    private static boolean shouldBypassExcelFormat(Cell cell) {
+        if (cell == null) return false;
+        try {
+            String format = cell.getCellStyle() == null ? null : cell.getCellStyle().getDataFormatString();
+            if (format == null || format.isBlank()) return false;
+            String normalized = format.toLowerCase(Locale.ROOT);
+            if (!normalized.contains("[$")) return false;
+            CellType type = cell.getCellType();
+            return type == CellType.NUMERIC || type == CellType.FORMULA;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private static String rawCellValue(Cell cell, FormulaEvaluator evaluator) {
+        if (cell == null) return "";
+        try {
+            return switch (cell.getCellType()) {
+                case STRING -> safeText(cell.getStringCellValue());
+                case BOOLEAN -> Boolean.toString(cell.getBooleanCellValue());
+                case NUMERIC -> formatNumericOrDate(cell);
+                case FORMULA -> formatFormulaCell(cell, evaluator);
+                case BLANK, ERROR, _NONE -> "";
+            };
+        } catch (Exception ignored) {
+            try {
+                return safeText(cell.toString());
+            } catch (Exception ignoredAgain) {
+                return "";
+            }
+        }
+    }
+
+    private static String formatFormulaCell(Cell cell, FormulaEvaluator evaluator) {
+        if (evaluator == null) return safeText(cell.toString());
+        try {
+            CellValue value = evaluator.evaluate(cell);
+            if (value == null) return safeText(cell.toString());
+            return switch (value.getCellType()) {
+                case STRING -> safeText(value.getStringValue());
+                case BOOLEAN -> Boolean.toString(value.getBooleanValue());
+                case NUMERIC -> formatEvaluatedNumeric(cell, value.getNumberValue());
+                case BLANK, ERROR, _NONE -> "";
+                case FORMULA -> safeText(cell.toString());
+            };
+        } catch (Exception ignored) {
+            return safeText(cell.toString());
+        }
+    }
+
+    private static String formatNumericOrDate(Cell cell) {
+        try {
+            if (DateUtil.isCellDateFormatted(cell)) {
+                LocalDateTime value = cell.getLocalDateTimeCellValue();
+                if (value.toLocalTime().equals(LocalTime.MIDNIGHT)) {
+                    return XLSX_DATE_FMT.format(value);
+                }
+                return XLSX_DATETIME_FMT.format(value);
+            }
+        } catch (Exception ignored) {}
+        return decimal(cell.getNumericCellValue());
+    }
+
+    private static String formatEvaluatedNumeric(Cell cell, double value) {
+        try {
+            if (DateUtil.isCellDateFormatted(cell)) {
+                LocalDateTime dateTime = DateUtil.getLocalDateTime(value, false);
+                if (dateTime.toLocalTime().equals(LocalTime.MIDNIGHT)) {
+                    return XLSX_DATE_FMT.format(dateTime);
+                }
+                return XLSX_DATETIME_FMT.format(dateTime);
+            }
+        } catch (Exception ignored) {}
+        return decimal(value);
+    }
+
+    private static String decimal(double value) {
+        try {
+            return BigDecimal.valueOf(value).stripTrailingZeros().toPlainString();
+        } catch (Exception ignored) {
+            return Double.toString(value);
+        }
+    }
+
+    private static String safeText(String value) {
+        return value == null ? "" : value.trim();
     }
 }

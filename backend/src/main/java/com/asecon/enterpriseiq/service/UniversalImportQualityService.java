@@ -139,7 +139,7 @@ public class UniversalImportQualityService {
                         LocalDate date = UniversalViewService.parseFlexibleDate(value);
                         if (date == null) {
                             stats.dateParseErrors++;
-                            addExample(stats, "Fecha invalida (" + header + "): " + truncate(value, 28));
+                            addExample(stats, "Fecha inválida (" + header + "): " + truncate(value, 28));
                         } else {
                             if (stats.minDate == null || date.isBefore(stats.minDate)) stats.minDate = date;
                             if (stats.maxDate == null || date.isAfter(stats.maxDate)) stats.maxDate = date;
@@ -148,7 +148,7 @@ public class UniversalImportQualityService {
                         BigDecimal number = UniversalViewService.parseDecimal(value);
                         if (number == null) {
                             stats.numberParseErrors++;
-                            addExample(stats, "Numero invalido (" + header + "): " + truncate(value, 28));
+                            addExample(stats, "Número inválido (" + header + "): " + truncate(value, 28));
                         }
                     }
                 }
@@ -165,7 +165,7 @@ public class UniversalImportQualityService {
     private static List<UniversalImportQualityDto.Issue> buildIssues(Stats stats, long structuralNullCells) {
         List<UniversalImportQualityDto.Issue> out = new ArrayList<>();
         if (stats.rowsScanned <= 0) {
-            out.add(new UniversalImportQualityDto.Issue("HIGH", "EMPTY", "Sin filas", "No se detectaron filas validas en el CSV normalizado."));
+            out.add(new UniversalImportQualityDto.Issue("HIGH", "EMPTY", "Sin filas", "No se detectaron filas válidas en el CSV normalizado."));
             return out;
         }
 
@@ -176,7 +176,7 @@ public class UniversalImportQualityService {
         double numErrRate = (double) stats.numberParseErrors / (double) Math.max(1L, stats.rowsScanned);
 
         if (irregularRate >= 0.02d) {
-            out.add(new UniversalImportQualityDto.Issue("HIGH", "IRREGULAR", "CSV irregular", "Hay filas con numero de columnas distinto a la cabecera. Reexporta a CSV UTF-8 o sube el XLSX original."));
+            out.add(new UniversalImportQualityDto.Issue("HIGH", "IRREGULAR", "CSV irregular", "Hay filas con número de columnas distinto a la cabecera. Reexporta a CSV UTF-8 o sube el XLSX original."));
         } else if (irregularRate > 0.0d) {
             out.add(new UniversalImportQualityDto.Issue("MEDIUM", "IRREGULAR", "CSV irregular leve", "Algunas filas tienen columnas inconsistentes; puede afectar agregaciones."));
         }
@@ -188,9 +188,9 @@ public class UniversalImportQualityService {
         }
 
         if (numErrRate >= 0.12d) {
-            out.add(new UniversalImportQualityDto.Issue("HIGH", "NUMBER_PARSE", "Numeros no parseables", "Muchos valores en columnas numericas no se pueden leer. Revisa separadores y simbolos."));
+            out.add(new UniversalImportQualityDto.Issue("HIGH", "NUMBER_PARSE", "Números no parseables", "Muchos valores en columnas numéricas no se pueden leer. Revisa separadores y símbolos."));
         } else if (numErrRate >= 0.03d) {
-            out.add(new UniversalImportQualityDto.Issue("MEDIUM", "NUMBER_PARSE", "Numeros con errores", "Hay errores de parsing numerico; revisa comas y puntos."));
+            out.add(new UniversalImportQualityDto.Issue("MEDIUM", "NUMBER_PARSE", "Números con errores", "Hay errores de parsing numérico; revisa comas y puntos."));
         }
 
         if (structuralNullCells > 0L) {
@@ -198,14 +198,14 @@ public class UniversalImportQualityService {
                 "LOW",
                 "STRUCTURAL_NULLS",
                 "Nulos estructurales detectados",
-                "Parte de las celdas vacias parecen no aplicables por contexto de negocio y no se elevan automaticamente como error."
+                "Parte de las celdas vacías parecen no aplicables por contexto de negocio y no se elevan automáticamente como error."
             ));
         }
 
         if (nullRate >= 0.30d) {
-            out.add(new UniversalImportQualityDto.Issue("MEDIUM", "NULLS", "Muchos nulos", "Hay muchas celdas vacias fuera de los casos estructurales; pueden distorsionar KPIs."));
+            out.add(new UniversalImportQualityDto.Issue("MEDIUM", "NULLS", "Muchos nulos", "Hay muchas celdas vacías fuera de los casos estructurales; pueden distorsionar KPIs."));
         } else if (nullRate >= 0.12d) {
-            out.add(new UniversalImportQualityDto.Issue("LOW", "NULLS", "Nulos", "Hay celdas vacias fuera de los casos estructurales; revisa columnas clave."));
+            out.add(new UniversalImportQualityDto.Issue("LOW", "NULLS", "Nulos", "Hay celdas vacías fuera de los casos estructurales; revisa columnas clave."));
         }
 
         return out;

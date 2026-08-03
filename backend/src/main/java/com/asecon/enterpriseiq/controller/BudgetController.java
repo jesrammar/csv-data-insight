@@ -1,6 +1,7 @@
 package com.asecon.enterpriseiq.controller;
 
 import com.asecon.enterpriseiq.dto.BudgetSummaryDto;
+import com.asecon.enterpriseiq.dto.BudgetAnalysisBundleDto;
 import com.asecon.enterpriseiq.dto.BudgetLongInsightsDto;
 import com.asecon.enterpriseiq.dto.BudgetLongPreviewDto;
 import com.asecon.enterpriseiq.dto.BudgetItemDetailDto;
@@ -50,6 +51,14 @@ public class BudgetController {
         accessService.requireCompanyAccess(user, companyId);
         accessService.requirePlanAtLeast(companyId, Plan.GOLD);
         return budgetWorkflowService.getWorkflow(companyId);
+    }
+
+    @GetMapping("/analysis")
+    public BudgetAnalysisBundleDto analysis(@PathVariable Long companyId) {
+        var user = accessService.currentUser();
+        accessService.requireCompanyAccess(user, companyId);
+        accessService.requirePlanAtLeast(companyId, Plan.GOLD);
+        return budgetWorkflowService.getAnalysisBundle(companyId);
     }
 
     @GetMapping("/summary")
@@ -113,7 +122,7 @@ public class BudgetController {
         var company = companyRepository.findById(companyId).orElseThrow();
         var bundle = budgetService.latestBudgetPdfBundle(companyId);
 
-        byte[] pdf = budgetReportService.renderBudgetPdf(company, bundle.summary(), bundle.longInsights());
+        byte[] pdf = budgetReportService.renderBudgetPdf(company, bundle);
         String filename = ("budget-report-" + companyId + ".pdf").replaceAll("[^a-zA-Z0-9._-]", "_");
 
         return ResponseEntity.ok()

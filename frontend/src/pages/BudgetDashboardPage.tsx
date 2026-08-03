@@ -2,14 +2,13 @@ import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import {
+  getBudgetAnalysis,
   downloadBudgetLongCsv,
   downloadBudgetReportPdf,
   getBudgetItemDetail,
-  getBudgetLongInsights,
   getBudgetLongPreview,
-  getBudgetSummary,
-  getCashflowSummary,
   getUserRole,
+  type BudgetAnalysisBundle,
   type BudgetItemDetail,
   type BudgetItemInsight,
   type BudgetLongInsights,
@@ -23,8 +22,18 @@ import Alert from '../components/ui/Alert'
 import Button from '../components/ui/Button'
 import Section from '../components/ui/Section'
 import EChart from '../components/charts/EChart'
-import { formatMoney } from '../utils/format'
+import { formatMoney, formatText, normalizeText } from '../utils/format'
+import { buildBudgetCashChartSeries } from '../utils/budgetCashChart'
 import { useToast } from '../components/ui/ToastProvider'
+
+function isGoldPlan(planRaw?: string | null) {
+  const normalized = String(planRaw || '')
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, '')
+    .replace(/[._]/g, '-')
+  return normalized === 'GOLD' || normalized === 'PLATINUM' || normalized.startsWith('GOLD-') || normalized.startsWith('PLATINUM-')
+}
 
 function fmtDelta(value?: number | null) {
   if (value == null || Number.isNaN(Number(value))) return '-'
@@ -57,7 +66,7 @@ export default function BudgetDashboardPage() {
   const navigate = useNavigate()
   const role = getUserRole()
   const isClient = role === 'CLIENTE'
-  const hasGold = plan === 'GOLD' || plan === 'PLATINUM'
+  const hasGold = isGoldPlan(plan)
   const toast = useToast()
 
   const [downloadingPdf, setDownloadingPdf] = useState(false)
@@ -71,37 +80,35 @@ export default function BudgetDashboardPage() {
   const [detailError, setDetailError] = useState('')
   const [detail, setDetail] = useState<BudgetItemDetail | null>(null)
 
-  const { data: summaryData, error: summaryError } = useQuery({
-    queryKey: ['budget-summary', companyId],
-    queryFn: () => getBudgetSummary(companyId as number),
+  const { data: analysisData, error: summaryError } = useQuery({
+    queryKey: ['budget-analysis', companyId],
+    queryFn: () => getBudgetAnalysis(companyId as number),
     enabled: !!companyId && hasGold
   })
 
-  const { data: cashflowData, error: cashflowError } = useQuery({
-    queryKey: ['budget-cashflow', companyId],
-    queryFn: () => getCashflowSummary(companyId as number),
-    enabled: !!companyId && hasGold
-  })
-
-  const { data: longInsightsData, error: longInsightsError } = useQuery({
-    queryKey: ['budget-long-insights', companyId],
-    queryFn: () => getBudgetLongInsights(companyId as number),
-    enabled: !!companyId && hasGold
-  })
-
-  const summary = summaryData as BudgetSummary | undefined
-  const cashflow = cashflowData as CashflowSummary | undefined
-  const longInsights = longInsightsData as BudgetLongInsights | undefined
+  const analysis = analysisData as BudgetAnalysisBundle | undefined
+  const workflow = analysis?.workflow
+  const summary = (analysis?.summary || undefined) as BudgetSummary | undefined
+  const cashflow = (analysis?.cashflow || undefined) as CashflowSummary | undefined
+  const longInsights = (analysis?.insights || undefined) as BudgetLongInsights | undefined
+  const cashflowError = null
+  const longInsightsError = null
 
   const months = summary?.months || []
+  const sourceFilename = normalizeText(analysis?.sourceFilename || summary?.sourceFilename || workflow?.sourceFilename || '', '')
+  const sourceSheetIndex = workflow?.sourceSheetIndex
+  const sourceHeaderRow = workflow?.sourceHeaderRow
+  const sourcePresent = Boolean(workflow?.sourcePresent || sourceFilename)
+  const structureValidated = Boolean(workflow?.structureValidated || months.length)
+  const annualInsightsReady = Boolean(workflow?.annualInsightsReady || months.length)
+  const needsValidation = sourcePresent && !structureValidated
+  const waitingForAnalysis = sourcePresent && structureValidated && !annualInsightsReady
   const cashMonths = cashflow?.months || []
   const cashByKey = new Map(cashMonths.map((month) => [month.monthKey, month]))
-  const labels = months.map((month) => month.label)
+  const { labels, cashNet, closingBalance: cashBalance } = buildBudgetCashChartSeries(months, cashMonths)
   const income = months.map((month) => Number(month.income || 0))
   const expense = months.map((month) => Number(month.expense || 0))
   const margin = months.map((month) => Number(month.margin || 0))
-  const cashNet = months.map((month) => Number(cashByKey.get(month.monthKey)?.net || 0))
-  const cashBalance = months.map((month) => Number(cashByKey.get(month.monthKey)?.endingBalance || 0))
 
   const lastMonth = months.length ? months[months.length - 1] : null
   const previousMonth = months.length > 1 ? months[months.length - 2] : null
@@ -151,7 +158,7 @@ export default function BudgetDashboardPage() {
       const nextDetail = await getBudgetItemDetail(companyId as number, item.canonicalRowId)
       setDetail(nextDetail)
     } catch (error: any) {
-      setDetailError(String(error?.message || error || 'No se pudo abrir el detalle mensual.'))
+      setDetailError(formatText(String(error?.message || error || 'No se pudo abrir el detalle mensual.')))
     } finally {
       setDetailLoading(false)
     }
@@ -185,7 +192,7 @@ export default function BudgetDashboardPage() {
       URL.revokeObjectURL(url)
       toast.push({ tone: 'success', title: 'PDF', message: 'Descarga iniciada.' })
     } catch (error: any) {
-      toast.push({ tone: 'danger', title: 'Error', message: String(error?.message || error || 'No se pudo descargar el PDF.') })
+      toast.push({ tone: 'danger', title: 'Error', message: formatText(String(error?.message || error || 'No se pudo descargar el PDF.')) })
     } finally {
       setDownloadingPdf(false)
     }
@@ -206,7 +213,7 @@ export default function BudgetDashboardPage() {
       URL.revokeObjectURL(url)
       toast.push({ tone: 'success', title: 'CSV', message: 'Descarga iniciada.' })
     } catch (error: any) {
-      toast.push({ tone: 'danger', title: 'Error', message: String(error?.message || error || 'No se pudo descargar el CSV largo.') })
+      toast.push({ tone: 'danger', title: 'Error', message: formatText(String(error?.message || error || 'No se pudo descargar el CSV largo.')) })
     } finally {
       setDownloadingLongCsv(false)
     }
@@ -221,7 +228,7 @@ export default function BudgetDashboardPage() {
       setLongPreview(await getBudgetLongPreview(companyId as number))
     } catch (error: any) {
       setLongPreview(null)
-      setLongPreviewError(String(error?.message || error || 'No se pudo generar la validacion del formato largo.'))
+      setLongPreviewError(formatText(String(error?.message || error || 'No se pudo generar la validación del formato largo.')))
     } finally {
       setLongPreviewLoading(false)
     }
@@ -249,8 +256,8 @@ export default function BudgetDashboardPage() {
   return (
     <div>
       <PageHeader
-        title="Analisis tecnico del plan anual"
-        subtitle="Una sola lectura oficial para revisar estructura, drivers, ajustes y tesoreria."
+        title="Análisis técnico del plan anual"
+        subtitle="Una sola lectura oficial para revisar estructura, drivers, ajustes y tesorería."
         actions={
           <>
             <span className="badge">{plan}</span>
@@ -272,19 +279,19 @@ export default function BudgetDashboardPage() {
 
       {!hasGold ? <Alert tone="warning">Disponible desde Gold.</Alert> : null}
       {!companyId ? <Alert tone="warning">Selecciona una empresa.</Alert> : null}
-      {summaryError ? <Alert tone="danger">{String((summaryError as any)?.message || summaryError)}</Alert> : null}
-      {cashflowError ? <Alert tone="warning">{String((cashflowError as any)?.message || cashflowError)}</Alert> : null}
-      {longInsightsError ? <Alert tone="warning">{String((longInsightsError as any)?.message || longInsightsError)}</Alert> : null}
+      {summaryError ? <Alert tone="danger">{formatText(String((summaryError as any)?.message || summaryError))}</Alert> : null}
+      {cashflowError ? <Alert tone="warning">{formatText(String((cashflowError as any)?.message || cashflowError))}</Alert> : null}
+      {longInsightsError ? <Alert tone="warning">{formatText(String((longInsightsError as any)?.message || longInsightsError))}</Alert> : null}
 
       {showLongPreview ? (
-        <Section title="Validacion del formato largo" subtitle="Solo usalo cuando necesites revisar hoja y cabecera.">
+        <Section title="Validación del formato largo" subtitle="Solo úsalo cuando necesites revisar hoja y cabecera.">
           {longPreviewError ? <Alert tone="warning">{longPreviewError}</Alert> : null}
           {longPreview ? (
             <div className="card">
               <div className="grid">
                 <div className="card soft">
                   <div className="upload-hint">Etiqueta detectada</div>
-                  <div className="fw-800 mt-1">{longPreview.labelHeader}</div>
+                  <div className="fw-800 mt-1">{formatText(longPreview.labelHeader)}</div>
                 </div>
                 <div className="card soft">
                   <div className="upload-hint">Meses</div>
@@ -302,11 +309,11 @@ export default function BudgetDashboardPage() {
 
       {months.length ? (
         <>
-          <Section title="1. Resumen" subtitle="Totales canonicos y lectura rapida del ejercicio.">
+          <Section title="1. Resumen" subtitle="Totales canónicos y lectura rápida del ejercicio.">
             <div className="grid">
               <div className="card soft">
                 <div className="upload-hint">Fuente</div>
-                <div className="fw-800 mt-1">{summary?.sourceFilename || '-'}</div>
+                <div className="fw-800 mt-1">{formatText(sourceFilename)}</div>
               </div>
               <div className="card soft">
                 <div className="upload-hint">EBITDA</div>
@@ -323,29 +330,29 @@ export default function BudgetDashboardPage() {
               <div className="card soft">
                 <div className="upload-hint">Mejor / peor margen</div>
                 <div className="fw-800 mt-1">
-                  {summary?.bestMonth || '-'} / {summary?.worstMonth || '-'}
+                  {formatText(summary?.bestMonth)} / {formatText(summary?.worstMonth)}
                 </div>
               </div>
               <div className="card soft">
                 <div className="upload-hint">Pico / valle de actividad</div>
                 <div className="fw-800 mt-1">
-                  {longInsights?.bestMonth || '-'} / {longInsights?.worstMonth || '-'}
+                  {formatText(longInsights?.bestMonth)} / {formatText(longInsights?.worstMonth)}
                 </div>
               </div>
               <div className="card soft">
-                <div className="upload-hint">Cash neto ultimo mes</div>
+                <div className="upload-hint">Cash neto último mes</div>
                 <div className="fw-800 mt-1">{fmtDelta(lastMonth ? cashByKey.get(lastMonth.monthKey)?.net : null)}</div>
                 <div className="upload-hint mt-1">Saldo final {formatMoney(cashflow?.endingBalance)}</div>
               </div>
               <div className="card soft">
-                <div className="upload-hint">Delta EBITDA ultimo mes</div>
+                <div className="upload-hint">Delta EBITDA último mes</div>
                 <div className="fw-800 mt-1">{fmtDelta(marginDelta)}</div>
-                <div className="upload-hint mt-1">{lastMonth?.label || '-'}</div>
+                <div className="upload-hint mt-1">{formatText(lastMonth?.label)}</div>
               </div>
             </div>
           </Section>
 
-          <Section title="2. Graficos" subtitle="Cuenta de explotacion y tesoreria sin recalculos en pantalla.">
+          <Section title="2. Gráficos" subtitle="Cuenta de explotación y tesorería sin recálculos en pantalla.">
             <div className="grid">
               <div className="card">
                 <h3 className="h3-reset">Ingresos / OPEX / EBITDA</h3>
@@ -358,10 +365,10 @@ export default function BudgetDashboardPage() {
             </div>
           </Section>
 
-          <Section title="3. Drivers operativos" subtitle="Solo partidas ordinarias elegibles para concentracion y ranking.">
+          <Section title="3. Drivers operativos" subtitle="Solo partidas ordinarias elegibles para concentración y ranking.">
             <div className="grid">
               <div className="card soft">
-                <div className="upload-hint">Concentracion Top 3</div>
+                <div className="upload-hint">Concentración Top 3</div>
                 <div className="fw-900 mt-1">{Number(longInsights?.concentrationTop3AbsPct || 0).toFixed(2)}%</div>
               </div>
               <div className="card soft">
@@ -378,7 +385,7 @@ export default function BudgetDashboardPage() {
                 <table className="table">
                   <thead>
                     <tr>
-                      <th>Codigo</th>
+                      <th>Código</th>
                       <th>Partida</th>
                       <th>Total anual</th>
                       <th>Peso abs.</th>
@@ -394,12 +401,12 @@ export default function BudgetDashboardPage() {
           </Section>
 
           {longInsights?.accountingAdjustments?.length ? (
-            <Section title="4. Ajustes contables" subtitle="Afectan al P&L, pero no entran en drivers ordinarios ni en concentracion.">
+            <Section title="4. Ajustes contables" subtitle="Afectan al P&L, pero no entran en drivers ordinarios ni en concentración.">
               <div className="card">
                 <table className="table">
                   <thead>
                     <tr>
-                      <th>Codigo</th>
+                      <th>Código</th>
                       <th>Ajuste</th>
                       <th>Total anual</th>
                       <th>Naturaleza</th>
@@ -435,7 +442,7 @@ export default function BudgetDashboardPage() {
                 <table className="table">
                   <thead>
                     <tr>
-                      <th>Codigo</th>
+                      <th>Código</th>
                       <th>Partida</th>
                       <th>Total anual</th>
                       <th>Meses a 0</th>
@@ -466,7 +473,7 @@ export default function BudgetDashboardPage() {
           ) : null}
 
           {selectedItem || detailLoading || detailError ? (
-            <Section title="6. Detalle mensual" subtitle="La identidad canonica del backend gobierna tambien este panel.">
+            <Section title="6. Detalle mensual" subtitle="La identidad canónica del backend gobierna también este panel.">
               <div className="card">
                 <div className="row row-between row-wrap gap-10">
                   <div>
@@ -536,9 +543,45 @@ export default function BudgetDashboardPage() {
         </>
       ) : null}
 
-      {!isClient && !months.length && !summaryError ? (
-        <Alert tone="info">Sube un plan anual valido desde Cargar datos {'->'} Universal para activar esta pantalla.</Alert>
+      {!isClient && !months.length && !summaryError && !sourcePresent ? (
+        <Alert tone="info">Sube un plan anual válido desde Cargar datos {'->'} Universal para activar esta pantalla.</Alert>
+      ) : null}
+
+      {!isClient && !months.length && !summaryError && needsValidation ? (
+        <Section title="Validación pendiente" subtitle="El fichero anual ya está dentro, pero todavía falta fijar una lectura fiable.">
+          <Alert tone="info">El presupuesto ya está cargado. Revisa hoja y cabecera en Plan anual antes de abrir el análisis técnico completo.</Alert>
+          <div className="grid mt-12">
+            <div className="card soft">
+              <div className="upload-hint">Fichero detectado</div>
+              <div className="fw-800 mt-1">{sourceFilename || 'Sin datos'}</div>
+            </div>
+            <div className="card soft">
+              <div className="upload-hint">Hoja</div>
+              <div className="fw-800 mt-1">{sourceSheetIndex != null ? `Hoja ${Number(sourceSheetIndex) + 1}` : 'Sin datos'}</div>
+            </div>
+            <div className="card soft">
+              <div className="upload-hint">Cabecera</div>
+              <div className="fw-800 mt-1">{sourceHeaderRow != null ? `Fila ${sourceHeaderRow}` : 'Sin datos'}</div>
+            </div>
+          </div>
+          <div className="row row-wrap gap-8 mt-12">
+            <Button size="sm" variant="secondary" onClick={() => navigate('/budget')}>
+              Volver al plan anual
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => navigate('/imports?mode=universal&flow=budget&focus=sheet')}>
+              Elegir otra hoja
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => navigate('/imports?mode=universal&flow=budget&focus=header')}>
+              Cambiar cabecera
+            </Button>
+          </div>
+        </Section>
+      ) : null}
+
+      {!isClient && !months.length && !summaryError && waitingForAnalysis ? (
+        <Alert tone="info">La estructura anual ya está detectada, pero la lectura técnica todavía se está completando.</Alert>
       ) : null}
     </div>
   )
 }
+

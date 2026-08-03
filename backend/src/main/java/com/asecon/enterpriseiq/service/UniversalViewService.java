@@ -93,7 +93,7 @@ public class UniversalViewService {
     }
 
     public UniversalChartDataDto preview(Long companyId, UniversalViewRequest request) {
-        if (request == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Config vacío.");
+        if (request == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Configuración vacía.");
         String type = normType(request.getType());
         if (type == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Tipo de dashboard inválido.");
 
@@ -164,7 +164,7 @@ public class UniversalViewService {
     }
 
     public UniversalChartDataDto previewSnapshot(Long companyId, UniversalViewRequest request, Long sourceUniversalImportId) {
-        if (request == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Config vacío.");
+        if (request == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Configuración vacía.");
         String type = normType(request.getType());
         if (type == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Tipo de dashboard inválido.");
 
@@ -214,7 +214,7 @@ public class UniversalViewService {
 
     public byte[] problemsCsv(Long companyId, UniversalViewRequest request, int limit, Long importId) {
         UniversalSummaryDto summary = decodeSummary(resolveImport(companyId, importId));
-        if (request == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Config vacío.");
+        if (request == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Configuración vacía.");
         UniversalViewRequest normalizedRequest = canonicalizeRequest(request, summary);
         String type = normType(normalizedRequest.getType());
         if (type == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Tipo de dashboard inválido.");
@@ -281,7 +281,7 @@ public class UniversalViewService {
     }
 
     public UniversalEvidenceDto evidence(Long companyId, UniversalViewRequest request, String focusLabel, int limit, Long importId) {
-        if (request == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Config vacío.");
+        if (request == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Configuración vacía.");
         UniversalSummaryDto summary = decodeSummary(resolveImport(companyId, importId));
         UniversalViewRequest normalizedRequest = canonicalizeRequest(request, summary);
         String type = normType(normalizedRequest.getType());
@@ -658,7 +658,7 @@ public class UniversalViewService {
     private static String safeCell(String s) {
         if (s == null) return "";
         String v = s.replace("\r", " ").replace("\n", " ").trim();
-        if (v.length() > 200) v = v.substring(0, 200) + "…";
+        if (v.length() > 200) v = v.substring(0, 200) + "â€¦";
         return v;
     }
 
@@ -1128,7 +1128,7 @@ public class UniversalViewService {
     // package-private for tests
     UniversalChartDataDto previewBytes(byte[] bytes, UniversalViewRequest request, UniversalSummaryDto summary) {
         UniversalViewRequest normalizedRequest = canonicalizeRequest(request, summary);
-        if (request == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Config vacío.");
+        if (request == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Configuración vacía.");
         String type = normType(normalizedRequest.getType());
         if (type == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Tipo de dashboard inválido.");
         if (bytes == null || bytes.length == 0) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No hay dataset Universal.");
@@ -1716,11 +1716,11 @@ public class UniversalViewService {
 
         Map<String, Object> series = Map.of("name", selection.unitLabel(), "data", data);
         List<String> warnings = new ArrayList<>(selection.warnings() == null ? List.of() : selection.warnings());
-        addWarnIf(warnings, rows > MAX_ROWS, "Dataset recortado: se analizaron " + rows + " filas (lÃ­mite " + MAX_ROWS + ").");
+        addWarnIf(warnings, rows > MAX_ROWS, "Dataset recortado: se analizaron " + rows + " filas (límite " + MAX_ROWS + ").");
         addWarnIf(warnings, badDates > 0, "Fechas no parseables en '" + dateCol + "': " + badDates + sampleSuffix(badDateSamples) + ".");
-        addWarnIf(warnings, badNums > 0, "NÃºmeros no parseables en '" + firstNonBlank(selection.measureColumn(), selection.secondaryMeasureColumn()) + "': " + badNums + ".");
+        addWarnIf(warnings, badNums > 0, "Números no parseables en '" + firstNonBlank(selection.measureColumn(), selection.secondaryMeasureColumn()) + "': " + badNums + ".");
         addWarnIf(warnings, missingKeys > 0, "Filas sin clave suficiente para " + selection.mode() + ": " + missingKeys + ".");
-        addWarnIf(warnings, dedupConflicts > 0, "Hay " + dedupConflicts + " claves con importes distintos al deduplicar; se conserva la primera observaciÃ³n por clave.");
+        addWarnIf(warnings, dedupConflicts > 0, "Hay " + dedupConflicts + " claves con importes distintos al deduplicar; se conserva la primera observación por clave.");
 
         Map<String, Object> meta = new LinkedHashMap<>();
         meta.put("aggregation", selection.legacyAggregation());
@@ -1794,10 +1794,10 @@ public class UniversalViewService {
 
         Map<String, Object> series = Map.of("name", selection.unitLabel(), "data", data);
         List<String> warnings = new ArrayList<>(selection.warnings() == null ? List.of() : selection.warnings());
-        addWarnIf(warnings, rows > MAX_ROWS, "Dataset recortado: se analizaron " + rows + " filas (lÃ­mite " + MAX_ROWS + ").");
-        addWarnIf(warnings, badNums > 0, "NÃºmeros no parseables en '" + firstNonBlank(selection.measureColumn(), selection.secondaryMeasureColumn()) + "': " + badNums + ".");
+        addWarnIf(warnings, rows > MAX_ROWS, "Dataset recortado: se analizaron " + rows + " filas (límite " + MAX_ROWS + ").");
+        addWarnIf(warnings, badNums > 0, "Números no parseables en '" + firstNonBlank(selection.measureColumn(), selection.secondaryMeasureColumn()) + "': " + badNums + ".");
         addWarnIf(warnings, missingKeys > 0, "Filas sin clave suficiente para " + selection.mode() + ": " + missingKeys + ".");
-        addWarnIf(warnings, dedupConflicts > 0, "Hay " + dedupConflicts + " claves con importes distintos al deduplicar; se conserva la primera observaciÃ³n por clave.");
+        addWarnIf(warnings, dedupConflicts > 0, "Hay " + dedupConflicts + " claves con importes distintos al deduplicar; se conserva la primera observación por clave.");
 
         Map<String, Object> meta = new LinkedHashMap<>();
         meta.put("aggregation", selection.legacyAggregation());
@@ -1861,10 +1861,10 @@ public class UniversalViewService {
         }
 
         List<String> warnings = new ArrayList<>(selection.warnings() == null ? List.of() : selection.warnings());
-        addWarnIf(warnings, rows > MAX_ROWS, "Dataset recortado: se analizaron " + rows + " filas (lÃ­mite " + MAX_ROWS + ").");
-        addWarnIf(warnings, total.invalidNumberCount > 0, "NÃºmeros no parseables en '" + firstNonBlank(selection.measureColumn(), selection.secondaryMeasureColumn()) + "': " + total.invalidNumberCount + ".");
+        addWarnIf(warnings, rows > MAX_ROWS, "Dataset recortado: se analizaron " + rows + " filas (límite " + MAX_ROWS + ").");
+        addWarnIf(warnings, total.invalidNumberCount > 0, "Números no parseables en '" + firstNonBlank(selection.measureColumn(), selection.secondaryMeasureColumn()) + "': " + total.invalidNumberCount + ".");
         addWarnIf(warnings, total.missingKeyCount > 0, "Filas sin clave suficiente para " + selection.mode() + ": " + total.missingKeyCount + ".");
-        addWarnIf(warnings, total.dedupConflictCount > 0, "Hay " + total.dedupConflictCount + " claves con importes distintos al deduplicar; se conserva la primera observaciÃ³n por clave.");
+        addWarnIf(warnings, total.dedupConflictCount > 0, "Hay " + total.dedupConflictCount + " claves con importes distintos al deduplicar; se conserva la primera observación por clave.");
 
         Map<String, Object> meta = new LinkedHashMap<>();
         meta.put("aggregation", selection.legacyAggregation());
@@ -1979,10 +1979,10 @@ public class UniversalViewService {
         }
 
         List<String> warnings = new ArrayList<>(selection.warnings() == null ? List.of() : selection.warnings());
-        addWarnIf(warnings, rows > MAX_ROWS, "Dataset recortado: se analizaron " + rows + " filas (lÃ­mite " + MAX_ROWS + ").");
-        addWarnIf(warnings, badNums > 0, "NÃºmeros no parseables en '" + firstNonBlank(selection.measureColumn(), selection.secondaryMeasureColumn()) + "': " + badNums + ".");
+        addWarnIf(warnings, rows > MAX_ROWS, "Dataset recortado: se analizaron " + rows + " filas (límite " + MAX_ROWS + ").");
+        addWarnIf(warnings, badNums > 0, "Números no parseables en '" + firstNonBlank(selection.measureColumn(), selection.secondaryMeasureColumn()) + "': " + badNums + ".");
         addWarnIf(warnings, missingKeys > 0, "Filas sin clave suficiente para " + selection.mode() + ": " + missingKeys + ".");
-        addWarnIf(warnings, dedupConflicts > 0, "Hay " + dedupConflicts + " claves con importes distintos al deduplicar; se conserva la primera observaciÃ³n por clave.");
+        addWarnIf(warnings, dedupConflicts > 0, "Hay " + dedupConflicts + " claves con importes distintos al deduplicar; se conserva la primera observación por clave.");
 
         Map<String, Object> meta = new LinkedHashMap<>();
         meta.put("aggregation", selection.legacyAggregation());
@@ -2083,11 +2083,11 @@ public class UniversalViewService {
         }
 
         List<String> warnings = new ArrayList<>(selection.warnings() == null ? List.of() : selection.warnings());
-        addWarnIf(warnings, rows > MAX_ROWS, "Dataset recortado: se analizaron " + rows + " filas (lÃ­mite " + MAX_ROWS + ").");
+        addWarnIf(warnings, rows > MAX_ROWS, "Dataset recortado: se analizaron " + rows + " filas (límite " + MAX_ROWS + ").");
         addWarnIf(warnings, badDates > 0, "Fechas no parseables en '" + dateCol + "': " + badDates + sampleSuffix(badDateSamples) + ".");
-        addWarnIf(warnings, badNums > 0, "NÃºmeros no parseables en '" + firstNonBlank(selection.measureColumn(), selection.secondaryMeasureColumn()) + "': " + badNums + ".");
+        addWarnIf(warnings, badNums > 0, "Números no parseables en '" + firstNonBlank(selection.measureColumn(), selection.secondaryMeasureColumn()) + "': " + badNums + ".");
         addWarnIf(warnings, missingKeys > 0, "Filas sin clave suficiente para " + selection.mode() + ": " + missingKeys + ".");
-        addWarnIf(warnings, dedupConflicts > 0, "Hay " + dedupConflicts + " claves con importes distintos al deduplicar; se conserva la primera observaciÃ³n por clave.");
+        addWarnIf(warnings, dedupConflicts > 0, "Hay " + dedupConflicts + " claves con importes distintos al deduplicar; se conserva la primera observación por clave.");
 
         Map<String, Object> meta = new LinkedHashMap<>();
         meta.put("aggregation", selection.legacyAggregation());
@@ -2166,7 +2166,7 @@ public class UniversalViewService {
             Map<String, String> m = new LinkedHashMap<>();
             m.put("column", col);
             m.put("op", op);
-            m.put("value", val.length() > 120 ? val.substring(0, 120) + "…" : val);
+            m.put("value", val.length() > 120 ? val.substring(0, 120) + "â€¦" : val);
             out.add(m);
         }
         return out;
@@ -2209,7 +2209,7 @@ public class UniversalViewService {
             Map<String, String> legacy = new LinkedHashMap<>();
             if (legacyCol != null) legacy.put("column", legacyCol);
             legacy.put("op", "eq");
-            if (legacyVal != null) legacy.put("value", legacyVal.length() > 120 ? legacyVal.substring(0, 120) + "…" : legacyVal);
+            if (legacyVal != null) legacy.put("value", legacyVal.length() > 120 ? legacyVal.substring(0, 120) + "â€¦" : legacyVal);
             out.put("legacyFilter", legacy);
         }
         return out;
@@ -2568,6 +2568,7 @@ public class UniversalViewService {
         return Math.round(v * 100.0) / 100.0;
     }
 }
+
 
 
 

@@ -91,7 +91,7 @@ public class AuthController {
         }
         refreshToken = normalizeToken(refreshToken);
         if (refreshToken == null || refreshToken.isBlank()) {
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Refresh token invalido");
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Refresh token inválido");
         }
 
         boolean cameFromBody = request != null && request.getRefreshToken() != null && !request.getRefreshToken().isBlank();
@@ -112,7 +112,7 @@ public class AuthController {
             ));
         } catch (IllegalArgumentException ex) {
             response.addHeader(HttpHeaders.SET_COOKIE, clearRefreshCookie().toString());
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Refresh token invalido");
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Refresh token inválido");
         }
     }
 

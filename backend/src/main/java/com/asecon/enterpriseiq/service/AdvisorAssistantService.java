@@ -287,7 +287,7 @@ public class AdvisorAssistantService {
             blocks.add("Resumen (universal): '" + summary.filename() + "' (" + summary.rowCount() + " filas, " + summary.columnCount() + " columnas).");
         }
         if (dashboard != null && dashboard.latestPeriod != null) {
-            blocks.add("Caja (dashboard): ultimos " + dashboard.kpis.size() + " meses hasta " + dashboard.latestPeriod + ".");
+            blocks.add("Caja (dashboard): últimos " + dashboard.kpis.size() + " meses hasta " + dashboard.latestPeriod + ".");
         }
         if (tribunal != null && tribunal.kpis() != null && tribunal.kpis().totalClients() > 0) {
             blocks.add("Tribunal: " + tribunal.kpis().totalClients()
@@ -296,7 +296,7 @@ public class AdvisorAssistantService {
                 + "%, cont=" + tribunal.kpis().contabilidadPct()
                 + "%, fiscal=" + tribunal.kpis().fiscalPct() + "%.");
         }
-        String base = blocks.isEmpty() ? "Resumen rapido:" : String.join(" ", blocks);
+        String base = blocks.isEmpty() ? "Resumen rápido:" : String.join(" ", blocks);
 
         String insightLine = insights.stream()
             .limit(3)
@@ -330,7 +330,7 @@ public class AdvisorAssistantService {
 
     private static List<String> buildSuggestedPrompts(Intent intent) {
         return switch (intent) {
-            case CASH -> List.of("Plan 30/60/90 para caja", "¿Qué mes es más crítico?", "Recomendaciones de cobro/pago");
+            case CASH -> List.of("Plan 30/60/90 para caja", "¿Qué mes es más crítico?", "Recomendaciones de cobro y pago");
             case COST -> List.of("Plan de recorte de costes", "¿Dónde están los sobrecostes?", "Quick wins esta semana");
             case GROWTH -> List.of("Plan de crecimiento", "Subir ingresos sin perder margen", "Riesgos del plan");
             case RISK -> List.of("Lista de riesgos", "Controles recomendados", "Acciones inmediatas");

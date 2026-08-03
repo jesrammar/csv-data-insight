@@ -102,7 +102,7 @@ public class AutomationController {
         accessService.requireCompanyAccess(user, companyId);
         String resolved = (period == null || period.isBlank()) ? YearMonth.now().minusMonths(1).toString() : period.trim();
         if (jobService.hasActiveJobForPeriod(companyId, AutomationJobType.ORCHESTRATE_PERIOD_CLOSE, resolved)) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Ya existe un cierre automatico en cola para este periodo.");
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Ya existe un cierre automático en cola para este periodo.");
         }
         var job = jobService.enqueue(
             companyId,

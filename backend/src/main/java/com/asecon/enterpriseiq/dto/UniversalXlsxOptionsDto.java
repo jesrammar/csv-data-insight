@@ -1,4 +1,9 @@
 package com.asecon.enterpriseiq.dto;
 
-public record UniversalXlsxOptionsDto(Integer sheetIndex, Integer headerRow1Based) {}
+public record UniversalXlsxOptionsDto(
+    Integer sheetIndex,
+    Integer headerRow1Based,
+    String sheetName,
+    String headerLabel
+) {}
 

@@ -48,7 +48,7 @@ public class ReportAutomationService {
             reportService.generateHtmlReport(company, resolvedPeriod, html);
             return;
         }
-        String summary = "Informe mensual generado automÃ¡ticamente con KPIs, tendencia y alertas del periodo.";
+        String summary = "Informe mensual generado automáticamente con KPIs, tendencia y alertas del periodo.";
         ReportService.PreparedMonthlyReport prepared = reportService.prepareMonthlyHtmlReport(company, resolvedPeriod, summary, null);
         reportService.generateHtmlReport(company, resolvedPeriod, prepared);
     }
@@ -96,7 +96,7 @@ public class ReportAutomationService {
         <body>
           <div>
             <h1>Informe mensual</h1>
-            <div class="muted">Empresa: %s Â· Periodo: %s</div>
+            <div class="muted">Empresa: %s · Periodo: %s</div>
           </div>
 
           <div class="grid">
@@ -137,3 +137,4 @@ public class ReportAutomationService {
         return raw.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
     }
 }
+

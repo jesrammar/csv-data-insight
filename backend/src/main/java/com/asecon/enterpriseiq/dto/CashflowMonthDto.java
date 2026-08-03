@@ -8,6 +8,10 @@ public record CashflowMonthDto(
     BigDecimal inflow,
     BigDecimal outflow,
     BigDecimal net,
+    BigDecimal declaredNet,
+    BigDecimal derivedNet,
+    String reconciliationStatus,
+    String reconciliationWarning,
     BigDecimal endingBalance,
     BigDecimal deltaNet,
     BigDecimal deltaNetPct

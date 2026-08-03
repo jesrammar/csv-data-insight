@@ -276,6 +276,10 @@ public final class BudgetCanonicalClassifier {
     }
 
     private static Classification explicitSemantic(String normalizedLabel, String normalizedCategory, BudgetLongNormalizer.RowType rowType) {
+        Classification explicitCategory = explicitCategorySemantic(normalizedCategory, rowType);
+        if (explicitCategory != null) {
+            return explicitCategory;
+        }
         String merged = (normalizedLabel + " " + normalizedCategory).trim();
         if (merged.isBlank()) return null;
 
@@ -321,6 +325,81 @@ public final class BudgetCanonicalClassifier {
             return new Classification(BudgetLongNormalizer.RowType.ASSUMPTION, "ASSUMPTION", "ASSUMPTION", "MEDIUM", false);
         }
         return null;
+    }
+
+    private static Classification explicitCategorySemantic(String normalizedCategory, BudgetLongNormalizer.RowType rowType) {
+        if (normalizedCategory == null || normalizedCategory.isBlank()) return null;
+        BudgetLongNormalizer.RowType resolvedRowType = rowType;
+        String semanticKind = null;
+        String sectionKind = "UNKNOWN";
+
+        if (normalizedCategory.startsWith("subtotal ")) {
+            resolvedRowType = BudgetLongNormalizer.RowType.SUBTOTAL;
+        } else if (normalizedCategory.startsWith("total ")) {
+            resolvedRowType = BudgetLongNormalizer.RowType.TOTAL;
+        } else if ("derived kpi".equals(normalizedCategory)) {
+            resolvedRowType = BudgetLongNormalizer.RowType.DERIVED_KPI;
+        }
+
+        switch (normalizedCategory) {
+            case "revenue", "other operating income", "subtotal revenue" -> {
+                semanticKind = "REVENUE";
+                sectionKind = "P_AND_L";
+            }
+            case "opex", "subtotal opex" -> {
+                semanticKind = "OPEX";
+                sectionKind = "P_AND_L";
+            }
+            case "operating adjustment", "inventory variation" -> {
+                semanticKind = "OPERATING_ADJUSTMENT";
+                sectionKind = "P_AND_L";
+            }
+            case "depreciation amortization", "depreciation" -> {
+                semanticKind = "DEPRECIATION_AMORTIZATION";
+                sectionKind = "P_AND_L";
+            }
+            case "financial result", "financial expense", "financial income", "total net result" -> {
+                semanticKind = "FINANCING";
+                sectionKind = "P_AND_L";
+                resolvedRowType = "financial result".equals(normalizedCategory) || "total net result".equals(normalizedCategory)
+                    ? BudgetLongNormalizer.RowType.TOTAL
+                    : resolvedRowType;
+            }
+            case "cashflow inflow" -> {
+                semanticKind = "CASH_INFLOW";
+                sectionKind = "CASHFLOW";
+            }
+            case "cashflow outflow" -> {
+                semanticKind = "CASH_OUTFLOW";
+                sectionKind = "CASHFLOW";
+            }
+            case "cashflow tax" -> {
+                semanticKind = "TAX";
+                sectionKind = "CASHFLOW";
+            }
+            case "opening balance" -> {
+                semanticKind = "OPENING_BALANCE";
+                sectionKind = "CASHFLOW";
+                resolvedRowType = BudgetLongNormalizer.RowType.TOTAL;
+            }
+            case "closing balance" -> {
+                semanticKind = "CLOSING_BALANCE";
+                sectionKind = "CASHFLOW";
+                resolvedRowType = BudgetLongNormalizer.RowType.TOTAL;
+            }
+            case "financing inflow", "financing outflow" -> {
+                semanticKind = "FINANCING";
+                sectionKind = "CASHFLOW";
+            }
+            case "capex" -> {
+                semanticKind = "CAPEX";
+                sectionKind = "UNKNOWN";
+            }
+            default -> {
+                return null;
+            }
+        }
+        return new Classification(resolvedRowType, semanticKind, sectionKind, "HIGH", false);
     }
 
     private static boolean looksLikeCashflowSectionHeader(String merged) {
@@ -539,7 +618,7 @@ public final class BudgetCanonicalClassifier {
 
     private static String sectionKindFor(String semanticKind) {
         return switch (upper(semanticKind)) {
-            case "REVENUE", "OPEX", "CAPEX", "DEPRECIATION_AMORTIZATION", "FINANCING", "TAX", "INVENTORY_VARIATION" -> "P_AND_L";
+            case "REVENUE", "OPEX", "OPERATING_ADJUSTMENT", "CAPEX", "DEPRECIATION_AMORTIZATION", "FINANCING", "FINANCIAL_RESULT", "TAX", "INVENTORY_VARIATION" -> "P_AND_L";
             case "CASH_INFLOW", "CASH_OUTFLOW", "OPENING_BALANCE", "CLOSING_BALANCE" -> "CASHFLOW";
             case "ASSUMPTION" -> "ASSUMPTION";
             default -> "UNKNOWN";
@@ -551,11 +630,11 @@ public final class BudgetCanonicalClassifier {
     }
 
     private static boolean isFinancialSemantic(String semanticKind) {
-        return Set.of("REVENUE", "OPEX", "CAPEX", "DEPRECIATION_AMORTIZATION", "FINANCING", "TAX", "INVENTORY_VARIATION").contains(upper(semanticKind));
+        return Set.of("REVENUE", "OPEX", "OPERATING_ADJUSTMENT", "CAPEX", "DEPRECIATION_AMORTIZATION", "FINANCING", "FINANCIAL_RESULT", "TAX", "INVENTORY_VARIATION").contains(upper(semanticKind));
     }
 
     private static boolean isCarryableContextSemantic(String semanticKind) {
-        return Set.of("REVENUE", "OPEX", "CAPEX", "DEPRECIATION_AMORTIZATION", "TAX", "CASH_INFLOW", "CASH_OUTFLOW", "FINANCING", "INVENTORY_VARIATION").contains(upper(semanticKind));
+        return Set.of("REVENUE", "OPEX", "OPERATING_ADJUSTMENT", "CAPEX", "DEPRECIATION_AMORTIZATION", "TAX", "CASH_INFLOW", "CASH_OUTFLOW", "FINANCING", "FINANCIAL_RESULT", "INVENTORY_VARIATION").contains(upper(semanticKind));
     }
 
     private static boolean looksLikeRevenueEvidence(String normalizedLabel, String code) {

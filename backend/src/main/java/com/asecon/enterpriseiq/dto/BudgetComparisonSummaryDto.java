@@ -7,6 +7,7 @@ public record BudgetComparisonSummaryDto(
     Integer plannedMonths,
     Integer actualMonths,
     Integer commonMonths,
+    String actualDataStatus,
     String assumption,
     String latestComparedPeriod,
     BigDecimal plannedInflowYtd,

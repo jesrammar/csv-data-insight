@@ -57,7 +57,7 @@ public final class UniversalIntakeDiagnosisService {
         List<String> warnings = semanticWarnings == null ? List.of() : semanticWarnings.stream().filter(Objects::nonNull).limit(4).toList();
 
         BudgetLongNormalizer.Result budgetResult = normalizedCsvBytes == null
-            ? new BudgetLongNormalizer.Result(List.of(), null, 0, List.of(), false, List.of(), new byte[0])
+            ? new BudgetLongNormalizer.Result(List.of(), null, 0, List.of(), false, List.of(), new byte[0], "INCOMPATIBLE", null, null)
             : BudgetLongNormalizer.normalizeToLongCsv(normalizedCsvBytes, clientKey, 8_000, 20);
 
         CandidateScore budget = scoreBudget(filename, safeHeaders, safeColumns, rowGranularity, budgetResult, convertedFromXlsx);
@@ -148,8 +148,8 @@ public final class UniversalIntakeDiagnosisService {
         if (hasPeriodHeader) score.add(0.08d, "Hay una columna explicita de periodo.");
         if (hasActualOrForecast) score.add(0.08d, "Aparecen columnas o etiquetas de real, forecast o desviacion.");
         if (convertedFromXlsx) score.add(0.04d, "Viene de XLSX, formato comun en presupuestos anuales.");
-        if (budgetResult.requiresConfirmation()) score.add(-0.08d, "La lectura anual existe, pero aun necesita confirmacion.");
-        if (looksAccounting) score.add(-0.24d, "Tambien tiene rasgos fuertes de mayor contable.");
+        if (budgetResult.requiresConfirmation()) score.add(-0.08d, "La lectura anual existe, pero aún necesita confirmación.");
+        if (looksAccounting) score.add(-0.24d, "También tiene rasgos fuertes de mayor contable.");
 
         return score.clamp();
     }
@@ -160,14 +160,14 @@ public final class UniversalIntakeDiagnosisService {
                                                   String rowGranularity,
                                                   List<UniversalDetectedEntityDto> entities) {
         CandidateScore score = new CandidateScore("ACCOUNTING_LEDGER", "Mayor contable / export contable", "UNIVERSAL", "/universal", "Abrir Universal");
-        if ("ACCOUNTING_ENTRY_LINE".equalsIgnoreCase(safe(rowGranularity))) score.add(0.38d, "La granularidad detectada es linea contable.");
+        if ("ACCOUNTING_ENTRY_LINE".equalsIgnoreCase(safe(rowGranularity))) score.add(0.38d, "La granularidad detectada es línea contable.");
         if (hasSemantic(columns, "ACCOUNT_CODE")) score.add(0.18d, "Hay cuenta contable.");
         if (hasSemantic(columns, "DEBIT_AMOUNT")) score.add(0.12d, "Hay importe debe.");
         if (hasSemantic(columns, "CREDIT_AMOUNT")) score.add(0.12d, "Hay importe haber.");
         if (hasSemantic(columns, "ENTRY_ID")) score.add(0.08d, "Hay identificador de asiento.");
         if (hasSemantic(columns, "DOCUMENT_ID") || hasSemantic(columns, "INVOICE_ID")) score.add(0.06d, "Hay documento o factura.");
         if (hasEntity(entities, "ACCOUNT") || hasEntity(entities, "ENTRY")) score.add(0.06d, "Se reconocen entidades contables.");
-        if (headerAliasHits(headers, BUDGET_ALIASES) >= 4 && wideMonthHeaderHits(headers) >= 6) score.add(-0.18d, "Tambien parece presupuesto anual.");
+        if (headerAliasHits(headers, BUDGET_ALIASES) >= 4 && wideMonthHeaderHits(headers) >= 6) score.add(-0.18d, "También parece presupuesto anual.");
         return score.clamp();
     }
 
@@ -194,7 +194,7 @@ public final class UniversalIntakeDiagnosisService {
             score.add(0.10d, "Incluye texto o contraparte tipico de movimientos.");
         }
         if (observedPeriods >= 1 && observedPeriods <= 3) score.add(0.08d, "El calendario observado encaja con un cierre mensual o trimestral.");
-        if (looksAccounting) score.add(-0.18d, "Tambien tiene rasgos de export contable y no solo de caja.");
+        if (looksAccounting) score.add(-0.18d, "También tiene rasgos de export contable y no solo de caja.");
         if (wideMonthHeaderHits(headers) >= 6) score.add(-0.12d, "La cabecera por meses se parece mas a un plan anual.");
         return score.clamp();
     }
@@ -208,7 +208,7 @@ public final class UniversalIntakeDiagnosisService {
         if (tribunalHits > 0) score.add(Math.min(0.46d, tribunalHits * 0.06d), "Las cabeceras se parecen a cartera, gestor, minutas o cumplimiento.");
         if (hasSemantic(columns, "TAX_IDENTIFIER")) score.add(0.10d, "Incluye NIF o CIF.");
         if ((statusCols + booleanCols) >= 2) score.add(0.08d, "Hay varios estados booleanos o de cumplimiento.");
-        if (hasSemantic(columns, "ACCOUNT_CODE") || hasSemantic(columns, "DEBIT_AMOUNT")) score.add(-0.16d, "Tambien tiene rasgos contables.");
+        if (hasSemantic(columns, "ACCOUNT_CODE") || hasSemantic(columns, "DEBIT_AMOUNT")) score.add(-0.16d, "También tiene rasgos contables.");
         return score.clamp();
     }
 
@@ -235,7 +235,7 @@ public final class UniversalIntakeDiagnosisService {
 
         if (temporal >= 1 && measures >= 1 && categories >= 1) score.add(0.62d, "Hay fecha, medida y categoria para construir una lectura rapida.");
         else if (measures >= 1 && categories >= 1) score.add(0.48d, "Hay importes y categorias suficientes para explorar.");
-        else if (columns.size() >= 3) score.add(0.28d, "Es al menos una tabla reutilizable aunque el dominio no sea claro.");
+        else if (columns.size() >= 3) score.add(0.28d, "Es al menos una tabla reutilizable, aunque el dominio no sea claro.");
         if ("ROW".equalsIgnoreCase(safe(rowGranularity))) score.add(0.04d, "No hay una entidad dominante cerrada, asi que encaja mejor como tabla generica.");
         return score.clamp();
     }
@@ -266,7 +266,7 @@ public final class UniversalIntakeDiagnosisService {
                 return "Detecta estructura anual, pero conviene confirmar hoja, cabecera o mapeo antes de cerrar la lectura.";
             }
             return convertedFromXlsx
-                ? "Prueba otra hoja o cambia la fila de cabecera: aun no se detectan bien los meses del ejercicio."
+                ? "Prueba otra hoja o cambia la fila de cabecera: aún no se detectan bien los meses del ejercicio."
                 : "Falta una estructura anual clara por meses o por columnas de budget/actual/forecast.";
         }
         if ("CASH_TRANSACTIONS".equals(kind)) {
@@ -284,7 +284,7 @@ public final class UniversalIntakeDiagnosisService {
         if ("PAYROLL_DATASET".equals(kind)) {
             return "Encaja en Universal: usa una vista de coste mensual o ranking por empleado/rol.";
         }
-        return "Universal puede abrir una vista rapida, pero aun no hay una familia de flujo cerrada del todo.";
+        return "Universal puede abrir una vista rápida, pero aún no hay una familia de flujo cerrada del todo.";
     }
 
     private static String headline(String kind, boolean needsConfirmation) {
@@ -296,7 +296,7 @@ public final class UniversalIntakeDiagnosisService {
             case "PAYROLL_DATASET" -> "Parece un dataset de nominas";
             default -> "Parece una tabla analitica";
         };
-        return needsConfirmation ? base + " (confirmacion recomendada)" : base;
+        return needsConfirmation ? base + " (confirmación recomendada)" : base;
     }
 
     private static String detail(String kind,
@@ -308,7 +308,7 @@ public final class UniversalIntakeDiagnosisService {
             int months = budgetResult.monthKeys() == null ? 0 : budgetResult.monthKeys().size();
             return months >= 6
                 ? "He detectado " + months + " meses y una lectura anual utilizable. El siguiente paso natural es Plan anual."
-                : "Tiene rasgos de presupuesto, pero aun no detecto bien la estructura anual completa.";
+                : "Tiene rasgos de presupuesto, pero aún no detecto bien la estructura anual completa.";
         }
         if ("ACCOUNTING_LEDGER".equals(kind)) {
             return "Tiene cuentas, debe/haber y granularidad de asiento. Sirve para lectura contable, no para tratarlo como caja o presupuesto.";
@@ -323,11 +323,11 @@ public final class UniversalIntakeDiagnosisService {
             return "Las cabeceras se parecen a gestor, minutas, carga o cumplimiento. Encaja mejor en Tribunal.";
         }
         if ("PAYROLL_DATASET".equals(kind)) {
-            return "Las columnas se parecen a coste salarial por empleado o rol. Universal puede leerlo bien como analisis operativo.";
+            return "Las columnas se parecen a coste salarial por empleado o rol. Universal puede leerlo bien como análisis operativo.";
         }
         return score >= 0.55d
-            ? "No detecto un flujo consultivo cerrado, pero si una tabla util para explorar en Universal."
-            : "La estructura aun es ambigua. Conviene revisar cabeceras, hoja o el objetivo antes de seguir.";
+            ? "No detecto un flujo consultivo cerrado, pero sí una tabla útil para explorar en Universal."
+            : "La estructura aún es ambigua. Conviene revisar cabeceras, hoja o el objetivo antes de seguir.";
     }
 
     private static int wideMonthHeaderHits(List<String> headers) {

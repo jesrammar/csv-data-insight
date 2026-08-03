@@ -3,6 +3,7 @@ package com.asecon.enterpriseiq.service;
 import com.asecon.enterpriseiq.dto.BudgetLongInsightsDto;
 import com.asecon.enterpriseiq.dto.BudgetMonthDto;
 import com.asecon.enterpriseiq.dto.BudgetSummaryDto;
+import com.asecon.enterpriseiq.dto.CashflowSummaryDto;
 import com.asecon.enterpriseiq.model.Company;
 import java.io.IOException;
 import java.io.InputStream;
@@ -16,13 +17,17 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.text.NumberFormat;
 import org.springframework.stereotype.Service;
 
 @Service
 public class BudgetReportService {
     private static final String BUDGET_REPORT_TEMPLATE = loadClasspathResource("reports/budget-report-template.html");
     private static final String BUDGET_REPORT_CSS = loadClasspathResource("reports/budget-report.css");
+    private static final String BRAND_IMAGE_DATA_URI = "data:image/png;base64," + loadClasspathResource("reports/enterpriseiq-image-base64.txt").replaceAll("\\s+", "");
+    private static final Locale REPORT_LOCALE = Locale.forLanguageTag("es-ES");
 
     private final ReportService reportService;
 
@@ -30,31 +35,44 @@ public class BudgetReportService {
         this.reportService = reportService;
     }
 
-    public byte[] renderBudgetPdf(Company company, BudgetSummaryDto summary, BudgetLongInsightsDto longInsights) {
-        String html = buildBudgetReportHtml(company, summary, longInsights);
+    public byte[] renderBudgetPdf(Company company, BudgetService.BudgetPdfBundle bundle) {
+        String html = buildBudgetReportHtml(company, bundle);
         return reportService.renderPdfFromHtml(html);
     }
 
-    public String buildBudgetReportHtml(Company company, BudgetSummaryDto summary, BudgetLongInsightsDto longInsights) {
+    public String buildBudgetReportHtml(Company company, BudgetService.BudgetPdfBundle bundle) {
+        BudgetSummaryDto summary = bundle == null ? null : bundle.summary();
+        CashflowSummaryDto cashflow = bundle == null ? null : bundle.cashflow();
+        BudgetLongInsightsDto longInsights = bundle == null ? null : bundle.longInsights();
         String companyName = company == null || company.getName() == null ? "Empresa" : company.getName();
-        String filename = summary == null ? "" : safe(summary.sourceFilename());
+        String filename = bundle != null && bundle.meta() != null && bundle.meta().sourceFilename() != null
+            ? safe(bundle.meta().sourceFilename())
+            : summary == null ? "" : safe(summary.sourceFilename());
         String generatedAt = ZonedDateTime.now(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"));
 
         BigDecimal totalIncome = summary == null ? null : summary.totalIncome();
         BigDecimal totalExpense = summary == null ? null : summary.totalExpense();
         BigDecimal totalMargin = summary == null ? null : summary.totalMargin();
+        BigDecimal totalEbit = summary == null ? null : summary.totalEbit();
+        BigDecimal totalNet = summary == null ? null : summary.netResult();
+        BigDecimal endingBalance = cashflow == null ? null : cashflow.endingBalance();
         String bestMonth = summary == null ? null : summary.bestMonth();
         String worstMonth = summary == null ? null : summary.worstMonth();
 
         Map<String, String> placeholders = new LinkedHashMap<>();
         placeholders.put("REPORT_CSS", BUDGET_REPORT_CSS);
+        placeholders.put("BRAND_IMAGE_SRC", BRAND_IMAGE_DATA_URI);
         placeholders.put("COMPANY_NAME", escape(companyName));
         placeholders.put("SOURCE_FILENAME", escape(filename));
         placeholders.put("GENERATED_AT", escape(generatedAt));
         placeholders.put("TOTAL_INCOME", escape(fmtMoney(totalIncome)));
         placeholders.put("TOTAL_EXPENSE", escape(fmtMoney(totalExpense)));
         placeholders.put("TOTAL_MARGIN", escape(fmtMoney(totalMargin)));
-        placeholders.put("EXECUTIVE_HTML", buildExecutive(summary, longInsights));
+        placeholders.put("TOTAL_EBIT", escape(fmtMoney(totalEbit)));
+        placeholders.put("TOTAL_NET", escape(fmtMoney(totalNet)));
+        placeholders.put("TOTAL_CLOSING", escape(fmtMoney(endingBalance)));
+        placeholders.put("COVER_KPI_HTML", buildCoverKpis(totalIncome, totalExpense, totalMargin, totalEbit, totalNet, endingBalance));
+        placeholders.put("EXECUTIVE_HTML", buildExecutive(summary, cashflow, longInsights));
         placeholders.put("MINI_TOTALS_HTML", buildMiniMonthTotals(longInsights));
         placeholders.put("BEST_MONTH", escape(bestMonth == null ? "-" : bestMonth));
         placeholders.put("WORST_MONTH", escape(worstMonth == null ? "-" : worstMonth));
@@ -65,7 +83,66 @@ public class BudgetReportService {
         return applyTemplate(BUDGET_REPORT_TEMPLATE, placeholders);
     }
 
-    private String buildExecutive(BudgetSummaryDto summary, BudgetLongInsightsDto longInsights) {
+    private String buildCoverKpis(BigDecimal totalIncome,
+                                  BigDecimal totalExpense,
+                                  BigDecimal totalMargin,
+                                  BigDecimal totalEbit,
+                                  BigDecimal totalNet,
+                                  BigDecimal endingBalance) {
+        return """
+          <table class='cover-kpi-table'>
+            <tr>
+              <td>
+                <div class='cover-kpi-card'>
+                  <div class='cover-kpi-label'>Ingresos</div>
+                  <div class='cover-kpi-value'>%s</div>
+                </div>
+              </td>
+              <td>
+                <div class='cover-kpi-card'>
+                  <div class='cover-kpi-label'>OPEX</div>
+                  <div class='cover-kpi-value'>%s</div>
+                </div>
+              </td>
+              <td>
+                <div class='cover-kpi-card'>
+                  <div class='cover-kpi-label'>EBITDA</div>
+                  <div class='cover-kpi-value'>%s</div>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <div class='cover-kpi-card'>
+                  <div class='cover-kpi-label'>EBIT</div>
+                  <div class='cover-kpi-value'>%s</div>
+                </div>
+              </td>
+              <td>
+                <div class='cover-kpi-card'>
+                  <div class='cover-kpi-label'>Resultado neto</div>
+                  <div class='cover-kpi-value'>%s</div>
+                </div>
+              </td>
+              <td>
+                <div class='cover-kpi-card'>
+                  <div class='cover-kpi-label'>Saldo final</div>
+                  <div class='cover-kpi-value'>%s</div>
+                </div>
+              </td>
+            </tr>
+          </table>
+        """.formatted(
+            escape(fmtMoney(totalIncome)),
+            escape(fmtMoney(totalExpense)),
+            escape(fmtMoney(totalMargin)),
+            escape(fmtMoney(totalEbit)),
+            escape(fmtMoney(totalNet)),
+            escape(fmtMoney(endingBalance))
+        );
+    }
+
+    private String buildExecutive(BudgetSummaryDto summary, CashflowSummaryDto cashflow, BudgetLongInsightsDto longInsights) {
         if (summary == null) {
             return "<div class='muted'>Sin datos de presupuesto.</div>";
         }
@@ -73,6 +150,7 @@ public class BudgetReportService {
         String margin = fmtMoney(summary.totalMargin());
         String income = fmtMoney(summary.totalIncome());
         String expense = fmtMoney(summary.totalExpense());
+        String closing = cashflow == null ? "-" : fmtMoney(cashflow.endingBalance());
         BigDecimal concentration = longInsights == null ? null : longInsights.concentrationTop3AbsPct();
         String concentrationText = concentration == null
             ? "-"
@@ -82,6 +160,9 @@ public class BudgetReportService {
           <div class='small'>
             <b>Lectura anual:</b> EBITDA <b>%s</b> con ingresos de <b>%s</b> y gastos operativos de <b>%s</b>.
             <div class='muted top-gap'>
+              Saldo final previsto: <b>%s</b>.
+            </div>
+            <div class='muted top-gap'>
               La concentracion del top 3 de drivers operativos queda en <b>%s</b>.
               %s
             </div>
@@ -90,6 +171,7 @@ public class BudgetReportService {
             escape(margin),
             escape(income),
             escape(expense),
+            escape(closing),
             escape(concentrationText),
             buildTop3DriversInline(longInsights)
         );
@@ -369,7 +451,11 @@ public class BudgetReportService {
         if (value == null) {
             return "-";
         }
-        return value.setScale(2, RoundingMode.HALF_UP).toPlainString() + " EUR";
+        NumberFormat format = NumberFormat.getNumberInstance(REPORT_LOCALE);
+        format.setMinimumFractionDigits(2);
+        format.setMaximumFractionDigits(2);
+        format.setGroupingUsed(true);
+        return format.format(value.setScale(2, RoundingMode.HALF_UP)) + " €";
     }
 
     private static String safe(String value) {

@@ -53,7 +53,10 @@ public final class BudgetLongNormalizer {
                          List<LongRow> sampleRows,
                          boolean requiresConfirmation,
                          List<String> mappingNotes,
-                         byte[] longCsvBytes) {}
+                         byte[] longCsvBytes,
+                         String analysisStatus,
+                         Integer headerRow1Based,
+                         Double headerScore) {}
 
     private static final List<String> MONTH_KEYS = List.of(
         "ENERO", "FEBRERO", "MARZO", "ABRIL", "MAYO", "JUNIO",
@@ -81,6 +84,35 @@ public final class BudgetLongNormalizer {
     private static final Pattern LEADING_ACCOUNTING_CODE = Pattern.compile(
         "^(?<code>[0-9]{2,4}(?:[-/][0-9]{1,4})?)(?:[\\s._-]+(?<label>.*))?$"
     );
+    private static final Set<String> SEMANTIC_HEADER_ALIASES = Set.of(
+        "naturaleza", "tipo", "tipo partida", "tipo registro", "categoria", "clasificacion",
+        "financial nature", "row type", "nature", "classification", "line type", "category"
+    );
+    private static final Set<String> CODE_HEADER_ALIASES = Set.of(
+        "codigo", "cuenta", "account", "code", "concept code", "plan item", "account code"
+    );
+    private static final Set<String> DESCRIPTIVE_HEADER_ALIASES = Set.of(
+        "concepto", "descripcion", "description", "partida", "label", "concept", "detalle", "nombre"
+    );
+    private static final Set<String> SECTION_HEADER_ALIASES = Set.of(
+        "seccion", "section", "bloque", "area financiera", "financial block"
+    );
+    private static final Set<String> ROW_ROLE_HEADER_ALIASES = Set.of(
+        "clase de registro", "tipo de fila", "tipo fila", "rol de fila", "row role", "row type", "line type", "clase", "registro"
+    );
+    private static final Set<String> FINANCIAL_GROUP_HEADER_ALIASES = Set.of(
+        "grupo financiero", "financial group", "grupo", "family", "financial family", "nature group"
+    );
+    private static final Set<String> DIRECTION_HEADER_ALIASES = Set.of(
+        "sentido", "direction", "sign", "nature sign", "flow direction"
+    );
+    private static final Set<String> AGGREGATION_POLICY_HEADER_ALIASES = Set.of(
+        "criterio de agregacion", "criterio de agregación", "politica de agregacion", "politica de agregación",
+        "aggregation policy", "aggregation rule", "rollup policy", "aggregation"
+    );
+    private static final Set<String> GENERIC_AMOUNT_HEADER_ALIASES = Set.of(
+        "importe", "importe eur", "amount", "amount eur", "valor", "value", "importe euro", "monthly amount"
+    );
 
     public static Result normalizeToLongCsv(byte[] normalizedUniversalCsvBytes, int maxSourceRows, int maxSampleRows) {
         return normalizeToLongCsv(normalizedUniversalCsvBytes, null, maxSourceRows, maxSampleRows);
@@ -91,7 +123,7 @@ public final class BudgetLongNormalizer {
                                             int maxSourceRows,
                                             int maxSampleRows) {
         if (normalizedUniversalCsvBytes == null || normalizedUniversalCsvBytes.length == 0) {
-            return new Result(List.of(), null, 0, List.of(), false, List.of(), new byte[0]);
+            return emptyResult();
         }
         if (maxSourceRows < 1) maxSourceRows = 1_000;
         if (maxSourceRows > 50_000) maxSourceRows = 50_000;
@@ -103,20 +135,20 @@ public final class BudgetLongNormalizer {
         if (eol >= 0) head = head.substring(0, eol);
         char delimiter = detectDelimiter(head);
 
-        List<String> headers;
-        List<Map<String, String>> sampleRows;
+        StructuredInput structured;
         try {
-            headers = readHeaders(normalizedUniversalCsvBytes, delimiter);
-            sampleRows = readSampleRows(normalizedUniversalCsvBytes, delimiter, 120);
+            structured = detectStructure(normalizedUniversalCsvBytes, delimiter, 120);
         } catch (Exception ex) {
-            return new Result(List.of(), null, 0, List.of(), false, List.of(), new byte[0]);
+            return emptyResult();
         }
+        List<String> headers = structured.headers();
+        List<Map<String, String>> sampleRows = structured.sampleRows();
         if (headers.isEmpty()) {
-            return new Result(List.of(), null, 0, List.of(), false, List.of(), new byte[0]);
+            return emptyResult();
         }
 
         if (isCanonicalBudgetLongHeaders(headers)) {
-            return previewCanonicalLongSource(normalizedUniversalCsvBytes, delimiter, maxSourceRows, maxSampleRows);
+            return previewCanonicalLongSource(normalizedUniversalCsvBytes, delimiter, maxSourceRows, maxSampleRows, structured.headerRowIndex() + 1, structured.headerScore());
         }
 
         Map<String, String> monthHeader = detectWideMonthHeaders(headers);
@@ -129,7 +161,8 @@ public final class BudgetLongNormalizer {
                 monthHeader,
                 clientKey,
                 maxSourceRows,
-                maxSampleRows
+                maxSampleRows,
+                structured
             );
         }
 
@@ -172,9 +205,39 @@ public final class BudgetLongNormalizer {
         String departmentHeader = resolution.headerFor("DEPARTMENT");
         String currencyHeader = resolution.headerFor("CURRENCY");
         String natureHeader = natureInference == null ? null : natureInference.header();
+        String sectionHeader = findHeaderByTokens(headers, SECTION_HEADER_ALIASES.toArray(String[]::new));
+        String rowRoleHeader = findHeaderByTokens(headers, ROW_ROLE_HEADER_ALIASES.toArray(String[]::new));
+        String financialGroupHeader = findHeaderByTokens(headers, FINANCIAL_GROUP_HEADER_ALIASES.toArray(String[]::new));
+        String directionHeader = findHeaderByTokens(headers, DIRECTION_HEADER_ALIASES.toArray(String[]::new));
+        String aggregationPolicyHeader = findHeaderByTokens(headers, AGGREGATION_POLICY_HEADER_ALIASES.toArray(String[]::new));
+        Set<String> excludedHeaders = new LinkedHashSet<>();
+        for (String header : Arrays.asList(
+            monthNameHeader,
+            monthNumberHeader,
+            budgetHeader,
+            actualHeader,
+            forecastHeader,
+            varianceHeader,
+            labelHeader,
+            codeHeader,
+            costCenterHeader,
+            departmentHeader,
+            currencyHeader,
+            natureHeader,
+            sectionHeader,
+            rowRoleHeader,
+            financialGroupHeader,
+            directionHeader,
+            aggregationPolicyHeader
+        )) {
+            if (header != null) excludedHeaders.add(header);
+        }
+        String genericAmountHeader = detectGenericAmountHeader(headers, sampleRows, excludedHeaders);
 
         boolean hasPeriod = monthNameHeader != null || monthNumberHeader != null;
-        boolean hasAmounts = budgetHeader != null || actualHeader != null || forecastHeader != null || varianceHeader != null;
+        boolean longSemanticSupport = countNonNull(sectionHeader, rowRoleHeader, financialGroupHeader, directionHeader, aggregationPolicyHeader) >= 2;
+        boolean hasAmounts = budgetHeader != null || actualHeader != null || forecastHeader != null || varianceHeader != null
+            || (genericAmountHeader != null && longSemanticSupport);
         if (!hasPeriod || !hasAmounts || labelHeader == null) {
             return new Result(
                 List.of(),
@@ -183,7 +246,10 @@ public final class BudgetLongNormalizer {
                 List.of(),
                 resolution.requiresConfirmation(),
                 resolution.notes(),
-                new byte[0]
+                new byte[0],
+                "INCOMPATIBLE",
+                structured.headerRowIndex() + 1,
+                structured.headerScore()
             );
         }
 
@@ -199,14 +265,25 @@ public final class BudgetLongNormalizer {
             actualHeader,
             forecastHeader,
             varianceHeader,
+            genericAmountHeader,
             labelHeader,
             codeHeader,
             natureHeader,
+            sectionHeader,
+            rowRoleHeader,
+            financialGroupHeader,
+            directionHeader,
+            aggregationPolicyHeader,
             costCenterHeader,
             departmentHeader,
             currencyHeader,
-            resolution
+            resolution,
+            structured
         );
+    }
+
+    private static Result emptyResult() {
+        return new Result(List.of(), null, 0, List.of(), false, List.of(), new byte[0], "INCOMPATIBLE", null, null);
     }
 
     private static Result normalizeWideSource(byte[] bytes,
@@ -216,13 +293,21 @@ public final class BudgetLongNormalizer {
                                               Map<String, String> monthHeader,
                                               String clientKey,
                                               int maxSourceRows,
-                                              int maxSampleRows) {
+                                              int maxSampleRows,
+                                              StructuredInput structured) {
+        BudgetSemanticResolver.Resolution resolution = BudgetSemanticResolver.resolve(headers, sampleRows, clientKey);
+        BudgetSemanticResolver.HeaderInference natureInference = BudgetSemanticResolver.detectNatureHeader(headers, sampleRows);
         String labelHeader = firstNonNull(
-            BudgetSemanticResolver.resolve(headers, sampleRows, clientKey).headerFor("CONCEPT_NAME"),
+            resolution.headerFor("CONCEPT_NAME"),
             detectLabelHeader(headers, sampleRows)
         );
+        String codeHeader = selectCodeHeader(headers, resolution.headerFor("CONCEPT_CODE"));
+        String natureHeader = natureInference == null ? null : natureInference.header();
+        String costCenterHeader = resolution.headerFor("COST_CENTER");
+        String departmentHeader = resolution.headerFor("DEPARTMENT");
+        String currencyHeader = resolution.headerFor("CURRENCY");
         if (labelHeader == null) {
-            return new Result(List.copyOf(monthHeader.keySet()), null, 0, List.of(), true, List.of("No se ha podido proponer una columna fiable para la partida."), new byte[0]);
+            return new Result(List.copyOf(monthHeader.keySet()), null, 0, List.of(), true, List.of("No se ha podido proponer una columna fiable para la partida."), new byte[0], "INCOMPATIBLE", structured.headerRowIndex() + 1, structured.headerScore());
         }
 
         List<LongRow> sample = new ArrayList<>();
@@ -232,35 +317,42 @@ public final class BudgetLongNormalizer {
         int reviewRows = 0;
         int reviewDetailRows = 0;
         int inferredRows = 0;
-        BudgetCanonicalClassifier.SectionContext sectionContext = BudgetCanonicalClassifier.emptyContext();
+        boolean headerConfirmation = resolution.requiresConfirmation() && natureHeader == null;
+        NormalizationContext normalizationContext = NormalizationContext.initial();
         Map<String, String> knownFinancialNatureBySignature = new LinkedHashMap<>();
         StringBuilder out = new StringBuilder(64 * 1024);
         out.append(CANONICAL_HEADER);
 
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(new ByteArrayInputStream(bytes), StandardCharsets.UTF_8))) {
-            CSVParser parser = csvParser(reader, delimiter);
+        try {
             int rows = 0;
-            for (CSVRecord record : parser) {
+            for (Map<String, String> record : structured.dataRows()) {
                 rows++;
                 if (rows > maxSourceRows) break;
 
-                String labelRaw = clean(get(record, labelHeader));
+                String labelRaw = clean(record.get(labelHeader));
                 if (labelRaw == null) continue;
 
                 ParsedLabel parsed = parsePartidaLabel(labelRaw);
+                String code = firstNonNull(clean(record.get(codeHeader)), parsed.code());
+                String natureValue = clean(record.get(natureHeader));
+                String costCenter = clean(record.get(costCenterHeader));
+                String department = clean(record.get(departmentHeader));
+                String currency = clean(record.get(currencyHeader));
                 List<BigDecimal> rowValues = new ArrayList<>();
                 for (String monthColumn : monthHeader.values()) {
-                    rowValues.add(parseMoney(cleanAllowZero(get(record, monthColumn))));
+                    rowValues.add(parseMoney(cleanAllowZero(record.get(monthColumn))));
                 }
                 BudgetCanonicalClassifier.Classification classification = BudgetCanonicalClassifier.classify(
                     clientKey,
                     labelRaw,
-                    parsed.code(),
-                    parsed.label(),
+                    code,
+                    firstNonNull(natureValue, parsed.label()),
                     rowValues,
-                    sectionContext
+                    normalizationContext.sectionContext()
                 );
-                sectionContext = BudgetCanonicalClassifier.nextContext(sectionContext, classification);
+                BudgetSemanticResolver.NatureInference explicitNature = BudgetSemanticResolver.classifyBusinessNature(clientKey, natureValue, labelRaw, code);
+                classification = applyExplicitNature(classification, explicitNature);
+                normalizationContext = normalizationContext.next(classification, explicitNature, labelRaw, rowValues);
                 String mappingStatus = "UNKNOWN".equals(classification.semanticKind())
                     ? "REVIEW"
                     : classification.ambiguous() ? "INFERRED" : "CANONICAL";
@@ -271,7 +363,7 @@ public final class BudgetLongNormalizer {
                 }
                 if ("REVIEW".equals(mappingStatus)) reviewRows++;
                 if ("INFERRED".equals(mappingStatus)) inferredRows++;
-                String signature = rowSignature(parsed.code(), parsed.label());
+                String signature = rowSignature(code, parsed.label());
                 String financialNature = deriveFinancialNature(classification, signature, knownFinancialNatureBySignature);
                 String cashflowNature = deriveCashflowNature(classification, financialNature);
                 if (isFinancialNature(financialNature)) {
@@ -281,18 +373,18 @@ public final class BudgetLongNormalizer {
                 for (String mk : MONTH_KEYS) {
                     String monthColumn = monthHeader.get(mk);
                     if (monthColumn == null) continue;
-                    BigDecimal budgetAmount = parseMoney(cleanAllowZero(get(record, monthColumn)));
+                    BigDecimal budgetAmount = parseMoney(cleanAllowZero(record.get(monthColumn)));
                     if (budgetAmount == null) continue;
 
                     LongRow row = new LongRow(
                         classification.rowType(),
-                        parsed.code(),
+                        code,
                         parsed.label(),
                         canonicalSemanticKind(financialNature, cashflowNature, classification.semanticKind()),
                         classification.sectionKind(),
                         financialNature,
                         cashflowNature,
-                        "ROW-" + rows,
+                        normalizationContext.currentBlockId(),
                         rows,
                         mk,
                         MONTH_LABELS.getOrDefault(mk, mk),
@@ -301,9 +393,9 @@ public final class BudgetLongNormalizer {
                         null,
                         null,
                         null,
-                        null,
-                        null,
-                        null,
+                        currency,
+                        costCenter,
+                        department,
                         classification.confidence(),
                         mappingStatus
                     );
@@ -313,14 +405,14 @@ public final class BudgetLongNormalizer {
                 }
             }
         } catch (Exception ex) {
-            List<String> notes = mergeNotes(List.of(), detailRows, unknownDetailRows, reviewRows, inferredRows);
+            List<String> notes = mergeNotes(resolution.notes(), detailRows, unknownDetailRows, reviewRows, inferredRows);
             boolean requiresConfirmation = requiresConfirmation(detailRows, unknownDetailRows, reviewDetailRows, false);
-            return new Result(List.copyOf(monthHeader.keySet()), labelHeader, produced, sample, requiresConfirmation, notes, out.toString().getBytes(StandardCharsets.UTF_8));
+            return new Result(List.copyOf(monthHeader.keySet()), labelHeader, produced, sample, requiresConfirmation, notes, out.toString().getBytes(StandardCharsets.UTF_8), resultStatus(monthHeader.size(), requiresConfirmation, detailRows), structured.headerRowIndex() + 1, structured.headerScore());
         }
 
-        List<String> notes = mergeNotes(List.of(), detailRows, unknownDetailRows, reviewRows, inferredRows);
+        List<String> notes = mergeNotes(resolution.notes(), detailRows, unknownDetailRows, reviewRows, inferredRows);
         boolean requiresConfirmation = requiresConfirmation(detailRows, unknownDetailRows, reviewDetailRows, false);
-        return new Result(List.copyOf(monthHeader.keySet()), labelHeader, produced, sample, requiresConfirmation, notes, out.toString().getBytes(StandardCharsets.UTF_8));
+        return new Result(List.copyOf(monthHeader.keySet()), labelHeader, produced, sample, requiresConfirmation, notes, out.toString().getBytes(StandardCharsets.UTF_8), resultStatus(monthHeader.size(), requiresConfirmation, detailRows), structured.headerRowIndex() + 1, structured.headerScore());
     }
 
     private static Result normalizeLongSource(byte[] bytes,
@@ -334,13 +426,20 @@ public final class BudgetLongNormalizer {
                                               String actualHeader,
                                               String forecastHeader,
                                               String varianceHeader,
+                                              String genericAmountHeader,
                                               String labelHeader,
                                               String codeHeader,
                                               String natureHeader,
+                                              String sectionHeader,
+                                              String rowRoleHeader,
+                                              String financialGroupHeader,
+                                              String directionHeader,
+                                              String aggregationPolicyHeader,
                                               String costCenterHeader,
                                               String departmentHeader,
                                               String currencyHeader,
-                                              BudgetSemanticResolver.Resolution resolution) {
+                                              BudgetSemanticResolver.Resolution resolution,
+                                              StructuredInput structured) {
         List<LongRow> sample = new ArrayList<>();
         Map<String, Boolean> monthSeen = new LinkedHashMap<>();
         long produced = 0;
@@ -349,37 +448,55 @@ public final class BudgetLongNormalizer {
         int reviewRows = 0;
         int reviewDetailRows = 0;
         int inferredRows = 0;
-        BudgetCanonicalClassifier.SectionContext sectionContext = BudgetCanonicalClassifier.emptyContext();
+        boolean headerConfirmation = resolution.requiresConfirmation() && natureHeader == null;
+        NormalizationContext normalizationContext = NormalizationContext.initial();
         Map<String, String> knownFinancialNatureBySignature = new LinkedHashMap<>();
         StringBuilder out = new StringBuilder(64 * 1024);
         out.append(CANONICAL_HEADER);
 
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(new ByteArrayInputStream(bytes), StandardCharsets.UTF_8))) {
-            CSVParser parser = csvParser(reader, delimiter);
+        try {
             int rows = 0;
-            for (CSVRecord record : parser) {
+            for (Map<String, String> record : structured.dataRows()) {
                 rows++;
                 if (rows > maxSourceRows) break;
 
-                String monthKey = detectMonthKey(clean(get(record, monthNameHeader)), clean(get(record, monthNumberHeader)));
+                String monthKey = detectMonthKey(clean(record.get(monthNameHeader)), clean(record.get(monthNumberHeader)));
                 if (monthKey == null) continue;
 
-                BigDecimal budgetAmount = parseMoney(cleanAllowZero(get(record, budgetHeader)));
-                BigDecimal actualAmount = parseMoney(cleanAllowZero(get(record, actualHeader)));
-                BigDecimal forecastAmount = parseMoney(cleanAllowZero(get(record, forecastHeader)));
-                BigDecimal varianceAmount = parseMoney(cleanAllowZero(get(record, varianceHeader)));
+                BigDecimal genericAmount = parseMoney(cleanAllowZero(record.get(genericAmountHeader)));
+                BigDecimal budgetAmount = parseMoney(cleanAllowZero(record.get(budgetHeader)));
+                BigDecimal actualAmount = parseMoney(cleanAllowZero(record.get(actualHeader)));
+                BigDecimal forecastAmount = parseMoney(cleanAllowZero(record.get(forecastHeader)));
+                BigDecimal varianceAmount = parseMoney(cleanAllowZero(record.get(varianceHeader)));
+                if (budgetAmount == null && actualAmount == null && forecastAmount == null && varianceAmount == null) {
+                    budgetAmount = genericAmount;
+                }
+                boolean singleAmountLongMode = genericAmountHeader != null
+                    || (budgetHeader == null && countNonNull(actualHeader, forecastHeader, varianceHeader) == 1);
+                if (singleAmountLongMode && budgetAmount == null) {
+                    budgetAmount = firstNonNullAmount(actualAmount, forecastAmount, varianceAmount);
+                    actualAmount = null;
+                    forecastAmount = null;
+                    varianceAmount = null;
+                }
                 BigDecimal amount = firstNonNullAmount(budgetAmount, actualAmount, forecastAmount, varianceAmount);
                 if (amount == null) continue;
 
-                String label = clean(get(record, labelHeader));
+                String label = clean(record.get(labelHeader));
                 if (label == null) continue;
-                String code = clean(get(record, codeHeader));
-                String natureValue = clean(get(record, natureHeader));
-                String costCenter = clean(get(record, costCenterHeader));
-                String department = clean(get(record, departmentHeader));
-                String currency = clean(get(record, currencyHeader));
+                String code = clean(record.get(codeHeader));
+                String natureValue = clean(record.get(natureHeader));
+                String sectionValue = clean(record.get(sectionHeader));
+                String rowRoleValue = clean(record.get(rowRoleHeader));
+                String financialGroupValue = clean(record.get(financialGroupHeader));
+                String directionValue = clean(record.get(directionHeader));
+                String aggregationPolicyValue = clean(record.get(aggregationPolicyHeader));
+                String costCenter = clean(record.get(costCenterHeader));
+                String department = clean(record.get(departmentHeader));
+                String currency = clean(record.get(currencyHeader));
+                String semanticHints = joinNonBlank(natureValue, financialGroupValue, directionValue, aggregationPolicyValue, sectionValue, rowRoleValue);
 
-                BudgetSemanticResolver.NatureInference nature = BudgetSemanticResolver.classifyBusinessNature(clientKey, natureValue, label, code);
+                BudgetSemanticResolver.NatureInference nature = BudgetSemanticResolver.classifyBusinessNature(clientKey, semanticHints, label, code);
                 if ("UNKNOWN".equals(nature.concept()) && budgetAmount != null) {
                     if (budgetAmount.signum() < 0) {
                         nature = new BudgetSemanticResolver.NatureInference("OPEX", 0.55d, "LOW", true, List.of("inferido por signo al faltar tipología explícita"));
@@ -392,11 +509,13 @@ public final class BudgetLongNormalizer {
                     clientKey,
                     label,
                     code,
-                    firstNonNull(natureValue, costCenter, department),
+                    firstNonNull(semanticHints, costCenter, department),
                     Arrays.asList(budgetAmount, actualAmount, forecastAmount, varianceAmount),
-                    sectionContext
+                    normalizationContext.sectionContext()
                 );
-                sectionContext = BudgetCanonicalClassifier.nextContext(sectionContext, classification);
+                classification = applyExplicitNature(classification, nature);
+                classification = applyStructuralHints(classification, sectionValue, rowRoleValue, financialGroupValue, directionValue, aggregationPolicyValue);
+                normalizationContext = normalizationContext.next(classification, nature, label, Arrays.asList(budgetAmount, actualAmount, forecastAmount, varianceAmount));
                 String mappingStatus = "UNKNOWN".equals(classification.semanticKind())
                     ? "REVIEW"
                     : classification.ambiguous() ? "INFERRED" : "CANONICAL";
@@ -421,7 +540,7 @@ public final class BudgetLongNormalizer {
                     classification.sectionKind(),
                     financialNature,
                     cashflowNature,
-                    "ROW-" + rows,
+                    normalizationContext.currentBlockId(),
                     rows,
                     monthKey,
                     MONTH_LABELS.getOrDefault(monthKey, monthKey),
@@ -443,13 +562,13 @@ public final class BudgetLongNormalizer {
             }
         } catch (Exception ex) {
             List<String> notes = mergeNotes(resolution.notes(), detailRows, unknownDetailRows, reviewRows, inferredRows);
-            boolean requiresConfirmation = requiresConfirmation(detailRows, unknownDetailRows, reviewDetailRows, resolution.requiresConfirmation());
-            return new Result(List.copyOf(monthSeen.keySet()), labelHeader, produced, sample, requiresConfirmation, notes, out.toString().getBytes(StandardCharsets.UTF_8));
+            boolean requiresConfirmation = requiresConfirmation(detailRows, unknownDetailRows, reviewDetailRows, headerConfirmation);
+            return new Result(List.copyOf(monthSeen.keySet()), labelHeader, produced, sample, requiresConfirmation, notes, out.toString().getBytes(StandardCharsets.UTF_8), resultStatus(monthSeen.size(), requiresConfirmation, detailRows), structured.headerRowIndex() + 1, structured.headerScore());
         }
 
         List<String> notes = mergeNotes(resolution.notes(), detailRows, unknownDetailRows, reviewRows, inferredRows);
-        boolean requiresConfirmation = requiresConfirmation(detailRows, unknownDetailRows, reviewDetailRows, resolution.requiresConfirmation());
-        return new Result(List.copyOf(monthSeen.keySet()), labelHeader, produced, sample, requiresConfirmation, notes, out.toString().getBytes(StandardCharsets.UTF_8));
+        boolean requiresConfirmation = requiresConfirmation(detailRows, unknownDetailRows, reviewDetailRows, headerConfirmation);
+        return new Result(List.copyOf(monthSeen.keySet()), labelHeader, produced, sample, requiresConfirmation, notes, out.toString().getBytes(StandardCharsets.UTF_8), resultStatus(monthSeen.size(), requiresConfirmation, detailRows), structured.headerRowIndex() + 1, structured.headerScore());
     }
 
     private static void appendCsvRow(StringBuilder out, LongRow row) {
@@ -533,6 +652,466 @@ public final class BudgetLongNormalizer {
 
     private static String upper(String value) {
         return value == null ? "" : value.trim().toUpperCase(Locale.ROOT);
+    }
+
+    private record StructuredInput(List<String> headers,
+                                   List<Map<String, String>> sampleRows,
+                                   List<Map<String, String>> dataRows,
+                                   int headerRowIndex,
+                                   double headerScore) {}
+
+    private record CandidateHeader(int rowIndex,
+                                   List<String> headers,
+                                   double score) {}
+
+    private record NormalizationContext(BudgetCanonicalClassifier.SectionContext sectionContext,
+                                        String currentBlockId,
+                                        String currentSectionKind,
+                                        int blockSequence) {
+        static NormalizationContext initial() {
+            return new NormalizationContext(BudgetCanonicalClassifier.emptyContext(), "BLOCK-1", "UNKNOWN", 1);
+        }
+
+        NormalizationContext next(BudgetCanonicalClassifier.Classification classification,
+                                  BudgetSemanticResolver.NatureInference explicitNature,
+                                  String label,
+                                  List<BigDecimal> values) {
+            BudgetCanonicalClassifier.SectionContext nextSectionContext = BudgetCanonicalClassifier.nextContext(sectionContext, classification);
+            String inferredSection = normalizeSectionKind(classification == null ? null : classification.sectionKind(), explicitNature == null ? null : explicitNature.concept(), label, values);
+            String effectiveSection = "UNKNOWN".equals(inferredSection) ? currentSectionKind : inferredSection;
+            boolean explicitBoundary = isExplicitBlockBoundary(classification, explicitNature, label, values);
+            boolean sectionChanged = !"UNKNOWN".equals(effectiveSection) && !effectiveSection.equals(currentSectionKind);
+            if (explicitBoundary || sectionChanged) {
+                int nextSequence = blockSequence + 1;
+                return new NormalizationContext(nextSectionContext, effectiveSection + "-" + nextSequence, effectiveSection, nextSequence);
+            }
+            return new NormalizationContext(nextSectionContext, currentBlockId, effectiveSection, blockSequence);
+        }
+    }
+
+    private static StructuredInput detectStructure(byte[] bytes, char delimiter, int maxSampleRows) throws Exception {
+        List<List<String>> rawRows = readRawRows(bytes, delimiter, 160);
+        if (rawRows.isEmpty()) {
+            return new StructuredInput(List.of(), List.of(), List.of(), 0, 0d);
+        }
+
+        CandidateHeader candidate = detectHeaderCandidate(rawRows);
+        if (candidate == null || candidate.headers().isEmpty()) {
+            return new StructuredInput(List.of(), List.of(), List.of(), 0, 0d);
+        }
+
+        List<Map<String, String>> dataRows = new ArrayList<>();
+        List<Map<String, String>> sampleRows = new ArrayList<>();
+        for (int i = candidate.rowIndex() + 1; i < rawRows.size(); i++) {
+            List<String> row = rawRows.get(i);
+            if (row == null || row.isEmpty()) continue;
+            Map<String, String> mapped = mapRow(candidate.headers(), row);
+            if (mapped.values().stream().allMatch(v -> v == null || v.isBlank())) continue;
+            if (looksLikeRepeatedHeaderRow(candidate.headers(), row)) continue;
+            dataRows.add(mapped);
+            if (sampleRows.size() < maxSampleRows) {
+                sampleRows.add(mapped);
+            }
+        }
+        return new StructuredInput(candidate.headers(), sampleRows, dataRows, candidate.rowIndex(), candidate.score());
+    }
+
+    private static CandidateHeader detectHeaderCandidate(List<List<String>> rawRows) {
+        CandidateHeader best = null;
+        int limit = Math.min(rawRows.size(), 40);
+        for (int rowIndex = 0; rowIndex < limit; rowIndex++) {
+            List<String> rawHeader = rawRows.get(rowIndex);
+            if (rawHeader == null || rawHeader.isEmpty()) continue;
+            List<String> headers = dedupeHeaders(rawHeader);
+            double score = headerScore(headers, rawRows, rowIndex);
+            if (score <= 0d) continue;
+            if (best == null || score > best.score()) {
+                best = new CandidateHeader(rowIndex, headers, score);
+            }
+        }
+        return best;
+    }
+
+    private static double headerScore(List<String> headers, List<List<String>> rawRows, int rowIndex) {
+        int nonBlank = 0;
+        int descriptive = 0;
+        int codeCols = 0;
+        int semanticCols = 0;
+        int structuralCols = 0;
+        int monthlyCols = 0;
+        int periodCols = 0;
+        int amountCols = 0;
+        Set<String> unique = new LinkedHashSet<>();
+
+        for (String header : headers) {
+            String clean = clean(header);
+            if (clean == null) continue;
+            nonBlank++;
+            unique.add(BudgetSemanticResolver.normalize(clean));
+            if (normalizeMonthName(clean) != null) monthlyCols++;
+            String normalized = BudgetSemanticResolver.normalize(clean);
+            if (containsAlias(normalized, DESCRIPTIVE_HEADER_ALIASES)) descriptive++;
+            if (containsAlias(normalized, CODE_HEADER_ALIASES)) codeCols++;
+            if (containsAlias(normalized, SEMANTIC_HEADER_ALIASES)) semanticCols++;
+            if (containsAlias(normalized, SECTION_HEADER_ALIASES)
+                || containsAlias(normalized, ROW_ROLE_HEADER_ALIASES)
+                || containsAlias(normalized, FINANCIAL_GROUP_HEADER_ALIASES)
+                || containsAlias(normalized, DIRECTION_HEADER_ALIASES)
+                || containsAlias(normalized, AGGREGATION_POLICY_HEADER_ALIASES)) {
+                structuralCols++;
+            }
+            if (normalized.contains("mes") || normalized.contains("month") || normalized.contains("period")) periodCols++;
+            if (normalized.contains("budget") || normalized.contains("presupuesto") || normalized.contains("plan")
+                || normalized.contains("actual") || normalized.contains("real") || normalized.contains("forecast")
+                || normalized.contains("prevision") || normalized.contains("variance") || normalized.contains("desviacion")
+                || normalized.contains("importe") || normalized.contains("amount")) {
+                amountCols++;
+            }
+        }
+        if (nonBlank < 2) return 0d;
+
+        double uniqueness = unique.size() / (double) nonBlank;
+        double monthlyScore = Math.min(1d, monthlyCols / 12d);
+        double descriptiveScore = Math.min(1d, descriptive / 3d);
+        double semanticScore = Math.min(1d, (codeCols + semanticCols + structuralCols) / 4d);
+        double longScore = Math.min(1d, (periodCols + descriptive + amountCols + codeCols + semanticCols + structuralCols) / 6d);
+        double density = downstreamNumericDensity(rawRows, rowIndex, headers, monthlyCols, descriptive > 0 ? 0 : -1);
+
+        double score = Math.max(monthlyScore * 0.42d, longScore * 0.30d)
+            + descriptiveScore * 0.16d
+            + semanticScore * 0.16d
+            + density * 0.18d
+            + uniqueness * 0.08d;
+
+        if (monthlyCols >= 6 && descriptive > 0) score += 0.10d;
+        if (periodCols > 0 && amountCols > 0 && descriptive > 0) score += 0.08d;
+        if (periodCols > 0 && amountCols > 0 && structuralCols >= 2) score += 0.14d;
+        if (rowIndex > 0) score -= Math.min(0.12d, rowIndex * 0.01d);
+        return Math.max(0d, Math.min(1d, score));
+    }
+
+    private static double downstreamNumericDensity(List<List<String>> rawRows, int headerRowIndex, List<String> headers, int monthlyCols, int labelHint) {
+        if (rawRows == null || rawRows.isEmpty()) return 0d;
+        List<Integer> monthIndexes = new ArrayList<>();
+        for (int i = 0; i < headers.size(); i++) {
+            if (normalizeMonthName(headers.get(i)) != null) monthIndexes.add(i);
+        }
+        int inspectedRows = 0;
+        int numericHits = 0;
+        int numericSlots = 0;
+        int totalWindow = Math.min(rawRows.size(), headerRowIndex + 13);
+        for (int r = headerRowIndex + 1; r < totalWindow; r++) {
+            List<String> row = rawRows.get(r);
+            if (row == null || row.isEmpty()) continue;
+            inspectedRows++;
+            if (!monthIndexes.isEmpty()) {
+                for (Integer idx : monthIndexes) {
+                    if (idx == null || idx < 0 || idx >= row.size()) continue;
+                    numericSlots++;
+                    if (BudgetSemanticResolver.looksLikeNumericAmount(cleanAllowZero(row.get(idx)))) numericHits++;
+                }
+            } else {
+                for (int c = 0; c < Math.min(headers.size(), row.size()); c++) {
+                    if (c == labelHint) continue;
+                    String value = cleanAllowZero(row.get(c));
+                    if (value == null) continue;
+                    numericSlots++;
+                    if (BudgetSemanticResolver.looksLikeNumericAmount(value) || BudgetSemanticResolver.looksLikeMonthLikeValue(value) || BudgetSemanticResolver.looksLikeMonthNumber(value)) {
+                        numericHits++;
+                    }
+                }
+            }
+        }
+        if (inspectedRows == 0 || numericSlots == 0) return 0d;
+        return numericHits / (double) numericSlots;
+    }
+
+    private static boolean looksLikeRepeatedHeaderRow(List<String> headers, List<String> row) {
+        if (headers == null || row == null || headers.isEmpty() || row.isEmpty()) return false;
+        int comparable = Math.min(headers.size(), row.size());
+        int equal = 0;
+        for (int i = 0; i < comparable; i++) {
+            String left = BudgetSemanticResolver.normalize(headers.get(i));
+            String right = BudgetSemanticResolver.normalize(row.get(i));
+            if (!left.isBlank() && left.equals(right)) equal++;
+        }
+        return comparable >= 3 && equal >= Math.max(2, comparable - 1);
+    }
+
+    private static List<List<String>> readRawRows(byte[] bytes, char delimiter, int maxRows) throws Exception {
+        List<List<String>> rows = new ArrayList<>();
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(new ByteArrayInputStream(bytes), StandardCharsets.UTF_8))) {
+            CSVParser parser = CSVFormat.DEFAULT.builder()
+                .setDelimiter(delimiter)
+                .setIgnoreEmptyLines(false)
+                .setIgnoreSurroundingSpaces(true)
+                .setTrim(true)
+                .build()
+                .parse(reader);
+            int count = 0;
+            for (CSVRecord record : parser) {
+                if (count >= maxRows) break;
+                List<String> row = new ArrayList<>();
+                for (int i = 0; i < record.size(); i++) {
+                    row.add(record.get(i));
+                }
+                rows.add(row);
+                count++;
+            }
+        }
+        return rows;
+    }
+
+    private static List<String> dedupeHeaders(List<String> rawHeader) {
+        List<String> headers = new ArrayList<>();
+        Map<String, Integer> seen = new LinkedHashMap<>();
+        int width = Math.min(rawHeader.size(), 200);
+        for (int i = 0; i < width; i++) {
+            String header = cleanAllowZero(rawHeader.get(i));
+            if (header == null) header = "col_" + (i + 1);
+            Integer count = seen.get(header);
+            if (count == null) {
+                seen.put(header, 1);
+                headers.add(header);
+            } else {
+                int next = count + 1;
+                seen.put(header, next);
+                headers.add(header + "_" + next);
+            }
+        }
+        return headers;
+    }
+
+    private static Map<String, String> mapRow(List<String> headers, List<String> rawRow) {
+        Map<String, String> mapped = new LinkedHashMap<>();
+        for (int i = 0; i < headers.size(); i++) {
+            mapped.put(headers.get(i), i < rawRow.size() ? rawRow.get(i) : "");
+        }
+        return mapped;
+    }
+
+    private static boolean containsAlias(String normalizedHeader, Set<String> aliases) {
+        if (normalizedHeader == null || normalizedHeader.isBlank() || aliases == null) return false;
+        for (String alias : aliases) {
+            String normalizedAlias = BudgetSemanticResolver.normalize(alias);
+            if (!normalizedAlias.isBlank() && normalizedHeader.contains(normalizedAlias)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static List<String> sampleValues(List<Map<String, String>> sampleRows, String header, int limit) {
+        if (header == null || sampleRows == null || sampleRows.isEmpty()) return List.of();
+        List<String> values = new ArrayList<>();
+        for (Map<String, String> row : sampleRows) {
+            if (row == null) continue;
+            values.add(cleanAllowZero(row.get(header)));
+            if (values.size() >= limit) break;
+        }
+        return values;
+    }
+
+    private static int countNonNull(String... values) {
+        if (values == null) return 0;
+        int count = 0;
+        for (String value : values) {
+            if (value != null && !value.isBlank()) count++;
+        }
+        return count;
+    }
+
+    private static String joinNonBlank(String... values) {
+        if (values == null || values.length == 0) return null;
+        StringBuilder out = new StringBuilder();
+        for (String value : values) {
+            if (value == null || value.isBlank()) continue;
+            if (!out.isEmpty()) out.append(" | ");
+            out.append(value.trim());
+        }
+        return out.isEmpty() ? null : out.toString();
+    }
+
+    private static String detectGenericAmountHeader(List<String> headers,
+                                                    List<Map<String, String>> sampleRows,
+                                                    Set<String> excludedHeaders) {
+        if (headers == null || headers.isEmpty()) return null;
+        String best = null;
+        double bestScore = 0d;
+        for (String header : headers) {
+            if (header == null || (excludedHeaders != null && excludedHeaders.contains(header))) continue;
+            String normalized = BudgetSemanticResolver.normalize(header);
+            if (normalized.isBlank()) continue;
+            List<String> values = sampleValues(sampleRows, header, 120);
+            long nonBlank = values.stream().filter(Objects::nonNull).map(String::trim).filter(v -> !v.isBlank()).count();
+            if (nonBlank == 0) continue;
+            long numeric = values.stream().filter(BudgetSemanticResolver::looksLikeNumericAmount).count();
+            double numericRatio = numeric / (double) nonBlank;
+            double aliasScore = containsAlias(normalized, GENERIC_AMOUNT_HEADER_ALIASES) ? 0.72d : 0d;
+            double score = aliasScore + (numericRatio * 0.45d);
+            if ((normalized.contains("importe") || normalized.contains("amount") || normalized.contains("valor")) && numericRatio >= 0.75d) {
+                score += 0.18d;
+            }
+            if (score >= 0.70d && score > bestScore) {
+                best = header;
+                bestScore = score;
+            }
+        }
+        return best;
+    }
+
+    private static BudgetCanonicalClassifier.Classification applyExplicitNature(BudgetCanonicalClassifier.Classification base,
+                                                                               BudgetSemanticResolver.NatureInference explicitNature) {
+        if (base == null) return null;
+        if (explicitNature == null || "UNKNOWN".equalsIgnoreCase(explicitNature.concept()) || explicitNature.score() < 0.58d) {
+            return base;
+        }
+        String concept = mapExplicitNature(explicitNature.concept());
+        String sectionKind = normalizeSectionKind(base.sectionKind(), concept, null, null);
+        return new BudgetCanonicalClassifier.Classification(
+            base.rowType(),
+            concept,
+            sectionKind,
+            strongerConfidence(base.confidence(), explicitNature.confidence()),
+            explicitNature.ambiguous() && base.ambiguous()
+        );
+    }
+
+    private static BudgetCanonicalClassifier.Classification applyStructuralHints(BudgetCanonicalClassifier.Classification base,
+                                                                                 String sectionValue,
+                                                                                 String rowRoleValue,
+                                                                                 String financialGroupValue,
+                                                                                 String directionValue,
+                                                                                 String aggregationPolicyValue) {
+        if (base == null) return null;
+        RowType hintedRowType = normalizeRowRole(rowRoleValue, aggregationPolicyValue, base.rowType());
+        String hintedSemantic = normalizeStructuralSemantic(financialGroupValue, directionValue, aggregationPolicyValue, base.semanticKind());
+        String hintedSection = normalizeStructuralSection(sectionValue, financialGroupValue, hintedSemantic, base.sectionKind());
+        String confidence = hintedRowType != base.rowType()
+            || !upper(hintedSemantic).equals(upper(base.semanticKind()))
+            || !upper(hintedSection).equals(upper(base.sectionKind()))
+            ? strongerConfidence(base.confidence(), "HIGH")
+            : base.confidence();
+        return new BudgetCanonicalClassifier.Classification(
+            hintedRowType,
+            hintedSemantic,
+            hintedSection,
+            confidence,
+            base.ambiguous()
+        );
+    }
+
+    private static String mapExplicitNature(String concept) {
+        return switch (upper(concept)) {
+            case "OTHER_OPERATING_INCOME" -> "REVENUE";
+            case "FINANCIAL_RESULT" -> "FINANCING";
+            default -> upper(concept);
+        };
+    }
+
+    private static RowType normalizeRowRole(String rowRoleValue, String aggregationPolicyValue, RowType fallback) {
+        String normalizedRole = BudgetSemanticResolver.normalize(rowRoleValue);
+        String normalizedPolicy = BudgetSemanticResolver.normalize(aggregationPolicyValue);
+        if (normalizedRole.contains("detail") || normalizedRole.contains("detalle") || normalizedRole.contains("linea")) return RowType.DETAIL;
+        if (normalizedRole.contains("subtotal")) return RowType.SUBTOTAL;
+        if (normalizedRole.equals("total") || normalizedRole.contains(" total")) return RowType.TOTAL;
+        if (normalizedRole.contains("indicador") || normalizedRole.contains("kpi") || normalizedRole.contains("ratio")) return RowType.DERIVED_KPI;
+        if (normalizedRole.contains("saldo")) return RowType.DERIVED_KPI;
+        if (normalizedRole.contains("nota") || normalizedRole.contains("note")) return RowType.ASSUMPTION;
+        if (normalizedPolicy.contains("derived") || normalizedPolicy.contains("last value") || normalizedPolicy.contains("lastvalue")) return RowType.DERIVED_KPI;
+        if ("none".equals(normalizedPolicy)) return RowType.ASSUMPTION;
+        return fallback;
+    }
+
+    private static String normalizeStructuralSemantic(String financialGroupValue,
+                                                      String directionValue,
+                                                      String aggregationPolicyValue,
+                                                      String fallback) {
+        String combined = joinNonBlank(financialGroupValue, directionValue, aggregationPolicyValue);
+        BudgetSemanticResolver.NatureInference inference = BudgetSemanticResolver.classifyBusinessNature(null, combined);
+        if (inference != null && inference.concept() != null && !"UNKNOWN".equalsIgnoreCase(inference.concept()) && inference.score() >= 0.58d) {
+            return mapExplicitNature(inference.concept());
+        }
+        return upper(fallback);
+    }
+
+    private static String normalizeStructuralSection(String sectionValue,
+                                                     String financialGroupValue,
+                                                     String semanticKind,
+                                                     String fallback) {
+        String normalizedSection = BudgetSemanticResolver.normalize(sectionValue);
+        if (normalizedSection.contains("explotacion") || normalizedSection.contains("resultado") || normalizedSection.contains("profit and loss")) {
+            return "P_AND_L";
+        }
+        if (normalizedSection.contains("caja") || normalizedSection.contains("tesoreria") || normalizedSection.contains("cash") || normalizedSection.contains("banco")) {
+            return "CASHFLOW";
+        }
+        if (normalizedSection.contains("balance")) {
+            return "BALANCE";
+        }
+        if (normalizedSection.contains("nota") || normalizedSection.contains("informacion") || normalizedSection.contains("notes")) {
+            return "NOTES";
+        }
+        String normalizedGroup = BudgetSemanticResolver.normalize(financialGroupValue);
+        if (normalizedGroup.contains("cash") || normalizedGroup.contains("saldo")) {
+            return "CASHFLOW";
+        }
+        return normalizeSectionKind(fallback, semanticKind, financialGroupValue, null);
+    }
+
+    private static String normalizeSectionKind(String currentSection, String semanticKind, String label, List<BigDecimal> values) {
+        String explicit = upper(currentSection);
+        if (!explicit.isBlank() && !"UNKNOWN".equals(explicit)) {
+            return explicit;
+        }
+        String semantic = upper(mapExplicitNature(semanticKind));
+        if (Set.of("CASH_INFLOW", "CASH_OUTFLOW", "OPENING_BALANCE", "CLOSING_BALANCE").contains(semantic)) {
+            return "CASHFLOW";
+        }
+        if ("ASSUMPTION".equals(semantic)) {
+            return "NOTES";
+        }
+        if (Set.of("REVENUE", "OPEX", "OPERATING_ADJUSTMENT", "DEPRECIATION_AMORTIZATION", "FINANCING", "TAX", "CAPEX").contains(semantic)) {
+            return "P_AND_L";
+        }
+        String normalizedLabel = BudgetSemanticResolver.normalize(label);
+        if (normalizedLabel.contains("saldo inicial") || normalizedLabel.contains("saldo final") || normalizedLabel.contains("tesoreria") || normalizedLabel.contains("cash flow")) {
+            return "CASHFLOW";
+        }
+        if (looksStructurallyNote(values, normalizedLabel)) {
+            return "NOTES";
+        }
+        return "UNKNOWN";
+    }
+
+    private static boolean isExplicitBlockBoundary(BudgetCanonicalClassifier.Classification classification,
+                                                   BudgetSemanticResolver.NatureInference explicitNature,
+                                                   String label,
+                                                   List<BigDecimal> values) {
+        if (classification == null) return false;
+        if (classification.rowType() == RowType.TEXT || classification.rowType() == RowType.ASSUMPTION) return true;
+        if (classification.rowType() != RowType.DETAIL && !classification.sectionKind().equals("UNKNOWN")) return true;
+        String explicitConcept = explicitNature == null ? null : explicitNature.concept();
+        return !"UNKNOWN".equals(normalizeSectionKind(classification.sectionKind(), explicitConcept, label, values))
+            && !normalizeSectionKind(classification.sectionKind(), explicitConcept, label, values).equals("P_AND_L")
+            && classification.rowType() != RowType.DETAIL;
+    }
+
+    private static boolean looksStructurallyNote(List<BigDecimal> values, String normalizedLabel) {
+        boolean noNumbers = values == null || values.stream().allMatch(Objects::isNull);
+        return noNumbers && (normalizedLabel.contains("nota") || normalizedLabel.contains("coment") || normalizedLabel.contains("observ"));
+    }
+
+    private static String strongerConfidence(String left, String right) {
+        List<String> order = List.of("LOW", "MEDIUM", "HIGH");
+        int leftIdx = order.indexOf(upper(left));
+        int rightIdx = order.indexOf(upper(right));
+        return leftIdx >= rightIdx ? upper(left) : upper(right);
+    }
+
+    private static String resultStatus(int monthsDetected, boolean requiresConfirmation, int detailRows) {
+        if (monthsDetected <= 0 || detailRows <= 0) return "INCOMPATIBLE";
+        return requiresConfirmation ? "GUIDED_REVIEW_REQUIRED" : "AUTOMATIC_ACCEPTED";
     }
 
     private static Map<String, String> detectWideMonthHeaders(List<String> headers) {
@@ -673,10 +1252,17 @@ public final class BudgetLongNormalizer {
             && normalized.contains("label");
     }
 
-    private static Result previewCanonicalLongSource(byte[] bytes, char delimiter, int maxSourceRows, int maxSampleRows) {
+    private static Result previewCanonicalLongSource(byte[] bytes,
+                                                     char delimiter,
+                                                     int maxSourceRows,
+                                                     int maxSampleRows,
+                                                     Integer headerRow1Based,
+                                                     Double headerScore) {
         List<LongRow> sample = new ArrayList<>();
         Map<String, Boolean> monthSeen = new LinkedHashMap<>();
         long produced = 0;
+        int detailRows = 0;
+        int reviewRows = 0;
 
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(new ByteArrayInputStream(bytes), StandardCharsets.UTF_8))) {
             CSVParser parser = csvParser(reader, delimiter);
@@ -695,6 +1281,9 @@ public final class BudgetLongNormalizer {
                     rowType = RowType.valueOf(rowTypeRaw.trim().toUpperCase(Locale.ROOT));
                 } catch (Exception ignored) {
                     continue;
+                }
+                if (rowType == RowType.DETAIL) {
+                    detailRows++;
                 }
 
                 LongRow row = new LongRow(
@@ -720,15 +1309,30 @@ public final class BudgetLongNormalizer {
                     clean(get(record, "inference_confidence")),
                     firstNonNull(clean(get(record, "mapping_status")), "CANONICAL")
                 );
+                if ("REVIEW".equals(row.mappingStatus())) {
+                    reviewRows++;
+                }
                 produced++;
                 monthSeen.put(monthKey, Boolean.TRUE);
                 if (sample.size() < maxSampleRows) sample.add(row);
             }
         } catch (Exception ex) {
-            return new Result(List.of(), "label", 0, List.of(), false, List.of("No se pudo releer el CSV anual canonico."), bytes);
+            return new Result(List.of(), "label", 0, List.of(), false, List.of("No se pudo releer el CSV anual canonico."), bytes, "INCOMPATIBLE", headerRow1Based, headerScore);
         }
 
-        return new Result(List.copyOf(monthSeen.keySet()), "label", produced, sample, false, List.of(), bytes);
+        boolean requiresConfirmation = reviewRows > 0;
+        return new Result(
+            List.copyOf(monthSeen.keySet()),
+            "label",
+            produced,
+            sample,
+            requiresConfirmation,
+            List.of(),
+            bytes,
+            resultStatus(monthSeen.size(), requiresConfirmation, detailRows),
+            headerRow1Based,
+            headerScore
+        );
     }
 
     private static List<String> mergeNotes(List<String> baseNotes, int detailRows, int unknownDetailRows, int reviewRows, int inferredRows) {
@@ -787,9 +1391,33 @@ public final class BudgetLongNormalizer {
             int monthNumber = Integer.parseInt(normalized.replaceAll("^(19|20)\\d{2}\\s?[\\-/]?\\s?", ""));
             return MONTH_KEYS.get(monthNumber - 1);
         }
+        if (normalized.matches("^(19|20)\\d{2}[\\-/](0?[1-9]|1[0-2])[\\-/](0?[1-9]|[12]\\d|3[01])$")) {
+            Matcher matcher = Pattern.compile("^(19|20)\\d{2}[\\-/](0?[1-9]|1[0-2])[\\-/](0?[1-9]|[12]\\d|3[01])$").matcher(normalized);
+            if (matcher.matches()) {
+                return MONTH_KEYS.get(Integer.parseInt(matcher.group(2)) - 1);
+            }
+        }
+        if (normalized.matches("^(19|20)\\d{2}\\s+(0?[1-9]|1[0-2])\\s+(0?[1-9]|[12]\\d|3[01])$")) {
+            Matcher matcher = Pattern.compile("^(19|20)\\d{2}\\s+(0?[1-9]|1[0-2])\\s+(0?[1-9]|[12]\\d|3[01])$").matcher(normalized);
+            if (matcher.matches()) {
+                return MONTH_KEYS.get(Integer.parseInt(matcher.group(2)) - 1);
+            }
+        }
         if (normalized.matches("^(0?[1-9]|1[0-2])\\s?[\\-/]?\\s?(19|20)\\d{2}$")) {
             int monthNumber = Integer.parseInt(normalized.replaceAll("\\s?[\\-/]?\\s?(19|20)\\d{2}$", ""));
             return MONTH_KEYS.get(monthNumber - 1);
+        }
+        if (normalized.matches("^(0?[1-9]|[12]\\d|3[01])[\\-/](0?[1-9]|1[0-2])[\\-/](19|20)\\d{2}$")) {
+            Matcher matcher = Pattern.compile("^(0?[1-9]|[12]\\d|3[01])[\\-/](0?[1-9]|1[0-2])[\\-/](19|20)\\d{2}$").matcher(normalized);
+            if (matcher.matches()) {
+                return MONTH_KEYS.get(Integer.parseInt(matcher.group(2)) - 1);
+            }
+        }
+        if (normalized.matches("^(0?[1-9]|[12]\\d|3[01])\\s+(0?[1-9]|1[0-2])\\s+(19|20)\\d{2}$")) {
+            Matcher matcher = Pattern.compile("^(0?[1-9]|[12]\\d|3[01])\\s+(0?[1-9]|1[0-2])\\s+(19|20)\\d{2}$").matcher(normalized);
+            if (matcher.matches()) {
+                return MONTH_KEYS.get(Integer.parseInt(matcher.group(2)) - 1);
+            }
         }
         return MONTH_LABELS.containsKey(normalized.toUpperCase(Locale.ROOT)) ? normalized.toUpperCase(Locale.ROOT) : null;
     }
@@ -900,9 +1528,10 @@ public final class BudgetLongNormalizer {
             s = s.substring(1).trim();
         }
 
+        s = s.replaceAll("\\[\\$[^\\]]*\\]", "");
         s = s.replace("\u00A0", "").replace(" ", "");
-        s = s.replaceAll("[^0-9,\\.\\-]", "");
-        if (s.isBlank() || "-".equals(s)) return null;
+        s = s.replaceAll("[^0-9,\\.]", "");
+        if (s.isBlank()) return null;
 
         int comma = s.lastIndexOf(',');
         int dot = s.lastIndexOf('.');

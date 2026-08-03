@@ -7,6 +7,7 @@ import com.asecon.enterpriseiq.dto.BudgetItemDetailMonthDto;
 import com.asecon.enterpriseiq.dto.BudgetLongPreviewDto;
 import com.asecon.enterpriseiq.dto.BudgetLongInsightsDto;
 import com.asecon.enterpriseiq.dto.BudgetItemInsightDto;
+import com.asecon.enterpriseiq.dto.BudgetSourceMetaDto;
 import com.asecon.enterpriseiq.dto.BudgetSummaryDto;
 import com.asecon.enterpriseiq.dto.CashflowMonthDto;
 import com.asecon.enterpriseiq.dto.CashflowSummaryDto;
@@ -24,6 +25,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVParser;
 import org.apache.commons.csv.CSVRecord;
@@ -54,24 +56,89 @@ public class BudgetService {
     );
 
     private final UniversalImportFileService universalImportFileService;
+    private final Map<String, BudgetAnalysisSnapshot> analysisSnapshotCache = new ConcurrentHashMap<>();
+    private final Map<String, CachedFailure> analysisFailureCache = new ConcurrentHashMap<>();
 
     public BudgetService(UniversalImportFileService universalImportFileService) {
         this.universalImportFileService = universalImportFileService;
     }
 
     public BudgetPdfBundle latestBudgetPdfBundle(Long companyId) {
-        UniversalImport imp = requireLatestAnnualBudget(companyId);
-        byte[] bytes = requireNormalizedCsv(companyId, imp);
-        String analysisVersion = buildAnalysisVersion(imp);
+        BudgetAnalysisSnapshot snapshot = latestAnalysisSnapshot(companyId);
         return new BudgetPdfBundle(
-            latestBudgetFromBytes(companyId, imp, bytes, analysisVersion),
-            latestBudgetLongInsightsFromBytes(companyId, imp, bytes, analysisVersion)
+            snapshot.meta(),
+            snapshot.summary(),
+            snapshot.cashflow(),
+            snapshot.longInsights()
         );
+    }
+
+    public BudgetAnalysisSnapshot latestAnalysisSnapshot(Long companyId) {
+        UniversalImport imp = requireLatestAnnualBudget(companyId);
+        String analysisVersion = buildAnalysisVersion(imp);
+        BudgetAnalysisSnapshot cached = analysisSnapshotCache.get(analysisVersion);
+        if (cached != null) {
+            return cached;
+        }
+        CachedFailure cachedFailure = analysisFailureCache.get(analysisVersion);
+        if (cachedFailure != null) {
+            throw new ResponseStatusException(cachedFailure.status(), cachedFailure.reason());
+        }
+        byte[] bytes = requireNormalizedCsv(companyId, imp);
+
+        try {
+            BudgetLongNormalizer.Result canonicalResult = requireCanonicalLongResult(companyId, bytes,
+                "No he podido construir una lectura anual canónica suficiente.",
+                "La lectura anual necesita confirmación semántica antes de consolidar el plan.");
+            CanonicalBudgetAnalysis canonicalAnalysis = parseCanonicalBudgetAnalysis(canonicalResult.longCsvBytes(), imp.getFilename(), null);
+            LongBudgetSource source = canonicalAnalysis.source();
+            if (source == null) {
+                throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    canonicalReadinessMessage(
+                        canonicalResult,
+                        "La lectura anual canónica existe, pero no se pudo reconstruir su fuente oficial."
+                    )
+                );
+            }
+
+            BudgetSummaryDto summary = buildBudgetSummaryFromSource(imp, analysisVersion, source);
+            if (summary == null) {
+                throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    canonicalReadinessMessage(
+                        canonicalResult,
+                        "La lectura anual canónica existe, pero aún no aporta una cuenta de resultados suficiente para Plan anual."
+                    )
+                );
+            }
+
+            CashflowSummaryDto cashflow = buildCashflowSummaryFromSource(imp, analysisVersion, source);
+            if (cashflow == null) {
+                throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    canonicalReadinessMessage(
+                        canonicalResult,
+                        "La lectura anual canónica existe, pero aún no aporta una tesorería suficiente para Plan anual."
+                    )
+                );
+            }
+
+            BudgetLongInsightsDto insights = buildInsightsFromCanonicalAnalysis(imp, analysisVersion, canonicalAnalysis);
+            BudgetSourceMetaDto meta = buildSourceMeta(imp, analysisVersion, source);
+            BudgetAnalysisSnapshot snapshot = new BudgetAnalysisSnapshot(meta, summary, cashflow, insights, source);
+            analysisFailureCache.remove(analysisVersion);
+            analysisSnapshotCache.put(analysisVersion, snapshot);
+            return snapshot;
+        } catch (ResponseStatusException ex) {
+            analysisFailureCache.put(analysisVersion, new CachedFailure(HttpStatus.valueOf(ex.getStatusCode().value()), ex.getReason()));
+            throw ex;
+        }
     }
 
     public BudgetLongPreviewDto latestBudgetLongPreview(Long companyId) {
         UniversalImport imp = universalImportFileService.latestAnnualBudget(companyId)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No hay un presupuesto anual valido. Sube tu presupuesto (XLSX/CSV) a Universal."));
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No hay un presupuesto anual válido. Sube tu presupuesto (XLSX/CSV) a Universal."));
 
         byte[] bytes = universalImportFileService.normalizedCsv(companyId, imp.getId());
         var result = BudgetLongNormalizer.normalizeToLongCsv(bytes, String.valueOf(companyId), 10_000, 200);
@@ -118,14 +185,65 @@ public class BudgetService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No se pudo normalizar el presupuesto a formato largo.");
         }
         if (result.requiresConfirmation()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, confirmationMessage(result, "La lectura anual necesita confirmacion semantica antes de abrir el detalle."));
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, confirmationMessage(result, "La lectura anual necesita confirmación semántica antes de abrir el detalle."));
         }
         CanonicalBudgetAnalysis analysis = parseCanonicalBudgetAnalysis(result.longCsvBytes(), imp.getFilename(), null);
         BudgetItemDetailDto detail = buildItemDetail(analysis, imp.getId(), analysisVersion, canonicalRowId);
         if (detail == null) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "No se encontro detalle canonico para la partida seleccionada.");
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "No se encontró detalle canónico para la partida seleccionada.");
         }
         return detail;
+    }
+
+    private BudgetLongNormalizer.Result requireCanonicalLongResult(Long companyId,
+                                                                   byte[] bytes,
+                                                                   String missingMessage,
+                                                                   String reviewMessage) {
+        BudgetLongNormalizer.Result canonicalResult = BudgetLongNormalizer.normalizeToLongCsv(bytes, String.valueOf(companyId), 50_000, 50);
+        if (canonicalResult.longCsvBytes().length == 0) {
+            throw new ResponseStatusException(
+                HttpStatus.BAD_REQUEST,
+                canonicalReadinessMessage(canonicalResult, missingMessage)
+            );
+        }
+        if (canonicalResult.requiresConfirmation()) {
+            throw new ResponseStatusException(
+                HttpStatus.BAD_REQUEST,
+                canonicalReadinessMessage(canonicalResult, reviewMessage)
+            );
+        }
+        return canonicalResult;
+    }
+
+    private BudgetLongInsightsDto buildInsightsFromCanonicalAnalysis(UniversalImport imp,
+                                                                     String analysisVersion,
+                                                                     CanonicalBudgetAnalysis analysis) {
+        var insights = analysis.insights();
+        if (insights.itemCount() == 0 || insights.monthTotals().isEmpty()) {
+            throw new ResponseStatusException(
+                HttpStatus.BAD_REQUEST,
+                "No pude calcular insights anuales. Revisa la hoja o la fila de cabecera, o sube un CSV anual con meses y plan mensual."
+            );
+        }
+        return attachAnalysisMetadata(
+            new BudgetLongInsightsDto(
+                insights.filename(),
+                insights.createdAt(),
+                imp.getId(),
+                analysisVersion,
+                insights.itemCount(),
+                insights.totalAbsAnnual(),
+                insights.bestMonth(),
+                insights.worstMonth(),
+                insights.concentrationTop3AbsPct(),
+                insights.monthTotals(),
+                insights.topDrivers(),
+                insights.zeroHeavyItems(),
+                insights.accountingAdjustments()
+            ),
+            imp.getId(),
+            analysisVersion
+        );
     }
 
     private BudgetLongInsightsDto latestBudgetLongInsightsFromBytes(Long companyId,
@@ -137,7 +255,7 @@ public class BudgetService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No se pudo normalizar el presupuesto a formato largo.");
         }
         if (result.requiresConfirmation()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, confirmationMessage(result, "La lectura anual necesita confirmacion semantica antes de generar conclusiones."));
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, confirmationMessage(result, "La lectura anual necesita confirmación semántica antes de generar conclusiones."));
         }
         var insights = parseCanonicalBudgetAnalysis(result.longCsvBytes(), imp.getFilename(), null).insights();
         if (insights.itemCount() == 0 || insights.monthTotals().isEmpty()) {
@@ -181,18 +299,42 @@ public class BudgetService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Import universal vacío.");
         }
 
+        BudgetLongNormalizer.Result canonicalResult = BudgetLongNormalizer.normalizeToLongCsv(bytes, String.valueOf(companyId), 50_000, 50);
+        boolean allowLegacyBudgetFallback = false;
+        if (!allowLegacyBudgetFallback) {
+            if (canonicalResult.longCsvBytes().length == 0) {
+                throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    canonicalReadinessMessage(
+                        canonicalResult,
+                        "No he podido construir una lectura anual canónica suficiente. Revisa hoja, cabecera o estructura mensual."
+                    )
+                );
+            }
+            if (canonicalResult.requiresConfirmation()) {
+                throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    canonicalReadinessMessage(
+                        canonicalResult,
+                        "La lectura anual necesita confirmación semántica antes de consolidar el plan."
+                    )
+                );
+            }
+            BudgetSummaryDto canonicalSummary = tryBuildLongBudgetSummary(companyId, imp, canonicalResult.longCsvBytes(), analysisVersion);
+            if (canonicalSummary != null) return canonicalSummary;
+            throw new ResponseStatusException(
+                HttpStatus.BAD_REQUEST,
+                canonicalReadinessMessage(
+                    canonicalResult,
+                    "La lectura anual canónica existe, pero aún no aporta una cuenta de resultados suficiente para Plan anual."
+                )
+            );
+        }
+
         String head = new String(bytes, 0, Math.min(bytes.length, 4096), StandardCharsets.UTF_8);
         int eol = head.indexOf('\n');
         if (eol >= 0) head = head.substring(0, eol);
         char delimiter = detectDelimiter(head);
-        BudgetLongNormalizer.Result canonicalResult = BudgetLongNormalizer.normalizeToLongCsv(bytes, String.valueOf(companyId), 50_000, 50);
-        if (canonicalResult.longCsvBytes().length > 0) {
-            if (canonicalResult.requiresConfirmation()) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, confirmationMessage(canonicalResult, "La lectura anual necesita confirmacion semantica antes de consolidar el plan."));
-            }
-            BudgetSummaryDto canonicalSummary = tryBuildLongBudgetSummary(companyId, imp, canonicalResult.longCsvBytes(), analysisVersion);
-            if (canonicalSummary != null) return canonicalSummary;
-        }
 
         Map<String, String> monthHeader = new LinkedHashMap<>();
         String labelHeader;
@@ -227,7 +369,7 @@ public class BudgetService {
                 if (longSummary != null) return longSummary;
                 throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST,
-                    "No detecto meses ENERO..DICIEMBRE ni un formato anual mensualizado compatible. Usa el modo guiado y revisa hoja + cabecera."
+                    "No detecto meses ENERO..DICIEMBRE ni un formato anual mensualizado compatible. Usa el modo guiado y revisa hoja y cabecera."
                 );
             }
 
@@ -400,18 +542,42 @@ public class BudgetService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Import universal vacío.");
         }
 
+        BudgetLongNormalizer.Result canonicalResult = BudgetLongNormalizer.normalizeToLongCsv(bytes, String.valueOf(companyId), 50_000, 50);
+        boolean allowLegacyCashflowFallback = false;
+        if (!allowLegacyCashflowFallback) {
+            if (canonicalResult.longCsvBytes().length == 0) {
+                throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    canonicalReadinessMessage(
+                        canonicalResult,
+                        "No he podido construir una lectura anual canónica suficiente para tesorería."
+                    )
+                );
+            }
+            if (canonicalResult.requiresConfirmation()) {
+                throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    canonicalReadinessMessage(
+                        canonicalResult,
+                        "La lectura anual necesita confirmación semántica antes de leer la tesorería."
+                    )
+                );
+            }
+            CashflowSummaryDto canonicalCashflow = tryBuildLongCashflowSummary(companyId, imp, canonicalResult.longCsvBytes(), analysisVersion);
+            if (canonicalCashflow != null) return canonicalCashflow;
+            throw new ResponseStatusException(
+                HttpStatus.BAD_REQUEST,
+                canonicalReadinessMessage(
+                    canonicalResult,
+                    "La lectura anual canónica existe, pero aún no aporta una tesorería suficiente para Plan anual."
+                )
+            );
+        }
+
         String head = new String(bytes, 0, Math.min(bytes.length, 4096), StandardCharsets.UTF_8);
         int eol = head.indexOf('\n');
         if (eol >= 0) head = head.substring(0, eol);
         char delimiter = detectDelimiter(head);
-        BudgetLongNormalizer.Result canonicalResult = BudgetLongNormalizer.normalizeToLongCsv(bytes, String.valueOf(companyId), 50_000, 50);
-        if (canonicalResult.longCsvBytes().length > 0) {
-            if (canonicalResult.requiresConfirmation()) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, confirmationMessage(canonicalResult, "La lectura anual necesita confirmacion semantica antes de leer la tesoreria."));
-            }
-            CashflowSummaryDto canonicalCashflow = tryBuildLongCashflowSummary(companyId, imp, canonicalResult.longCsvBytes(), analysisVersion);
-            if (canonicalCashflow != null) return canonicalCashflow;
-        }
 
         Map<String, String> monthHeader = new LinkedHashMap<>();
         String labelHeader;
@@ -446,7 +612,7 @@ public class BudgetService {
                 if (longCashflow != null) return longCashflow;
                 throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST,
-                    "No detecto meses ENERO..DICIEMBRE ni un formato anual mensualizado compatible. Usa el modo guiado y revisa hoja + cabecera."
+                    "No detecto meses ENERO..DICIEMBRE ni un formato anual mensualizado compatible. Usa el modo guiado y revisa hoja y cabecera."
                 );
             }
 
@@ -568,6 +734,10 @@ public class BudgetService {
                     in.setScale(2, RoundingMode.HALF_UP),
                     out.setScale(2, RoundingMode.HALF_UP),
                     net.setScale(2, RoundingMode.HALF_UP),
+                    net.setScale(2, RoundingMode.HALF_UP),
+                    null,
+                    "DECLARED_ONLY",
+                    null,
                     balance.setScale(2, RoundingMode.HALF_UP),
                     delta == null ? null : delta.setScale(2, RoundingMode.HALF_UP),
                     deltaPct
@@ -605,7 +775,7 @@ public class BudgetService {
 
     private UniversalImport requireLatestAnnualBudget(Long companyId) {
         return universalImportFileService.latestAnnualBudget(companyId)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No hay un presupuesto anual valido. Sube tu presupuesto (XLSX/CSV) a Universal."));
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No hay un presupuesto anual válido. Sube tu presupuesto (XLSX/CSV) a Universal."));
     }
 
     private byte[] requireNormalizedCsv(Long companyId, UniversalImport imp) {
@@ -635,13 +805,38 @@ public class BudgetService {
             ? bytes
             : BudgetLongNormalizer.normalizeToLongCsv(bytes, String.valueOf(companyId), 50_000, 0).longCsvBytes();
         LongBudgetSource source = parseCanonicalBudgetSource(canonicalCsv);
-        if (source == null || source.plannedIncomeByMonth.isEmpty() || source.plannedExpenseByMonth.isEmpty()) {
+        return buildBudgetSummaryFromSource(imp, analysisVersion, source);
+    }
+
+    private CashflowSummaryDto tryBuildLongCashflowSummary(Long companyId,
+                                                           UniversalImport imp,
+                                                           byte[] bytes,
+                                                           String analysisVersion) {
+        byte[] canonicalCsv = isCanonicalBudgetCsv(bytes)
+            ? bytes
+            : BudgetLongNormalizer.normalizeToLongCsv(bytes, String.valueOf(companyId), 50_000, 0).longCsvBytes();
+        LongBudgetSource source = parseCanonicalBudgetSource(canonicalCsv);
+        return buildCashflowSummaryFromSource(imp, analysisVersion, source);
+    }
+
+    private BudgetSummaryDto buildBudgetSummaryFromSource(UniversalImport imp,
+                                                          String analysisVersion,
+                                                          LongBudgetSource source) {
+        if (source == null || (source.plannedIncomeByMonth.isEmpty() && source.plannedExpenseByMonth.isEmpty())) {
             return null;
         }
 
         List<BudgetMonthDto> months = new ArrayList<>();
+        Map<String, BigDecimal> visibleIncomeByMonth = prefersDeclaredPresentation(source.declaredIncomeByMonth(), source.orderedMonthKeys())
+            ? source.declaredIncomeByMonth()
+            : source.plannedIncomeByMonth();
+        Map<String, BigDecimal> visibleExpenseByMonth = prefersDeclaredPresentation(source.declaredExpenseByMonth(), source.orderedMonthKeys())
+            ? source.declaredExpenseByMonth()
+            : source.plannedExpenseByMonth();
+        Map<String, BigDecimal> operatingIncomeByMonth = new LinkedHashMap<>();
         BigDecimal totalIncome = BigDecimal.ZERO;
         BigDecimal totalExpense = BigDecimal.ZERO;
+        BigDecimal totalOperatingAdjustments = total(source.plannedOperatingAdjustmentsByMonth().values()).setScale(2, RoundingMode.HALF_UP);
         BigDecimal totalCapex = total(source.plannedCapexByMonth().values()).setScale(2, RoundingMode.HALF_UP);
         BigDecimal totalDepreciation = total(source.plannedDepreciationByMonth().values()).setScale(2, RoundingMode.HALF_UP);
         BigDecimal financialResult = total(source.plannedFinancialResultByMonth().values()).setScale(2, RoundingMode.HALF_UP);
@@ -652,9 +847,13 @@ public class BudgetService {
         BigDecimal worst = null;
 
         for (String mk : source.orderedMonthKeys) {
-            BigDecimal inc = source.plannedIncomeByMonth.getOrDefault(mk, BigDecimal.ZERO);
-            BigDecimal exp = source.plannedExpenseByMonth.getOrDefault(mk, BigDecimal.ZERO);
-            BigDecimal margin = inc.subtract(exp);
+            BigDecimal inc = visibleIncomeByMonth.getOrDefault(mk, BigDecimal.ZERO);
+            BigDecimal exp = visibleExpenseByMonth.getOrDefault(mk, BigDecimal.ZERO);
+            BigDecimal margin = source.plannedIncomeByMonth()
+                .getOrDefault(mk, BigDecimal.ZERO)
+                .add(source.plannedOperatingAdjustmentsByMonth().getOrDefault(mk, BigDecimal.ZERO))
+                .subtract(source.plannedExpenseByMonth().getOrDefault(mk, BigDecimal.ZERO));
+            operatingIncomeByMonth.put(mk, margin.add(exp));
 
             BigDecimal delta = null;
             BigDecimal deltaPct = null;
@@ -694,25 +893,20 @@ public class BudgetService {
             months,
             totalIncome.setScale(2, RoundingMode.HALF_UP),
             totalExpense.setScale(2, RoundingMode.HALF_UP),
-            totalIncome.subtract(totalExpense).setScale(2, RoundingMode.HALF_UP),
+            total(operatingIncomeByMonth.values()).subtract(total(source.plannedExpenseByMonth().values())).setScale(2, RoundingMode.HALF_UP),
             totalCapex,
             totalDepreciation,
-            totalIncome.subtract(totalExpense).subtract(totalDepreciation).setScale(2, RoundingMode.HALF_UP),
+            total(operatingIncomeByMonth.values()).subtract(total(source.plannedExpenseByMonth().values())).subtract(totalDepreciation).setScale(2, RoundingMode.HALF_UP),
             financialResult,
-            totalIncome.subtract(totalExpense).subtract(totalDepreciation).add(financialResult).setScale(2, RoundingMode.HALF_UP),
+            total(operatingIncomeByMonth.values()).subtract(total(source.plannedExpenseByMonth().values())).subtract(totalDepreciation).add(financialResult).setScale(2, RoundingMode.HALF_UP),
             bestMonth,
             worstMonth
         );
     }
 
-    private CashflowSummaryDto tryBuildLongCashflowSummary(Long companyId,
-                                                           UniversalImport imp,
-                                                           byte[] bytes,
-                                                           String analysisVersion) {
-        byte[] canonicalCsv = isCanonicalBudgetCsv(bytes)
-            ? bytes
-            : BudgetLongNormalizer.normalizeToLongCsv(bytes, String.valueOf(companyId), 50_000, 0).longCsvBytes();
-        LongBudgetSource source = parseCanonicalBudgetSource(canonicalCsv);
+    private CashflowSummaryDto buildCashflowSummaryFromSource(UniversalImport imp,
+                                                              String analysisVersion,
+                                                              LongBudgetSource source) {
         if (source == null || (source.plannedIncomeByMonth.isEmpty() && source.plannedExpenseByMonth.isEmpty())) {
             return null;
         }
@@ -764,12 +958,35 @@ public class BudgetService {
                 }
             }
 
+            BigDecimal declaredNet = net.setScale(2, RoundingMode.HALF_UP);
+            BigDecimal derivedNet = null;
+            String reconciliationStatus = "DECLARED_ONLY";
+            String reconciliationWarning = null;
+            if (hasClosingBalances) {
+                BigDecimal previousBalance = months.isEmpty()
+                    ? openingBalance
+                    : months.get(months.size() - 1).endingBalance();
+                derivedNet = balance.subtract(previousBalance).setScale(2, RoundingMode.HALF_UP);
+                BigDecimal diff = declaredNet.subtract(derivedNet).abs();
+                if (diff.compareTo(new BigDecimal("0.01")) <= 0) {
+                    reconciliationStatus = "MATCH";
+                } else {
+                    reconciliationStatus = "MISMATCH";
+                    reconciliationWarning = "El cash neto declarado no cuadra con la variacion del saldo final.";
+                }
+                net = derivedNet;
+            }
+
             months.add(new CashflowMonthDto(
                 mk,
                 MONTH_LABELS.getOrDefault(mk, mk),
                 in.setScale(2, RoundingMode.HALF_UP),
                 out.setScale(2, RoundingMode.HALF_UP),
                 net.setScale(2, RoundingMode.HALF_UP),
+                declaredNet,
+                derivedNet,
+                reconciliationStatus,
+                reconciliationWarning,
                 balance.setScale(2, RoundingMode.HALF_UP),
                 delta == null ? null : delta.setScale(2, RoundingMode.HALF_UP),
                 deltaPct
@@ -802,14 +1019,18 @@ public class BudgetService {
 
     public LongBudgetSource latestLongBudgetSource(Long companyId) {
         UniversalImport imp = universalImportFileService.latestAnnualBudget(companyId)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No hay un presupuesto anual valido. Sube tu presupuesto (XLSX/CSV) a Universal."));
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No hay un presupuesto anual válido. Sube tu presupuesto (XLSX/CSV) a Universal."));
         byte[] sourceBytes = universalImportFileService.normalizedCsv(companyId, imp.getId());
+        return latestLongBudgetSourceFromBytes(companyId, imp, sourceBytes);
+    }
+
+    private LongBudgetSource latestLongBudgetSourceFromBytes(Long companyId, UniversalImport imp, byte[] sourceBytes) {
         BudgetLongNormalizer.Result result = BudgetLongNormalizer.normalizeToLongCsv(sourceBytes, String.valueOf(companyId), 50_000, 50);
         if (result.longCsvBytes().length == 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No se pudo normalizar el presupuesto a formato largo.");
         }
         if (result.requiresConfirmation()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, confirmationMessage(result, "La lectura anual necesita confirmacion semantica antes de usarse como fuente oficial."));
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, confirmationMessage(result, "La lectura anual necesita confirmación semántica antes de usarse como fuente oficial."));
         }
         byte[] bytes = result.longCsvBytes();
         if (bytes == null || bytes.length == 0) {
@@ -823,11 +1044,78 @@ public class BudgetService {
         return source;
     }
 
+    private BudgetSourceMetaDto buildSourceMeta(UniversalImport imp, String analysisVersion) {
+        return buildSourceMeta(imp, analysisVersion, null);
+    }
+
+    private BudgetSourceMetaDto buildSourceMeta(UniversalImport imp, String analysisVersion, LongBudgetSource source) {
+        Integer sourceSheetIndex = null;
+        Integer sourceHeaderRow = null;
+        String sourceSheetName = null;
+        String sourceHeaderLabel = null;
+        Integer plannedMonthsAvailable = null;
+        if (imp != null && imp.getAnalysisJson() != null && !imp.getAnalysisJson().isBlank()) {
+            try {
+                com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                com.asecon.enterpriseiq.dto.UniversalImportAnalysisDto analysis =
+                    mapper.readValue(imp.getAnalysisJson(), com.asecon.enterpriseiq.dto.UniversalImportAnalysisDto.class);
+                if (analysis != null && analysis.xlsx() != null) {
+                    sourceSheetIndex = analysis.xlsx().sheetIndex();
+                    sourceHeaderRow = analysis.xlsx().headerRow1Based();
+                    sourceSheetName = analysis.xlsx().sheetName();
+                    sourceHeaderLabel = analysis.xlsx().headerLabel();
+                }
+            } catch (Exception ignored) {
+                // fall back to null metadata
+            }
+        }
+        if (source != null && source.orderedMonthKeys() != null) {
+            plannedMonthsAvailable = source.orderedMonthKeys().size();
+        } else {
+            try {
+                LongBudgetSource latestSource = imp == null ? null : latestLongBudgetSourceFromBytes(imp.getCompany().getId(), imp, requireNormalizedCsv(imp.getCompany().getId(), imp));
+                if (latestSource != null && latestSource.orderedMonthKeys() != null) {
+                    plannedMonthsAvailable = latestSource.orderedMonthKeys().size();
+                }
+            } catch (Exception ignored) {
+                plannedMonthsAvailable = null;
+            }
+        }
+        return new BudgetSourceMetaDto(
+            imp == null ? null : imp.getId(),
+            analysisVersion,
+            imp == null ? null : imp.getFilename(),
+            imp == null ? null : imp.getCreatedAt(),
+            detectSourceType(imp),
+            sourceSheetIndex,
+            sourceSheetName,
+            sourceHeaderRow,
+            sourceHeaderLabel,
+            plannedMonthsAvailable
+        );
+    }
+
+    private static String detectSourceType(UniversalImport imp) {
+        if (imp == null || imp.getFilename() == null) return null;
+        String filename = imp.getFilename().trim().toLowerCase(java.util.Locale.ROOT);
+        if (filename.endsWith(".xlsx")) return "XLSX";
+        if (filename.endsWith(".csv")) return "CSV";
+        return "FILE";
+    }
+
     private LongBudgetSource parseCanonicalBudgetSource(byte[] bytes) {
         return parseCanonicalBudgetAnalysis(bytes, null, null).source();
     }
 
     CanonicalBudgetAnalysis parseCanonicalBudgetAnalysis(byte[] bytes, String sourceFile, String sourceSheet) {
+        try {
+            return parseCanonicalBudgetAnalysisStrict(bytes, sourceFile, sourceSheet);
+        } catch (Exception ex) {
+            return new CanonicalBudgetAnalysis(null, List.of(), List.of(), emptyCanonicalInsights(sourceFile), emptyDiagnostics());
+        }
+    }
+
+    CanonicalBudgetAnalysis parseCanonicalBudgetAnalysisStrict(byte[] bytes, String sourceFile, String sourceSheet) throws Exception {
         if (bytes == null || bytes.length == 0) {
             return new CanonicalBudgetAnalysis(null, List.of(), List.of(), emptyCanonicalInsights(sourceFile), emptyDiagnostics());
         }
@@ -922,6 +1210,9 @@ public class BudgetService {
 
             Map<String, BigDecimal> income = new LinkedHashMap<>();
             Map<String, BigDecimal> expense = new LinkedHashMap<>();
+            Map<String, BigDecimal> declaredIncome = new LinkedHashMap<>();
+            Map<String, BigDecimal> declaredExpense = new LinkedHashMap<>();
+            Map<String, BigDecimal> operatingAdjustments = new LinkedHashMap<>();
             Map<String, BigDecimal> capex = new LinkedHashMap<>();
             Map<String, BigDecimal> depreciation = new LinkedHashMap<>();
             Map<String, BigDecimal> tax = new LinkedHashMap<>();
@@ -965,7 +1256,7 @@ public class BudgetService {
                             switch (kind) {
                                 case "REVENUE" -> mergeAmount(income, monthKey, value);
                                 case "OPEX" -> mergeAmount(expense, monthKey, value);
-                                case "OPERATING_ADJUSTMENT" -> mergeAmount(income, monthKey, value);
+                                case "OPERATING_ADJUSTMENT" -> mergeAmount(operatingAdjustments, monthKey, value);
                                 case "CAPEX" -> mergeAmount(capex, monthKey, value);
                                 case "DEPRECIATION_AMORTIZATION" -> mergeAmount(depreciation, monthKey, value);
                                 case "TAX" -> mergeAmount(tax, monthKey, value);
@@ -1020,6 +1311,23 @@ public class BudgetService {
                 applyLastValueRows(rows, exclusions, aggregationPolicy, cashflowIncluded, monthKey, "CLOSING_BALANCE", closingBalance, zeroSeriesIdentity);
             }
 
+            declaredIncome.putAll(buildDeclaredPresentationSeries(
+                rows,
+                exclusions,
+                "REVENUE",
+                total(income.values()).add(total(operatingAdjustments.values())),
+                List.copyOf(seenMonths.keySet()),
+                zeroSeriesIdentity
+            ));
+            declaredExpense.putAll(buildDeclaredPresentationSeries(
+                rows,
+                exclusions,
+                "OPEX",
+                total(expense.values()),
+                List.copyOf(seenMonths.keySet()),
+                zeroSeriesIdentity
+            ));
+
             for (CanonicalRow row : rows) {
                 if ("REVIEW".equals(row.mappingStatus()) && !exclusions.containsKey(row.index())) {
                     exclusions.put(row.index(), "EXCLUDED_REVIEW");
@@ -1047,6 +1355,9 @@ public class BudgetService {
                 List.copyOf(seenMonths.keySet()),
                 income,
                 expense,
+                declaredIncome,
+                declaredExpense,
+                operatingAdjustments,
                 capex,
                 depreciation,
                 tax,
@@ -1068,8 +1379,6 @@ public class BudgetService {
             BudgetLongInsightsDto insights = buildCanonicalLongInsights(sourceFile, source.orderedMonthKeys(), rows, exclusions, driverIncluded);
             BudgetExecutionDiagnostics diagnostics = buildExecutionDiagnostics(source, audits);
             return new CanonicalBudgetAnalysis(source, audits, reconciliations, insights, diagnostics);
-        } catch (Exception ex) {
-            return new CanonicalBudgetAnalysis(null, List.of(), List.of(), emptyCanonicalInsights(sourceFile), emptyDiagnostics());
         }
     }
 
@@ -1077,6 +1386,9 @@ public class BudgetService {
                                    List<String> orderedMonthKeys,
                                    Map<String, BigDecimal> plannedIncomeByMonth,
                                    Map<String, BigDecimal> plannedExpenseByMonth,
+                                   Map<String, BigDecimal> declaredIncomeByMonth,
+                                   Map<String, BigDecimal> declaredExpenseByMonth,
+                                   Map<String, BigDecimal> plannedOperatingAdjustmentsByMonth,
                                    Map<String, BigDecimal> plannedCapexByMonth,
                                    Map<String, BigDecimal> plannedDepreciationByMonth,
                                    Map<String, BigDecimal> plannedTaxByMonth,
@@ -1093,8 +1405,18 @@ public class BudgetService {
                                    Map<String, BigDecimal> forecastExpenseByMonth,
                                    Map<String, BigDecimal> forecastCapexByMonth) {}
 
-    public record BudgetPdfBundle(BudgetSummaryDto summary,
+    public record BudgetAnalysisSnapshot(BudgetSourceMetaDto meta,
+                                         BudgetSummaryDto summary,
+                                         CashflowSummaryDto cashflow,
+                                         BudgetLongInsightsDto longInsights,
+                                         LongBudgetSource source) {}
+
+    public record BudgetPdfBundle(BudgetSourceMetaDto meta,
+                                  BudgetSummaryDto summary,
+                                  CashflowSummaryDto cashflow,
                                   BudgetLongInsightsDto longInsights) {}
+
+    record CachedFailure(HttpStatus status, String reason) {}
 
     record CanonicalBudgetAnalysis(LongBudgetSource source,
                                    List<RowAudit> rowAudits,
@@ -1588,7 +1910,9 @@ public class BudgetService {
         addDeclaredVsMonthlyCheck(checks, "declared_depreciation_vs_monthly", rows, exclusions, "DEPRECIATION_AMORTIZATION", source.plannedDepreciationByMonth(), tolerance);
         addDeclaredVsMonthlyCheck(checks, "declared_financing_vs_monthly", rows, exclusions, "FINANCING", source.plannedFinancialResultByMonth(), tolerance);
 
-        BigDecimal ebitdaComputed = total(source.plannedIncomeByMonth().values()).subtract(total(source.plannedExpenseByMonth().values()));
+        BigDecimal ebitdaComputed = total(source.plannedIncomeByMonth().values())
+            .add(total(source.plannedOperatingAdjustmentsByMonth().values()))
+            .subtract(total(source.plannedExpenseByMonth().values()));
         BigDecimal ebitComputed = ebitdaComputed.subtract(total(source.plannedDepreciationByMonth().values()));
         BigDecimal netComputed = ebitComputed.add(total(source.plannedFinancialResultByMonth().values()));
         BigDecimal closingComputed = lastValue(source.plannedClosingBalanceByMonth().values());
@@ -1988,7 +2312,8 @@ public class BudgetService {
 
         BigDecimal revenueTotal = total(source.plannedIncomeByMonth().values()).setScale(2, RoundingMode.HALF_UP);
         BigDecimal opexTotal = total(source.plannedExpenseByMonth().values()).setScale(2, RoundingMode.HALF_UP);
-        BigDecimal ebitdaTotal = revenueTotal.subtract(opexTotal).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal adjustmentTotal = total(source.plannedOperatingAdjustmentsByMonth().values()).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal ebitdaTotal = revenueTotal.add(adjustmentTotal).subtract(opexTotal).setScale(2, RoundingMode.HALF_UP);
         BigDecimal ebitTotal = ebitdaTotal.subtract(total(source.plannedDepreciationByMonth().values())).setScale(2, RoundingMode.HALF_UP);
         BigDecimal financialTotal = total(source.plannedFinancialResultByMonth().values()).setScale(2, RoundingMode.HALF_UP);
         BigDecimal netTotal = ebitTotal.add(financialTotal).setScale(2, RoundingMode.HALF_UP);
@@ -2158,6 +2483,144 @@ public class BudgetService {
         if (declared.compareTo(BigDecimal.ZERO) == 0) return;
         BigDecimal actual = total(monthlySeries.values());
         checks.add(reconciliation(code, declared, actual, tolerance, "El total declarado no cuadra con la suma mensual."));
+    }
+
+    private static Map<String, BigDecimal> buildDeclaredPresentationSeries(List<CanonicalRow> rows,
+                                                                           Map<Integer, String> exclusions,
+                                                                           String semanticKind,
+                                                                           BigDecimal expectedAnnualTotal,
+                                                                           List<String> orderedMonthKeys,
+                                                                           Map<String, Boolean> zeroSeriesIdentity) {
+        Map<String, List<CanonicalRow>> byIdentity = new LinkedHashMap<>();
+        for (CanonicalRow row : rows) {
+            if (!matchesSection(row.sectionKind(), "P_AND_L")) continue;
+            if (!semanticKind.equals(upper(row.effectiveFinancialKind()))) continue;
+            if (!"REVIEW".equals(row.mappingStatus()) && isPresentationEligible(row, exclusions)
+                && ("SUBTOTAL".equals(row.rowType())
+                    || "TOTAL".equals(row.rowType())
+                    || row.accountingCode() == null
+                    || row.accountingCode().isBlank())
+                && !Boolean.TRUE.equals(zeroSeriesIdentity.get(row.canonicalIdentity()))) {
+                byIdentity.computeIfAbsent(row.canonicalIdentity(), ignored -> new ArrayList<>()).add(row);
+            }
+        }
+        if (byIdentity.isEmpty()) {
+            return Map.of();
+        }
+
+        String selectedIdentity = byIdentity.entrySet().stream()
+            .sorted((left, right) -> {
+                BigDecimal leftDiff = declaredPresentationDiff(left.getValue(), expectedAnnualTotal);
+                BigDecimal rightDiff = declaredPresentationDiff(right.getValue(), expectedAnnualTotal);
+                int byDiff = leftDiff.compareTo(rightDiff);
+                if (byDiff != 0) return byDiff;
+
+                int byCoverage = Integer.compare(
+                    rowSeriesCoverage(rows, right.getKey()),
+                    rowSeriesCoverage(rows, left.getKey())
+                );
+                if (byCoverage != 0) return byCoverage;
+
+                int byType = Integer.compare(
+                    presentationIdentityPriority(right.getValue()),
+                    presentationIdentityPriority(left.getValue())
+                );
+                if (byType != 0) return byType;
+
+                BigDecimal leftTotal = declaredPresentationAnnualTotal(left.getValue());
+                BigDecimal rightTotal = declaredPresentationAnnualTotal(right.getValue());
+                int byAbs = rightTotal.abs().compareTo(leftTotal.abs());
+                if (byAbs != 0) return byAbs;
+
+                int leftRow = left.getValue().stream().map(CanonicalRow::sourceRow).filter(Objects::nonNull).min(Integer::compareTo).orElse(Integer.MAX_VALUE);
+                int rightRow = right.getValue().stream().map(CanonicalRow::sourceRow).filter(Objects::nonNull).min(Integer::compareTo).orElse(Integer.MAX_VALUE);
+                return Integer.compare(leftRow, rightRow);
+            })
+            .map(Map.Entry::getKey)
+            .findFirst()
+            .orElse(null);
+
+        if (selectedIdentity == null) {
+            return Map.of();
+        }
+
+        Map<String, BigDecimal> series = new LinkedHashMap<>();
+        for (String monthKey : orderedMonthKeys) {
+            CanonicalRow row = byIdentity.get(selectedIdentity).stream()
+                .filter(candidate -> Objects.equals(candidate.monthKey(), monthKey))
+                .reduce((first, second) -> second)
+                .orElse(null);
+            if (row == null) continue;
+            BigDecimal value = firstNonNullAmount(row.plannedAmount(), row.actualAmount(), row.forecastAmount(), row.varianceAmount());
+            if (value != null) {
+                series.put(monthKey, value);
+            }
+        }
+        return series;
+    }
+
+    private static boolean prefersDeclaredPresentation(Map<String, BigDecimal> declaredByMonth, List<String> orderedMonthKeys) {
+        if (declaredByMonth == null || declaredByMonth.isEmpty() || orderedMonthKeys == null || orderedMonthKeys.isEmpty()) {
+            return false;
+        }
+        long monthsWithValue = orderedMonthKeys.stream()
+            .filter(monthKey -> declaredByMonth.get(monthKey) != null)
+            .count();
+        return monthsWithValue >= Math.min(orderedMonthKeys.size(), 6);
+    }
+
+    private static int presentationRowPriority(String rowType) {
+        return "TOTAL".equals(rowType) ? 2 : "SUBTOTAL".equals(rowType) ? 1 : 0;
+    }
+
+    private static int presentationIdentityPriority(List<CanonicalRow> rows) {
+        return rows.stream()
+            .map(CanonicalRow::rowType)
+            .mapToInt(BudgetService::presentationRowPriority)
+            .max()
+            .orElse(0);
+    }
+
+    private static boolean hasAccountingCode(String accountingCode) {
+        return accountingCode != null && !accountingCode.isBlank();
+    }
+
+    private static boolean isPresentationEligible(CanonicalRow row, Map<Integer, String> exclusions) {
+        String exclusion = exclusions.get(row.index());
+        if (exclusion == null || exclusion.isBlank()) return true;
+        return "EXCLUDED_AGGREGATE_WITH_DETAIL".equals(exclusion)
+            || "EXCLUDED_DUPLICATE_CANONICAL_ROW".equals(exclusion);
+    }
+
+    private static int rowSeriesCoverage(List<CanonicalRow> rows, String canonicalIdentity) {
+        int count = 0;
+        for (CanonicalRow row : rows) {
+            if (!Objects.equals(canonicalIdentity, row.canonicalIdentity())) continue;
+            BigDecimal amount = firstNonNullAmount(row.plannedAmount(), row.actualAmount(), row.forecastAmount(), row.varianceAmount());
+            if (amount != null && amount.compareTo(BigDecimal.ZERO) != 0) count++;
+        }
+        return count;
+    }
+
+    private static int firstNonNullInteger(Integer value, int fallback) {
+        return value == null ? fallback : value;
+    }
+
+    private static BigDecimal declaredPresentationAnnualTotal(List<CanonicalRow> rows) {
+        BigDecimal total = BigDecimal.ZERO;
+        if (rows == null) return total;
+        for (CanonicalRow row : rows) {
+            BigDecimal amount = firstNonNullAmount(row.plannedAmount(), row.actualAmount(), row.forecastAmount(), row.varianceAmount());
+            if (amount != null) {
+                total = total.add(amount);
+            }
+        }
+        return total;
+    }
+
+    private static BigDecimal declaredPresentationDiff(List<CanonicalRow> rows, BigDecimal expectedAnnualTotal) {
+        if (expectedAnnualTotal == null) return BigDecimal.ZERO;
+        return declaredPresentationAnnualTotal(rows).subtract(expectedAnnualTotal).abs();
     }
 
     private static int aggregatePriority(String rowType) {
@@ -2390,6 +2853,17 @@ public class BudgetService {
         if (result == null || result.mappingNotes() == null || result.mappingNotes().isEmpty()) return fallback;
         String detail = String.join(" | ", result.mappingNotes().stream().limit(4).toList());
         return fallback + " " + detail;
+    }
+
+    private static String canonicalReadinessMessage(BudgetLongNormalizer.Result result, String fallback) {
+        if (result == null) return fallback;
+        String prefix = switch (String.valueOf(result.analysisStatus()).trim().toUpperCase(Locale.ROOT)) {
+            case "GUIDED_REVIEW_REQUIRED" -> "La lectura anual existe, pero aún necesita revisión guiada.";
+            case "INCOMPATIBLE" -> "No existe estructura anual suficiente para construir una lectura canónica.";
+            case "AUTOMATIC_ACCEPTED" -> "La lectura anual canónica existe, pero aún no ha alcanzado el mínimo operativo esperado.";
+            default -> fallback;
+        };
+        return confirmationMessage(result, prefix.equals(fallback) ? fallback : prefix + " " + fallback);
     }
 
     private static void putLastValue(Map<String, BigDecimal> target, String monthKey, BigDecimal value) {
