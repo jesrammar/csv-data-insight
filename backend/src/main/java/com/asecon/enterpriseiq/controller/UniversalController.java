@@ -10,6 +10,7 @@ import com.asecon.enterpriseiq.dto.UniversalXlsxPreviewDto;
 import com.asecon.enterpriseiq.model.Plan;
 import com.asecon.enterpriseiq.service.AccessService;
 import com.asecon.enterpriseiq.service.TabularFileService;
+import com.asecon.enterpriseiq.service.BudgetTraceLogger;
 import com.asecon.enterpriseiq.service.UniversalAutoSuggestionService;
 import com.asecon.enterpriseiq.service.UniversalCsvService;
 import com.asecon.enterpriseiq.service.UniversalImportFileService;
@@ -20,6 +21,8 @@ import java.io.IOException;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -36,6 +39,7 @@ import com.asecon.enterpriseiq.repo.UniversalImportRepository;
 @RestController
 @RequestMapping("/api/companies/{companyId}/universal")
 public class UniversalController {
+    private static final Logger log = LoggerFactory.getLogger(UniversalController.class);
     private final UniversalCsvService universalCsvService;
     private final UniversalAutoSuggestionService universalAutoSuggestionService;
     private final AccessService accessService;
@@ -186,6 +190,14 @@ public class UniversalController {
                 xlsxOptions = new TabularFileService.XlsxOptions(sheet, header);
             }
         }
+
+        BudgetTraceLogger.log(log, "annual-upload-http", BudgetTraceLogger.fields(
+            "companyId", companyId,
+            "sourceFilename", file.getOriginalFilename(),
+            "processingRoute", "UniversalController.upload",
+            "sourceSheet", xlsxOptions == null || xlsxOptions.sheetIndex() == null ? "auto" : xlsxOptions.sheetIndex(),
+            "headerRow", xlsxOptions == null || xlsxOptions.headerRow1Based() == null ? "auto" : xlsxOptions.headerRow1Based()
+        ));
 
         return universalCsvService.analyzeAndStore(companyId, file, plan, xlsxOptions);
     }

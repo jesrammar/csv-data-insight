@@ -204,6 +204,15 @@ public class TabularFileService {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No se detectaron encabezados en el XLSX");
             }
 
+            BudgetTraceLogger.log(log, "xlsx-to-csv-detected-structure", BudgetTraceLogger.fields(
+                "sourceFilename", filename,
+                "processingRoute", "TabularFileService.convertXlsxToCsv",
+                "sourceSheet", wb.getSheetName(sheetIndex),
+                "sheetIndex", sheetIndex,
+                "headerRow", headerInfo.rowIndex + 1,
+                "headerCount", headerInfo.headerCount
+            ));
+
             dataRows = Math.max(0, sheet.getLastRowNum() - headerInfo.rowIndex);
             if (maxXlsxRows > 0 && dataRows > maxXlsxRows) {
                 log.warn("METRIC ingestion.xlsx.rejected filename={} sheetIndex={} dataRows={} maxRows={}", filename, sheetIndex, dataRows, maxXlsxRows);

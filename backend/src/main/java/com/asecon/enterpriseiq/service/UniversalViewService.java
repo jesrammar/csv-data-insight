@@ -658,7 +658,7 @@ public class UniversalViewService {
     private static String safeCell(String s) {
         if (s == null) return "";
         String v = s.replace("\r", " ").replace("\n", " ").trim();
-        if (v.length() > 200) v = v.substring(0, 200) + "â€¦";
+        if (v.length() > 200) v = v.substring(0, 200) + "...";
         return v;
     }
 
@@ -2166,7 +2166,7 @@ public class UniversalViewService {
             Map<String, String> m = new LinkedHashMap<>();
             m.put("column", col);
             m.put("op", op);
-            m.put("value", val.length() > 120 ? val.substring(0, 120) + "â€¦" : val);
+            m.put("value", val.length() > 120 ? val.substring(0, 120) + "..." : val);
             out.add(m);
         }
         return out;
@@ -2209,7 +2209,7 @@ public class UniversalViewService {
             Map<String, String> legacy = new LinkedHashMap<>();
             if (legacyCol != null) legacy.put("column", legacyCol);
             legacy.put("op", "eq");
-            if (legacyVal != null) legacy.put("value", legacyVal.length() > 120 ? legacyVal.substring(0, 120) + "â€¦" : legacyVal);
+            if (legacyVal != null) legacy.put("value", legacyVal.length() > 120 ? legacyVal.substring(0, 120) + "..." : legacyVal);
             out.put("legacyFilter", legacy);
         }
         return out;

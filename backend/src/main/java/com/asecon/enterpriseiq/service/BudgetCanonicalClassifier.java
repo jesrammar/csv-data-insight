@@ -5,8 +5,11 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public final class BudgetCanonicalClassifier {
+    private static final Logger log = LoggerFactory.getLogger(BudgetCanonicalClassifier.class);
     private static final Set<String> AGGREGATE_NOISE_TOKENS = Set.of("de", "del", "la", "el", "los", "las", "y", "and");
     private static final Set<String> SUBTOTAL_MARKERS = normalizedSet(Set.of(
         "ingreso de explotacion",
@@ -50,6 +53,12 @@ public final class BudgetCanonicalClassifier {
         "turnover"
     ));
     private static final Set<String> GENERIC_OPEX_AGGREGATES = normalizedSet(Set.of(
+        "gasto",
+        "gastos",
+        "coste",
+        "costes",
+        "expense",
+        "expenses",
         "gasto operativo",
         "gastos operativos",
         "coste operativo",
@@ -65,6 +74,15 @@ public final class BudgetCanonicalClassifier {
         "operating costs",
         "total operating costs",
         "total de costes"
+    ));
+    private static final Set<String> REVENUE_BLOCK_HEADINGS = normalizedSet(Set.of(
+        "ingreso", "ingresos", "revenue", "revenues", "sales", "ventas"
+    ));
+    private static final Set<String> OPEX_BLOCK_HEADINGS = normalizedSet(Set.of(
+        "gasto", "gastos", "coste", "costes", "expense", "expenses", "opex"
+    ));
+    private static final Set<String> CASHFLOW_BLOCK_HEADINGS = normalizedSet(Set.of(
+        "tesoreria", "caja", "cashflow", "cash flow", "liquidez"
     ));
 
     private BudgetCanonicalClassifier() {}
@@ -83,6 +101,17 @@ public final class BudgetCanonicalClassifier {
         String normalizedCategory = BudgetSemanticResolver.normalize(categoryRaw);
         boolean hasAmounts = numericValues != null && numericValues.stream().anyMatch(Objects::nonNull);
         boolean hasCode = code != null && !code.isBlank();
+        boolean zeroOnlyHeading = !hasCode && looksLikeZeroOnlyRow(numericValues);
+
+        if (zeroOnlyHeading && isBlockHeading(normalizedLabel, REVENUE_BLOCK_HEADINGS)) {
+            return new Classification(BudgetLongNormalizer.RowType.SUBTOTAL, "REVENUE", "P_AND_L", "HIGH", false);
+        }
+        if (zeroOnlyHeading && isBlockHeading(normalizedLabel, OPEX_BLOCK_HEADINGS)) {
+            return new Classification(BudgetLongNormalizer.RowType.SUBTOTAL, "OPEX", "P_AND_L", "HIGH", false);
+        }
+        if (zeroOnlyHeading && looksLikeStandaloneCashflowHeading(normalizedLabel)) {
+            return new Classification(BudgetLongNormalizer.RowType.SUBTOTAL, "UNKNOWN", "CASHFLOW", "HIGH", false);
+        }
 
         BudgetSemanticResolver.NatureInference semantic = BudgetSemanticResolver.classifyRowSemantic(clientKey, categoryRaw, label, code);
         String semanticKind = semantic.concept();
@@ -115,13 +144,32 @@ public final class BudgetCanonicalClassifier {
             ambiguous = false;
         }
 
+        if (rowType == BudgetLongNormalizer.RowType.DETAIL
+            && context != null
+            && "P_AND_L".equals(upper(context.sectionKind()))
+            && "OPEX".equals(upper(context.semanticKind()))
+            && "REVENUE".equals(upper(semanticKind))
+            && !looksLikeRevenueEvidence(normalizedLabel, code)
+            && (ambiguous || !"HIGH".equalsIgnoreCase(confidence) || looksLikeExpenseEvidence(normalizedLabel, code))) {
+            semanticKind = "OPEX";
+            sectionKind = "P_AND_L";
+            confidence = looksLikeExpenseEvidence(normalizedLabel, code) ? "HIGH" : "MEDIUM";
+            ambiguous = !looksLikeExpenseEvidence(normalizedLabel, code);
+        }
+
         boolean explicitSectionChange = explicit != null && !"UNKNOWN".equals(upper(explicit.sectionKind()));
 
         if (!explicitSectionChange
             && context != null
             && "CASHFLOW".equals(upper(context.sectionKind()))
-            && rowType != BudgetLongNormalizer.RowType.ASSUMPTION) {
+            && rowType != BudgetLongNormalizer.RowType.ASSUMPTION
+            && shouldInheritCashflowContext(normalizedLabel, code, semanticKind, sectionKind, rowType)) {
             sectionKind = "CASHFLOW";
+            if ("FINANCING".equals(upper(semanticKind)) && looksLikeCashflowFinancing(normalizedLabel, code)) {
+                semanticKind = inferCashflowFinancingSemantic(normalizedLabel, numericValues);
+            } else if ("TAX".equals(upper(semanticKind))) {
+                semanticKind = "CASHFLOW_TAX";
+            }
             if ("UNKNOWN".equals(confidence)) {
                 confidence = "LOW";
             }
@@ -176,7 +224,23 @@ public final class BudgetCanonicalClassifier {
             ambiguous = true;
         }
 
-        return new Classification(rowType, semanticKind, sectionKind, confidence, ambiguous);
+        Classification result = new Classification(rowType, semanticKind, sectionKind, confidence, ambiguous);
+        traceClassification(clientKey, label, code, result);
+        return result;
+    }
+
+    private static void traceClassification(String clientKey, String label, String code, Classification classification) {
+        String raw = (label == null ? "" : label) + " | " + (code == null ? "" : code);
+        if (!BudgetTraceLogger.shouldTraceLabel(raw)) return;
+        BudgetTraceLogger.log(log, "canonical-classification", BudgetTraceLogger.fields(
+            "companyId", clientKey,
+            "processingRoute", "BudgetCanonicalClassifier.classify",
+            "rawLabel", label,
+            "section", classification == null ? null : classification.sectionKind(),
+            "rowRole", classification == null ? null : classification.rowType(),
+            "financialNature", classification == null ? null : classification.semanticKind(),
+            "confidence", classification == null ? null : classification.confidence()
+        ));
     }
 
     public static SectionContext nextContext(SectionContext current, Classification classification) {
@@ -194,6 +258,117 @@ public final class BudgetCanonicalClassifier {
             "UNKNOWN".equals(classification.semanticKind()) ? (current == null ? "UNKNOWN" : current.semanticKind()) : classification.semanticKind(),
             "UNKNOWN".equals(classification.sectionKind()) ? (current == null ? "UNKNOWN" : current.sectionKind()) : classification.sectionKind()
         );
+    }
+
+    public static Classification alignToSectionContext(Classification classification,
+                                                       String currentSectionKind,
+                                                       String label,
+                                                       String code,
+                                                       List<BigDecimal> numericValues) {
+        if (classification == null) return null;
+        if (!"CASHFLOW".equals(upper(currentSectionKind))) return classification;
+        if ("CASHFLOW".equals(upper(classification.sectionKind()))) return classification;
+        String normalizedLabel = BudgetSemanticResolver.normalize(label);
+        if (shouldKeepAggregateInsideCashflow(classification, normalizedLabel, code)) {
+            String confidence = "UNKNOWN".equalsIgnoreCase(classification.confidence()) ? "LOW" : classification.confidence();
+            String semanticKind = upper(classification.semanticKind());
+            if ("FINANCING".equals(semanticKind) && looksLikeCashflowFinancing(normalizedLabel, code)) {
+                semanticKind = inferCashflowFinancingSemantic(normalizedLabel, numericValues);
+            } else if ("TAX".equals(semanticKind)) {
+                semanticKind = "CASHFLOW_TAX";
+            }
+            return new Classification(
+                classification.rowType(),
+                semanticKind,
+                "CASHFLOW",
+                confidence,
+                classification.ambiguous()
+            );
+        }
+        if (canReopenProfitAndLossBlock(classification)) return classification;
+        if (classification.rowType() == BudgetLongNormalizer.RowType.TEXT
+            || classification.rowType() == BudgetLongNormalizer.RowType.ASSUMPTION) {
+            return classification;
+        }
+
+        String semanticKind = upper(classification.semanticKind());
+        String confidence = "UNKNOWN".equalsIgnoreCase(classification.confidence()) ? "LOW" : classification.confidence();
+
+        if (isCashflowSemantic(semanticKind)) {
+            return new Classification(
+                classification.rowType(),
+                semanticKind,
+                "CASHFLOW",
+                confidence,
+                classification.ambiguous()
+            );
+        }
+        if (Set.of(
+            "REVENUE",
+            "OTHER_OPERATING_INCOME",
+            "OPEX",
+            "OPERATING_ADJUSTMENT",
+            "DEPRECIATION_AMORTIZATION",
+            "CAPEX",
+            "FINANCING"
+        ).contains(semanticKind)) {
+            return new Classification(
+                classification.rowType(),
+                semanticKind,
+                "CASHFLOW",
+                confidence,
+                classification.ambiguous()
+            );
+        }
+        if ("TAX".equals(semanticKind)) {
+            return new Classification(classification.rowType(), "CASHFLOW_TAX", "CASHFLOW", confidence, classification.ambiguous());
+        }
+        if ("FINANCING".equals(semanticKind) && looksLikeCashflowFinancing(normalizedLabel, code)) {
+            return new Classification(
+                classification.rowType(),
+                inferCashflowFinancingSemantic(normalizedLabel, numericValues),
+                "CASHFLOW",
+                confidence,
+                classification.ambiguous()
+            );
+        }
+        return classification;
+    }
+
+    private static boolean shouldKeepAggregateInsideCashflow(Classification classification,
+                                                             String normalizedLabel,
+                                                             String code) {
+        if (classification == null) return false;
+        if (classification.rowType() == BudgetLongNormalizer.RowType.DETAIL) return false;
+        String semanticKind = upper(classification.semanticKind());
+        if (!Set.of("REVENUE", "OTHER_OPERATING_INCOME", "OPEX", "TAX", "FINANCING").contains(semanticKind)) {
+            return false;
+        }
+        if ("FINANCING".equals(semanticKind) && looksLikeCashflowFinancing(normalizedLabel, code)) {
+            return true;
+        }
+        if ("TAX".equals(semanticKind)) {
+            return true;
+        }
+        return genericAggregateLabel(normalizedLabel, semanticKind)
+            || matchesAggregateAlias(stripAggregatePrefix(normalizedLabel), SUBTOTAL_MARKERS)
+            || matchesAggregateAlias(stripAggregatePrefix(normalizedLabel), GENERIC_OPEX_AGGREGATES)
+            || matchesAggregateAlias(stripAggregatePrefix(normalizedLabel), GENERIC_REVENUE_AGGREGATES);
+    }
+
+    private static boolean canReopenProfitAndLossBlock(Classification classification) {
+        if (classification == null) return false;
+        if (!"P_AND_L".equals(upper(classification.sectionKind()))) return false;
+        if (classification.rowType() == BudgetLongNormalizer.RowType.DETAIL) return false;
+        return Set.of(
+            "REVENUE",
+            "OTHER_OPERATING_INCOME",
+            "OPEX",
+            "OPERATING_ADJUSTMENT",
+            "INVENTORY_VARIATION",
+            "DEPRECIATION_AMORTIZATION",
+            "CAPEX"
+        ).contains(upper(classification.semanticKind()));
     }
 
     public static String classifyZeroInterpretation(String semanticKind, String label, List<BigDecimal> values) {
@@ -258,6 +433,9 @@ public final class BudgetCanonicalClassifier {
             return hasAmounts ? BudgetLongNormalizer.RowType.DETAIL : BudgetLongNormalizer.RowType.TEXT;
         }
         if (looksLikeTotal(normalizedLabel)) return BudgetLongNormalizer.RowType.TOTAL;
+        if (looksLikeTaxCharge(normalizedLabel) && hasAmounts && !looksLikeTotal(normalizedLabel)) {
+            return hasCode ? BudgetLongNormalizer.RowType.DETAIL : BudgetLongNormalizer.RowType.DETAIL;
+        }
         if (looksLikeDerived(normalizedLabel, semanticKind)) return BudgetLongNormalizer.RowType.DERIVED_KPI;
         if (looksLikeAssumption(normalizedLabel) && !isFinancialSemantic(semanticKind)) return BudgetLongNormalizer.RowType.ASSUMPTION;
         if (looksLikeOrdinalHeading(normalizedLabel, hasCode)) return BudgetLongNormalizer.RowType.SUBTOTAL;
@@ -276,18 +454,47 @@ public final class BudgetCanonicalClassifier {
     }
 
     private static Classification explicitSemantic(String normalizedLabel, String normalizedCategory, BudgetLongNormalizer.RowType rowType) {
-        Classification explicitCategory = explicitCategorySemantic(normalizedCategory, rowType);
+        Classification explicitCategory = explicitCategorySemantic(normalizedLabel, normalizedCategory, rowType);
         if (explicitCategory != null) {
             return explicitCategory;
         }
         String merged = (normalizedLabel + " " + normalizedCategory).trim();
+        String aggregateBody = stripAggregatePrefix(normalizedLabel);
+        boolean aggregateCandidate = rowType != BudgetLongNormalizer.RowType.DETAIL || hasAggregatePrefix(normalizedLabel);
         if (merged.isBlank()) return null;
+
+        if (isBlockHeading(normalizedLabel, REVENUE_BLOCK_HEADINGS)
+            || (aggregateCandidate && (isBlockHeading(aggregateBody, REVENUE_BLOCK_HEADINGS)
+            || matchesAggregateAlias(aggregateBody, GENERIC_REVENUE_AGGREGATES)))) {
+            return new Classification(preserveAggregateRowType(rowType), "REVENUE", "P_AND_L", "HIGH", false);
+        }
+        if (isBlockHeading(normalizedLabel, OPEX_BLOCK_HEADINGS)
+            || (aggregateCandidate && (isBlockHeading(aggregateBody, OPEX_BLOCK_HEADINGS)
+            || matchesAggregateAlias(aggregateBody, GENERIC_OPEX_AGGREGATES)
+            || matchesAggregateAlias(aggregateBody, SUBTOTAL_MARKERS)))) {
+            return new Classification(preserveAggregateRowType(rowType), "OPEX", "P_AND_L", "HIGH", false);
+        }
+        if (isBlockHeading(normalizedLabel, CASHFLOW_BLOCK_HEADINGS)) {
+            return new Classification(preserveAggregateRowType(rowType), "UNKNOWN", "CASHFLOW", "HIGH", false);
+        }
 
         if (looksLikeCashflowSectionHeader(merged)) {
             return new Classification(BudgetLongNormalizer.RowType.SUBTOTAL, "UNKNOWN", "CASHFLOW", "HIGH", false);
         }
         if (looksLikeInventoryVariation(merged, normalizedLabel)) {
             return new Classification(rowType, "INVENTORY_VARIATION", "P_AND_L", "HIGH", false);
+        }
+        if (looksLikeEbitdaLabel(merged)) {
+            return new Classification(BudgetLongNormalizer.RowType.DERIVED_KPI, "UNKNOWN", "P_AND_L", "HIGH", false);
+        }
+        if (looksLikeEbitLabel(merged)) {
+            return new Classification(BudgetLongNormalizer.RowType.DERIVED_KPI, "UNKNOWN", "P_AND_L", "HIGH", false);
+        }
+        if (looksLikePreTaxLabel(merged)) {
+            return new Classification(BudgetLongNormalizer.RowType.DERIVED_KPI, "UNKNOWN", "P_AND_L", "HIGH", false);
+        }
+        if (looksLikeNetResultLabel(merged)) {
+            return new Classification(BudgetLongNormalizer.RowType.TOTAL, "UNKNOWN", "P_AND_L", "HIGH", false);
         }
 
         if (merged.contains("saldo inicial") || merged.contains("opening balance") || merged.contains("initial balance")) {
@@ -319,7 +526,7 @@ public final class BudgetCanonicalClassifier {
             return new Classification(BudgetLongNormalizer.RowType.TOTAL, "FINANCING", "P_AND_L", "HIGH", false);
         }
         if (merged.contains("impuesto") || merged.contains("tax") || merged.contains("iva") || merged.contains("vat")) {
-            return new Classification(rowType, "TAX", "P_AND_L", "MEDIUM", false);
+            return new Classification(preserveTaxRowType(rowType), "TAX", "P_AND_L", "MEDIUM", false);
         }
         if (looksLikeAssumption(merged)) {
             return new Classification(BudgetLongNormalizer.RowType.ASSUMPTION, "ASSUMPTION", "ASSUMPTION", "MEDIUM", false);
@@ -327,7 +534,9 @@ public final class BudgetCanonicalClassifier {
         return null;
     }
 
-    private static Classification explicitCategorySemantic(String normalizedCategory, BudgetLongNormalizer.RowType rowType) {
+    private static Classification explicitCategorySemantic(String normalizedLabel,
+                                                           String normalizedCategory,
+                                                           BudgetLongNormalizer.RowType rowType) {
         if (normalizedCategory == null || normalizedCategory.isBlank()) return null;
         BudgetLongNormalizer.RowType resolvedRowType = rowType;
         String semanticKind = null;
@@ -342,6 +551,10 @@ public final class BudgetCanonicalClassifier {
         }
 
         switch (normalizedCategory) {
+            case "derived kpi" -> {
+                semanticKind = "UNKNOWN";
+                sectionKind = sectionKindForDerivedKpi(normalizedLabel);
+            }
             case "revenue", "other operating income", "subtotal revenue" -> {
                 semanticKind = "REVENUE";
                 sectionKind = "P_AND_L";
@@ -358,12 +571,31 @@ public final class BudgetCanonicalClassifier {
                 semanticKind = "DEPRECIATION_AMORTIZATION";
                 sectionKind = "P_AND_L";
             }
-            case "financial result", "financial expense", "financial income", "total net result" -> {
-                semanticKind = "FINANCING";
+            case "financial result" -> {
+                semanticKind = "FINANCIAL_RESULT";
                 sectionKind = "P_AND_L";
-                resolvedRowType = "financial result".equals(normalizedCategory) || "total net result".equals(normalizedCategory)
-                    ? BudgetLongNormalizer.RowType.TOTAL
-                    : resolvedRowType;
+                resolvedRowType = BudgetLongNormalizer.RowType.TOTAL;
+            }
+            case "financial expense" -> {
+                semanticKind = "FINANCIAL_EXPENSE";
+                sectionKind = "P_AND_L";
+            }
+            case "financial income" -> {
+                semanticKind = "FINANCIAL_INCOME";
+                sectionKind = "P_AND_L";
+            }
+            case "total net result" -> {
+                semanticKind = "TOTAL_NET_RESULT";
+                sectionKind = "P_AND_L";
+                resolvedRowType = BudgetLongNormalizer.RowType.TOTAL;
+            }
+            case "financing inflow" -> {
+                semanticKind = "FINANCING_INFLOW";
+                sectionKind = "CASHFLOW";
+            }
+            case "financing outflow" -> {
+                semanticKind = "FINANCING_OUTFLOW";
+                sectionKind = "CASHFLOW";
             }
             case "cashflow inflow" -> {
                 semanticKind = "CASH_INFLOW";
@@ -374,7 +606,7 @@ public final class BudgetCanonicalClassifier {
                 sectionKind = "CASHFLOW";
             }
             case "cashflow tax" -> {
-                semanticKind = "TAX";
+                semanticKind = "CASHFLOW_TAX";
                 sectionKind = "CASHFLOW";
             }
             case "opening balance" -> {
@@ -387,10 +619,6 @@ public final class BudgetCanonicalClassifier {
                 sectionKind = "CASHFLOW";
                 resolvedRowType = BudgetLongNormalizer.RowType.TOTAL;
             }
-            case "financing inflow", "financing outflow" -> {
-                semanticKind = "FINANCING";
-                sectionKind = "CASHFLOW";
-            }
             case "capex" -> {
                 semanticKind = "CAPEX";
                 sectionKind = "UNKNOWN";
@@ -400,6 +628,20 @@ public final class BudgetCanonicalClassifier {
             }
         }
         return new Classification(resolvedRowType, semanticKind, sectionKind, "HIGH", false);
+    }
+
+    private static String sectionKindForDerivedKpi(String normalizedLabel) {
+        if (normalizedLabel == null || normalizedLabel.isBlank()) {
+            return "UNKNOWN";
+        }
+        if (normalizedLabel.contains("cash")
+            || normalizedLabel.contains("caja")
+            || normalizedLabel.contains("tesoreria")
+            || normalizedLabel.contains("liquidez")
+            || normalizedLabel.contains("saldo")) {
+            return "CASHFLOW";
+        }
+        return "P_AND_L";
     }
 
     private static boolean looksLikeCashflowSectionHeader(String merged) {
@@ -418,6 +660,34 @@ public final class BudgetCanonicalClassifier {
             || containsAll(sample, "variation", "inventory")
             || containsAll(sample, "change", "inventory")
             || containsAll(sample, "stock", "variation");
+    }
+
+    private static boolean looksLikeEbitdaLabel(String merged) {
+        return merged.contains("ebitda")
+            || containsAll(merged, "beneficio", "amortizacion")
+            || containsAll(merged, "resultado", "amortizacion")
+            || containsAll(merged, "profit", "depreciation");
+    }
+
+    private static boolean looksLikeEbitLabel(String merged) {
+        return merged.contains("ebit")
+            || containsAll(merged, "beneficio", "explotacion")
+            || containsAll(merged, "resultado", "explotacion")
+            || containsAll(merged, "operating", "profit")
+            || containsAll(merged, "operating", "result");
+    }
+
+    private static boolean looksLikePreTaxLabel(String merged) {
+        return containsAll(merged, "antes", "impuesto")
+            || containsAll(merged, "before", "tax")
+            || containsAll(merged, "pre", "tax");
+    }
+
+    private static boolean looksLikeNetResultLabel(String merged) {
+        return containsAll(merged, "beneficio", "neto")
+            || containsAll(merged, "resultado", "neto")
+            || containsAll(merged, "net", "result")
+            || containsAll(merged, "net", "profit");
     }
 
     private static boolean looksLikePriorYearCustomerCarry(String merged) {
@@ -502,10 +772,26 @@ public final class BudgetCanonicalClassifier {
 
     private static boolean looksLikeDerived(String normalizedLabel, String semanticKind) {
         if (Set.of("OPENING_BALANCE", "CLOSING_BALANCE").contains(upper(semanticKind))) return true;
+        if (looksLikeTaxCharge(normalizedLabel)) return false;
         for (String marker : DERIVED_MARKERS) {
             if (normalizedLabel.contains(marker)) return true;
         }
         return normalizedLabel.contains("%") || normalizedLabel.contains("ratio");
+    }
+
+    private static boolean looksLikeTaxCharge(String normalizedLabel) {
+        if (normalizedLabel == null || normalizedLabel.isBlank()) return false;
+        return normalizedLabel.contains("impuesto")
+            || normalizedLabel.contains("tax")
+            || normalizedLabel.contains("iva")
+            || normalizedLabel.contains("vat");
+    }
+
+    private static BudgetLongNormalizer.RowType preserveTaxRowType(BudgetLongNormalizer.RowType rowType) {
+        if (rowType == BudgetLongNormalizer.RowType.TOTAL || rowType == BudgetLongNormalizer.RowType.SUBTOTAL) {
+            return rowType;
+        }
+        return BudgetLongNormalizer.RowType.DETAIL;
     }
 
     private static boolean looksLikeTotal(String normalizedLabel) {
@@ -526,12 +812,29 @@ public final class BudgetCanonicalClassifier {
     private static boolean genericAggregateLabel(String normalizedLabel, String semanticKind) {
         if (normalizedLabel.startsWith("total ")) return true;
         if (normalizedLabel.startsWith("subtotal ")) return true;
+        if (isBlockHeading(normalizedLabel, REVENUE_BLOCK_HEADINGS)
+            || isBlockHeading(normalizedLabel, OPEX_BLOCK_HEADINGS)
+            || isBlockHeading(normalizedLabel, CASHFLOW_BLOCK_HEADINGS)) {
+            return true;
+        }
         if (matchesAggregateAlias(normalizedLabel, GENERIC_REVENUE_AGGREGATES)
             || matchesAggregateAlias(normalizedLabel, GENERIC_OPEX_AGGREGATES)
             || matchesAggregateAlias(normalizedLabel, SUBTOTAL_MARKERS)) {
             return true;
         }
         return false;
+    }
+
+    private static boolean isBlockHeading(String normalizedLabel, Set<String> headings) {
+        if (normalizedLabel == null || normalizedLabel.isBlank() || headings == null || headings.isEmpty()) {
+            return false;
+        }
+        String normalized = BudgetSemanticResolver.normalize(normalizedLabel);
+        if (headings.contains(normalized)) {
+            return true;
+        }
+        Set<String> tokens = normalizedMeaningfulTokens(normalized);
+        return tokens.size() == 1 && tokens.stream().anyMatch(headings::contains);
     }
 
     private static boolean looksLikeOrdinalHeading(String normalizedLabel, boolean hasCode) {
@@ -586,6 +889,31 @@ public final class BudgetCanonicalClassifier {
         return false;
     }
 
+    private static String stripAggregatePrefix(String normalizedLabel) {
+        if (normalizedLabel == null || normalizedLabel.isBlank()) {
+            return "";
+        }
+        String normalized = BudgetSemanticResolver.normalize(normalizedLabel);
+        if (normalized.startsWith("total ")) {
+            return normalized.substring("total ".length()).trim();
+        }
+        if (normalized.startsWith("subtotal ")) {
+            return normalized.substring("subtotal ".length()).trim();
+        }
+        return normalized;
+    }
+
+    private static boolean hasAggregatePrefix(String normalizedLabel) {
+        String normalized = BudgetSemanticResolver.normalize(normalizedLabel);
+        return normalized.startsWith("total ") || normalized.startsWith("subtotal ");
+    }
+
+    private static BudgetLongNormalizer.RowType preserveAggregateRowType(BudgetLongNormalizer.RowType rowType) {
+        return rowType == BudgetLongNormalizer.RowType.TOTAL
+            ? BudgetLongNormalizer.RowType.TOTAL
+            : BudgetLongNormalizer.RowType.SUBTOTAL;
+    }
+
     private static Set<String> normalizedMeaningfulTokens(String normalizedLabel) {
         return List.of(BudgetSemanticResolver.normalize(normalizedLabel).split("\\s+")).stream()
             .map(String::trim)
@@ -618,8 +946,8 @@ public final class BudgetCanonicalClassifier {
 
     private static String sectionKindFor(String semanticKind) {
         return switch (upper(semanticKind)) {
-            case "REVENUE", "OPEX", "OPERATING_ADJUSTMENT", "CAPEX", "DEPRECIATION_AMORTIZATION", "FINANCING", "FINANCIAL_RESULT", "TAX", "INVENTORY_VARIATION" -> "P_AND_L";
-            case "CASH_INFLOW", "CASH_OUTFLOW", "OPENING_BALANCE", "CLOSING_BALANCE" -> "CASHFLOW";
+            case "REVENUE", "OPEX", "OPERATING_ADJUSTMENT", "CAPEX", "DEPRECIATION_AMORTIZATION", "FINANCING", "FINANCIAL_RESULT", "FINANCIAL_EXPENSE", "FINANCIAL_INCOME", "TAX", "INVENTORY_VARIATION" -> "P_AND_L";
+            case "CASH_INFLOW", "CASH_OUTFLOW", "OPENING_BALANCE", "CLOSING_BALANCE", "FINANCING_INFLOW", "FINANCING_OUTFLOW", "CASHFLOW_TAX" -> "CASHFLOW";
             case "ASSUMPTION" -> "ASSUMPTION";
             default -> "UNKNOWN";
         };
@@ -630,7 +958,113 @@ public final class BudgetCanonicalClassifier {
     }
 
     private static boolean isFinancialSemantic(String semanticKind) {
-        return Set.of("REVENUE", "OPEX", "OPERATING_ADJUSTMENT", "CAPEX", "DEPRECIATION_AMORTIZATION", "FINANCING", "FINANCIAL_RESULT", "TAX", "INVENTORY_VARIATION").contains(upper(semanticKind));
+        return Set.of("REVENUE", "OPEX", "OPERATING_ADJUSTMENT", "CAPEX", "DEPRECIATION_AMORTIZATION", "FINANCING", "FINANCIAL_RESULT", "FINANCIAL_EXPENSE", "FINANCIAL_INCOME", "TAX", "INVENTORY_VARIATION").contains(upper(semanticKind));
+    }
+
+    private static boolean isCashflowSemantic(String semanticKind) {
+        return Set.of("CASH_INFLOW", "CASH_OUTFLOW", "OPENING_BALANCE", "CLOSING_BALANCE", "FINANCING_INFLOW", "FINANCING_OUTFLOW", "CASHFLOW_TAX").contains(upper(semanticKind));
+    }
+
+    private static boolean shouldInheritCashflowContext(String normalizedLabel,
+                                                        String code,
+                                                        String semanticKind,
+                                                        String sectionKind,
+                                                        BudgetLongNormalizer.RowType rowType) {
+        if ("UNKNOWN".equals(upper(sectionKind)) || rowType == BudgetLongNormalizer.RowType.TEXT) {
+            return true;
+        }
+        if (isCashflowSemantic(semanticKind)) {
+            return true;
+        }
+        if ("CAPEX".equals(upper(semanticKind)) || "TAX".equals(upper(semanticKind))) {
+            return true;
+        }
+        return "FINANCING".equals(upper(semanticKind)) && looksLikeCashflowFinancing(normalizedLabel, code);
+    }
+
+    private static boolean looksLikeCashflowFinancing(String normalizedLabel, String code) {
+        String normalizedCode = BudgetSemanticResolver.normalize(code);
+        if (normalizedCode.startsWith("66") || normalizedCode.startsWith("67")) {
+            return false;
+        }
+        if (containsToken(normalizedLabel, "interes") || containsToken(normalizedLabel, "intereses")) {
+            return false;
+        }
+        if (normalizedLabel.contains("resultado financier") || normalizedLabel.contains("financial result")) {
+            return false;
+        }
+        return containsToken(normalizedLabel, "prestamo")
+            || containsToken(normalizedLabel, "prestamos")
+            || containsToken(normalizedLabel, "deuda")
+            || containsToken(normalizedLabel, "deudas")
+            || containsToken(normalizedLabel, "leasing")
+            || normalizedLabel.contains("financiacion")
+            || normalizedLabel.contains("financing")
+            || normalizedLabel.contains("loan");
+    }
+
+    private static boolean looksLikeStandaloneCashflowHeading(String normalizedLabel) {
+        if (normalizedLabel == null || normalizedLabel.isBlank()) {
+            return false;
+        }
+        if (isBlockHeading(normalizedLabel, CASHFLOW_BLOCK_HEADINGS)) {
+            return true;
+        }
+        return normalizedLabel.startsWith("tesorer")
+            || normalizedLabel.equals("caja")
+            || normalizedLabel.equals("liquidez")
+            || normalizedLabel.equals("cashflow")
+            || normalizedLabel.equals("cash flow");
+    }
+
+    private static boolean looksLikeZeroOnlyRow(List<BigDecimal> numericValues) {
+        if (numericValues == null || numericValues.isEmpty()) {
+            return false;
+        }
+        boolean sawAmount = false;
+        for (BigDecimal value : numericValues) {
+            if (value == null) {
+                continue;
+            }
+            sawAmount = true;
+            if (value.signum() != 0) {
+                return false;
+            }
+        }
+        return sawAmount;
+    }
+
+    private static String inferCashflowFinancingSemantic(String normalizedLabel, List<BigDecimal> numericValues) {
+        if (normalizedLabel.contains("cuota")
+            || normalizedLabel.contains("devolucion")
+            || normalizedLabel.contains("devolver")
+            || normalizedLabel.contains("repago")
+            || normalizedLabel.contains("repayment")
+            || normalizedLabel.contains("installment")
+            || normalizedLabel.contains("amortizacion prestam")
+            || normalizedLabel.contains("amortizacion deuda")
+            || normalizedLabel.contains("loan repayment")) {
+            return "FINANCING_OUTFLOW";
+        }
+        boolean hasPositive = false;
+        boolean hasNegative = false;
+        if (numericValues != null) {
+            for (BigDecimal value : numericValues) {
+                if (value == null || value.signum() == 0) continue;
+                if (value.signum() > 0) {
+                    hasPositive = true;
+                } else {
+                    hasNegative = true;
+                }
+            }
+        }
+        if (hasPositive && !hasNegative) {
+            return "FINANCING_INFLOW";
+        }
+        if (hasNegative && !hasPositive) {
+            return "FINANCING_OUTFLOW";
+        }
+        return "FINANCING";
     }
 
     private static boolean isCarryableContextSemantic(String semanticKind) {
@@ -653,6 +1087,38 @@ public final class BudgetCanonicalClassifier {
             || compactCode.startsWith("rev")
             || compactCode.startsWith("sale")
             || compactCode.startsWith("ing");
+    }
+
+    private static boolean looksLikeExpenseEvidence(String normalizedLabel, String code) {
+        String normalizedCode = BudgetSemanticResolver.normalize(code).replace(" ", "");
+        if (normalizedLabel.contains("gasto")
+            || normalizedLabel.contains("coste")
+            || normalizedLabel.contains("expense")
+            || normalizedLabel.contains("compra")
+            || normalizedLabel.contains("purchase")
+            || normalizedLabel.contains("sueldo")
+            || normalizedLabel.contains("salario")
+            || normalizedLabel.contains("nomina")
+            || normalizedLabel.contains("payroll")
+            || normalizedLabel.contains("alquiler")
+            || normalizedLabel.contains("rent")
+            || normalizedLabel.contains("seguro")
+            || normalizedLabel.contains("insurance")
+            || normalizedLabel.contains("gestoria")
+            || normalizedLabel.contains("mantenimiento")
+            || normalizedLabel.contains("maintenance")
+            || normalizedLabel.contains("reparacion")
+            || normalizedLabel.contains("repair")
+            || normalizedLabel.contains("limpieza")
+            || normalizedLabel.contains("cleaning")
+            || normalizedLabel.contains("consumible")
+            || normalizedLabel.contains("suministro")
+            || normalizedLabel.contains("utility")
+            || normalizedLabel.contains("luz")
+            || normalizedLabel.contains("agua")) {
+            return true;
+        }
+        return normalizedCode.startsWith("6");
     }
 
     public record SectionContext(String semanticKind, String sectionKind) {}

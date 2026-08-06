@@ -1,6 +1,7 @@
 package com.asecon.enterpriseiq.service;
 
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.charset.StandardCharsets;
@@ -95,6 +96,96 @@ class BudgetLongNormalizerTest {
         assertThat(result.sampleRows()).filteredOn(row -> "Campaña Guisantes".equals(row.label()))
             .extracting(BudgetLongNormalizer.LongRow::semanticKind)
             .containsOnly("REVENUE");
+    }
+
+    @Test
+    void inherits_opex_from_plain_gastos_block_headings_without_literal_operating_suffix() {
+        String csv = ""
+            + "Concepto,ENERO,FEBRERO,MARZO,ABRIL,MAYO,JUNIO,JULIO,AGOSTO,SEPTIEMBRE,OCTUBRE,NOVIEMBRE,DICIEMBRE\n"
+            + "INGRESOS,0,0,0,0,0,0,0,0,0,0,0,0\n"
+            + "Ventas mostrador,10,10,10,10,10,10,10,10,10,10,10,10\n"
+            + "GASTOS,0,0,0,0,0,0,0,0,0,0,0,0\n"
+            + "Sueldos y Seguridad Social,5,5,5,5,5,5,5,5,5,5,5,5\n"
+            + "Alquiler del local,2,2,2,2,2,2,2,2,2,2,2,2\n"
+            + "Luz,1,1,1,1,1,1,1,1,1,1,1,1\n";
+
+        var result = BudgetLongNormalizer.normalizeToLongCsv(csv.getBytes(StandardCharsets.UTF_8), "7", 10_000, 120);
+
+        assertThat(result.analysisStatus()).isEqualTo("AUTOMATIC_ACCEPTED");
+        assertThat(result.sampleRows()).filteredOn(row -> "GASTOS".equals(row.label()))
+            .allMatch(row -> row.rowType() == BudgetLongNormalizer.RowType.SUBTOTAL)
+            .allMatch(row -> "OPEX".equals(row.semanticKind()))
+            .allMatch(row -> "P_AND_L".equals(row.sectionKind()));
+        assertThat(result.sampleRows()).filteredOn(row -> "Sueldos y Seguridad Social".equals(row.label()))
+            .allMatch(row -> row.rowType() == BudgetLongNormalizer.RowType.DETAIL)
+            .allMatch(row -> "OPEX".equals(row.semanticKind()))
+            .allMatch(row -> !"REVIEW".equals(row.mappingStatus()));
+        assertThat(result.sampleRows()).filteredOn(row -> "Alquiler del local".equals(row.label()) || "Luz".equals(row.label()))
+            .allMatch(row -> row.rowType() == BudgetLongNormalizer.RowType.DETAIL)
+            .allMatch(row -> "OPEX".equals(row.semanticKind()))
+            .allMatch(row -> "P_AND_L".equals(row.sectionKind()));
+    }
+
+    @Test
+    void inherits_revenue_from_block_heading_even_when_heading_lives_in_code_column() {
+        String csv = ""
+            + "Codigo,Concepto,ENERO,FEBRERO,MARZO,ABRIL,MAYO,JUNIO,JULIO,AGOSTO,SEPTIEMBRE,OCTUBRE,NOVIEMBRE,DICIEMBRE,Total anual\n"
+            + "INGRESOS,,0,0,0,0,0,0,0,0,0,0,0,0,0\n"
+            + "700.11,Ventas de fruta fresca,100,100,100,100,100,100,100,100,100,100,100,100,1200\n"
+            + "700.37,Productos gourmet de temporada,50,50,50,50,50,50,50,50,50,50,50,50,600\n"
+            + "700.82,Zumos y batidos frescos,30,30,30,30,30,30,30,30,30,30,30,30,360\n"
+            + "759,Ingresos accesorios,20,20,20,20,20,20,20,20,20,20,20,20,240\n"
+            + ",TOTAL INGRESOS,200,200,200,200,200,200,200,200,200,200,200,200,2400\n";
+
+        var result = BudgetLongNormalizer.normalizeToLongCsv(csv.getBytes(StandardCharsets.UTF_8), "17", 10_000, 200);
+
+        assertThat(result.analysisStatus()).isEqualTo("AUTOMATIC_ACCEPTED");
+        assertThat(result.sampleRows())
+            .filteredOn(row -> List.of(
+                "Ventas de fruta fresca",
+                "Productos gourmet de temporada",
+                "Zumos y batidos frescos",
+                "Ingresos accesorios"
+            ).contains(row.label()))
+            .allMatch(row -> row.rowType() == BudgetLongNormalizer.RowType.DETAIL)
+            .allMatch(row -> "REVENUE".equals(row.semanticKind()))
+            .allMatch(row -> "P_AND_L".equals(row.sectionKind()))
+            .allMatch(row -> !"REVIEW".equals(row.mappingStatus()));
+    }
+
+    @Test
+    void classifies_tax_detail_rows_as_tax_inside_profit_and_loss_blocks() {
+        String csv = ""
+            + "Codigo,Concepto,ENERO,FEBRERO,MARZO,ABRIL,MAYO,JUNIO,JULIO,AGOSTO,SEPTIEMBRE,OCTUBRE,NOVIEMBRE,DICIEMBRE,Total anual\n"
+            + "GASTOS,,0,0,0,0,0,0,0,0,0,0,0,0,0\n"
+            + "640,Sueldos y salarios,100,100,100,100,100,100,100,100,100,100,100,100,1200\n"
+            + "630,Impuesto sobre beneficios estimado,10,10,10,10,10,10,10,10,10,10,10,10,120\n";
+
+        var result = BudgetLongNormalizer.normalizeToLongCsv(csv.getBytes(StandardCharsets.UTF_8), "17", 10_000, 120);
+
+        assertThat(result.sampleRows())
+            .filteredOn(row -> "Impuesto sobre beneficios estimado".equals(row.label()))
+            .isNotEmpty()
+            .allMatch(row -> row.rowType() == BudgetLongNormalizer.RowType.DETAIL)
+            .allMatch(row -> "TAX".equals(row.semanticKind()))
+            .allMatch(row -> "P_AND_L".equals(row.sectionKind()))
+            .allMatch(row -> !"REVIEW".equals(row.mappingStatus()));
+    }
+
+    @Test
+    void classifier_prioritizes_explicit_tax_labels_over_generic_opex_reading() {
+        var classification = BudgetCanonicalClassifier.classify(
+            "17",
+            "Impuesto sobre beneficios estimado",
+            "630",
+            "Impuesto sobre beneficios estimado",
+            List.of(BigDecimal.TEN, BigDecimal.TEN),
+            new BudgetCanonicalClassifier.SectionContext("OPEX", "P_AND_L")
+        );
+
+        assertThat(classification.rowType()).isEqualTo(BudgetLongNormalizer.RowType.DETAIL);
+        assertThat(classification.semanticKind()).isEqualTo("TAX");
+        assertThat(classification.sectionKind()).isEqualTo("P_AND_L");
     }
 
     @Test
@@ -366,13 +457,34 @@ class BudgetLongNormalizerTest {
         assertThat(result.sampleRows()).filteredOn(row -> "Variacion stock".equals(row.label()))
             .allMatch(row -> "OPERATING_ADJUSTMENT".equals(row.semanticKind()))
             .allMatch(row -> "P_AND_L".equals(row.sectionKind()));
-        assertThat(result.sampleRows()).filteredOn(row -> "Prestamo recibido".equals(row.label()) || "Cuota prestamo".equals(row.label()))
-            .allMatch(row -> "FINANCING".equals(row.semanticKind()))
+        assertThat(result.sampleRows()).filteredOn(row -> "Prestamo recibido".equals(row.label()))
+            .allMatch(row -> "FINANCING_INFLOW".equals(row.semanticKind()))
+            .allMatch(row -> "CASHFLOW".equals(row.sectionKind()));
+        assertThat(result.sampleRows()).filteredOn(row -> "Cuota prestamo".equals(row.label()))
+            .allMatch(row -> "FINANCING_OUTFLOW".equals(row.semanticKind()))
             .allMatch(row -> "CASHFLOW".equals(row.sectionKind()));
         assertThat(result.sampleRows()).filteredOn(row -> "IVA trimestral".equals(row.label()))
-            .allMatch(row -> "TAX".equals(row.semanticKind()))
+            .allMatch(row -> "CASHFLOW_TAX".equals(row.semanticKind()))
             .allMatch(row -> "CASHFLOW".equals(row.sectionKind()));
         assertThat(result.sampleRows()).noneMatch(row -> "Concepto".equals(row.label()));
+    }
+
+    @Test
+    void keeps_cash_neto_as_cashflow_derived_kpi_in_wide_annual_sources() {
+        String csv = ""
+            + "Codigo,Concepto,Naturaleza,Enero,Febrero,Marzo,Abril,Mayo,Junio,Julio,Agosto,Septiembre,Octubre,Noviembre,Diciembre\n"
+            + ",TOTAL GASTOS OPERATIVOS,SUBTOTAL_OPEX,20,20,20,20,20,20,20,20,20,20,20,20\n"
+            + ",RESULTADO NETO,TOTAL_NET_RESULT,10,10,10,10,10,10,10,10,10,10,10,10\n"
+            + ",,,,,,,,,,,,,,\n"
+            + ",CASH NETO,DERIVED_KPI,5,4,3,2,1,0,-1,-2,-3,-4,-5,-6\n"
+            + ",Saldo final,CLOSING_BALANCE,25,29,32,34,35,35,34,32,29,25,20,14\n";
+
+        var result = BudgetLongNormalizer.normalizeToLongCsv(csv.getBytes(StandardCharsets.UTF_8), "7", 10_000, 120);
+
+        assertThat(result.sampleRows()).filteredOn(row -> "CASH NETO".equals(row.label()))
+            .allMatch(row -> row.rowType() == BudgetLongNormalizer.RowType.DERIVED_KPI)
+            .allMatch(row -> "CASHFLOW".equals(row.sectionKind()))
+            .allMatch(row -> "UNKNOWN".equals(row.semanticKind()));
     }
 
     @Test

@@ -19,8 +19,11 @@ import java.util.regex.Pattern;
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVParser;
 import org.apache.commons.csv.CSVRecord;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public final class BudgetLongNormalizer {
+    private static final Logger log = LoggerFactory.getLogger(BudgetLongNormalizer.class);
     private BudgetLongNormalizer() {}
 
     public enum RowType { DETAIL, SUBTOTAL, TOTAL, DERIVED_KPI, ASSUMPTION, TEXT }
@@ -125,6 +128,12 @@ public final class BudgetLongNormalizer {
         if (normalizedUniversalCsvBytes == null || normalizedUniversalCsvBytes.length == 0) {
             return emptyResult();
         }
+        BudgetTraceLogger.log(log, "budget-long-normalizer-start", BudgetTraceLogger.fields(
+            "companyId", clientKey,
+            "processingRoute", "BudgetLongNormalizer.normalizeToLongCsv",
+            "sourceFilename", "normalized-csv",
+            "bytes", normalizedUniversalCsvBytes.length
+        ));
         if (maxSourceRows < 1) maxSourceRows = 1_000;
         if (maxSourceRows > 50_000) maxSourceRows = 50_000;
         if (maxSampleRows < 0) maxSampleRows = 0;
@@ -329,11 +338,12 @@ public final class BudgetLongNormalizer {
                 rows++;
                 if (rows > maxSourceRows) break;
 
-                String labelRaw = clean(record.get(labelHeader));
+                String rawCodeValue = clean(record.get(codeHeader));
+                String labelRaw = resolveWideLabel(record, labelHeader, codeHeader);
                 if (labelRaw == null) continue;
 
                 ParsedLabel parsed = parsePartidaLabel(labelRaw);
-                String code = firstNonNull(clean(record.get(codeHeader)), parsed.code());
+                String code = firstNonNull(normalizeCodeCandidate(rawCodeValue), parsed.code());
                 String natureValue = clean(record.get(natureHeader));
                 String costCenter = clean(record.get(costCenterHeader));
                 String department = clean(record.get(departmentHeader));
@@ -348,11 +358,23 @@ public final class BudgetLongNormalizer {
                     code,
                     firstNonNull(natureValue, parsed.label()),
                     rowValues,
-                    normalizationContext.sectionContext()
+                    normalizationContext.classifierContext()
                 );
-                BudgetSemanticResolver.NatureInference explicitNature = BudgetSemanticResolver.classifyBusinessNature(clientKey, natureValue, labelRaw, code);
+                BudgetSemanticResolver.NatureInference explicitNature = natureValue != null && !natureValue.isBlank()
+                    ? BudgetSemanticResolver.classifyBusinessNature(clientKey, natureValue)
+                    : null;
+                BudgetSemanticResolver.NatureInference contextualNature = explicitNature != null
+                    ? explicitNature
+                    : BudgetSemanticResolver.classifyBusinessNature(clientKey, labelRaw, code);
                 classification = applyExplicitNature(classification, explicitNature);
-                normalizationContext = normalizationContext.next(classification, explicitNature, labelRaw, rowValues);
+                classification = BudgetCanonicalClassifier.alignToSectionContext(
+                    classification,
+                    normalizationContext.currentSectionKind(),
+                    labelRaw,
+                    code,
+                    rowValues
+                );
+                normalizationContext = normalizationContext.next(classification, contextualNature, labelRaw, rowValues);
                 String mappingStatus = "UNKNOWN".equals(classification.semanticKind())
                     ? "REVIEW"
                     : classification.ambiguous() ? "INFERRED" : "CANONICAL";
@@ -402,6 +424,7 @@ public final class BudgetLongNormalizer {
                     produced++;
                     if (sample.size() < maxSampleRows) sample.add(row);
                     appendCsvRow(out, row);
+                    traceRow(clientKey, "wide-row-emitted", row);
                 }
             }
         } catch (Exception ex) {
@@ -448,7 +471,8 @@ public final class BudgetLongNormalizer {
         int reviewRows = 0;
         int reviewDetailRows = 0;
         int inferredRows = 0;
-        boolean headerConfirmation = resolution.requiresConfirmation() && natureHeader == null;
+        boolean longSemanticSupport = countNonNull(sectionHeader, rowRoleHeader, financialGroupHeader, directionHeader, aggregationPolicyHeader) >= 2;
+        boolean headerConfirmation = resolution.requiresConfirmation() && natureHeader == null && !longSemanticSupport;
         NormalizationContext normalizationContext = NormalizationContext.initial();
         Map<String, String> knownFinancialNatureBySignature = new LinkedHashMap<>();
         StringBuilder out = new StringBuilder(64 * 1024);
@@ -496,7 +520,7 @@ public final class BudgetLongNormalizer {
                 String currency = clean(record.get(currencyHeader));
                 String semanticHints = joinNonBlank(natureValue, financialGroupValue, directionValue, aggregationPolicyValue, sectionValue, rowRoleValue);
 
-                BudgetSemanticResolver.NatureInference nature = BudgetSemanticResolver.classifyBusinessNature(clientKey, semanticHints, label, code);
+                BudgetSemanticResolver.NatureInference nature = BudgetSemanticResolver.classifyBusinessNature(clientKey, semanticHints);
                 if ("UNKNOWN".equals(nature.concept()) && budgetAmount != null) {
                     if (budgetAmount.signum() < 0) {
                         nature = new BudgetSemanticResolver.NatureInference("OPEX", 0.55d, "LOW", true, List.of("inferido por signo al faltar tipología explícita"));
@@ -511,10 +535,19 @@ public final class BudgetLongNormalizer {
                     code,
                     firstNonNull(semanticHints, costCenter, department),
                     Arrays.asList(budgetAmount, actualAmount, forecastAmount, varianceAmount),
-                    normalizationContext.sectionContext()
+                    normalizationContext.classifierContext()
                 );
                 classification = applyExplicitNature(classification, nature);
                 classification = applyStructuralHints(classification, sectionValue, rowRoleValue, financialGroupValue, directionValue, aggregationPolicyValue);
+                if (!hasExplicitSectionValue(sectionValue)) {
+                    classification = BudgetCanonicalClassifier.alignToSectionContext(
+                        classification,
+                        normalizationContext.currentSectionKind(),
+                        label,
+                        code,
+                        Arrays.asList(budgetAmount, actualAmount, forecastAmount, varianceAmount)
+                    );
+                }
                 normalizationContext = normalizationContext.next(classification, nature, label, Arrays.asList(budgetAmount, actualAmount, forecastAmount, varianceAmount));
                 String mappingStatus = "UNKNOWN".equals(classification.semanticKind())
                     ? "REVIEW"
@@ -559,6 +592,7 @@ public final class BudgetLongNormalizer {
                 monthSeen.put(monthKey, Boolean.TRUE);
                 if (sample.size() < maxSampleRows) sample.add(row);
                 appendCsvRow(out, row);
+                traceRow(clientKey, "long-row-emitted", row);
             }
         } catch (Exception ex) {
             List<String> notes = mergeNotes(resolution.notes(), detailRows, unknownDetailRows, reviewRows, inferredRows);
@@ -596,6 +630,23 @@ public final class BudgetLongNormalizer {
         out.append('\n');
     }
 
+    private static void traceRow(String clientKey, String event, LongRow row) {
+        if (row == null || !BudgetTraceLogger.shouldTraceLabel(row.label())) return;
+        BudgetTraceLogger.log(log, event, BudgetTraceLogger.fields(
+            "companyId", clientKey,
+            "processingRoute", "BudgetLongNormalizer",
+            "canonicalRowId", row.blockId() + "::" + row.monthKey() + "::" + (row.code() == null ? "" : row.code()),
+            "sourceRow", row.sourceRow(),
+            "rawLabel", row.label(),
+            "section", row.sectionKind(),
+            "rowRole", row.rowType(),
+            "financialNature", row.financialNature(),
+            "cashflowNature", row.cashflowNature(),
+            "monthlyTotal", BudgetTraceLogger.fmt(row.budgetAmount() != null ? row.budgetAmount() : row.amount()),
+            "sourceSheet", row.blockId()
+        ));
+    }
+
     private static String numberOrBlank(BigDecimal value) {
         return value == null ? "" : value.toPlainString();
     }
@@ -608,8 +659,17 @@ public final class BudgetLongNormalizer {
                                                 String signature,
                                                 Map<String, String> knownFinancialNatureBySignature) {
         String semanticKind = upper(classification.semanticKind());
+        if (Set.of("FINANCING_INFLOW", "FINANCING_OUTFLOW").contains(semanticKind)) {
+            return "";
+        }
+        if ("CASHFLOW_TAX".equals(semanticKind)) {
+            return "";
+        }
         if ("INVENTORY_VARIATION".equals(semanticKind)) {
             return "OPERATING_ADJUSTMENT";
+        }
+        if ("FINANCIAL_EXPENSE".equals(semanticKind) || "FINANCIAL_INCOME".equals(semanticKind)) {
+            return "FINANCING";
         }
         if (isFinancialNature(semanticKind)) {
             return semanticKind;
@@ -629,6 +689,12 @@ public final class BudgetLongNormalizer {
         }
         if (Set.of("CASH_INFLOW", "CASH_OUTFLOW", "OPENING_BALANCE", "CLOSING_BALANCE", "FINANCING").contains(semanticKind)) {
             return semanticKind;
+        }
+        if ("FINANCING_INFLOW".equals(semanticKind) || "FINANCING_OUTFLOW".equals(semanticKind)) {
+            return "FINANCING";
+        }
+        if ("CASHFLOW_TAX".equals(semanticKind)) {
+            return "CASHFLOW_TAX";
         }
         return switch (upper(financialNature)) {
             case "REVENUE" -> "CASH_INFLOW";
@@ -670,6 +736,19 @@ public final class BudgetLongNormalizer {
                                         int blockSequence) {
         static NormalizationContext initial() {
             return new NormalizationContext(BudgetCanonicalClassifier.emptyContext(), "BLOCK-1", "UNKNOWN", 1);
+        }
+
+        BudgetCanonicalClassifier.SectionContext classifierContext() {
+            BudgetCanonicalClassifier.SectionContext base = sectionContext == null
+                ? BudgetCanonicalClassifier.emptyContext()
+                : sectionContext;
+            if (currentSectionKind == null
+                || currentSectionKind.isBlank()
+                || "UNKNOWN".equalsIgnoreCase(currentSectionKind)
+                || currentSectionKind.equalsIgnoreCase(base.sectionKind())) {
+                return base;
+            }
+            return new BudgetCanonicalClassifier.SectionContext(base.semanticKind(), currentSectionKind);
         }
 
         NormalizationContext next(BudgetCanonicalClassifier.Classification classification,
@@ -967,7 +1046,7 @@ public final class BudgetLongNormalizer {
             return base;
         }
         String concept = mapExplicitNature(explicitNature.concept());
-        String sectionKind = normalizeSectionKind(base.sectionKind(), concept, null, null);
+        String sectionKind = normalizeSectionKind(null, concept, null, null);
         return new BudgetCanonicalClassifier.Classification(
             base.rowType(),
             concept,
@@ -1005,6 +1084,7 @@ public final class BudgetLongNormalizer {
         return switch (upper(concept)) {
             case "OTHER_OPERATING_INCOME" -> "REVENUE";
             case "FINANCIAL_RESULT" -> "FINANCING";
+            case "FINANCIAL_EXPENSE", "FINANCIAL_INCOME", "FINANCING_INFLOW", "FINANCING_OUTFLOW", "CASHFLOW_TAX" -> upper(concept);
             default -> upper(concept);
         };
     }
@@ -1030,7 +1110,13 @@ public final class BudgetLongNormalizer {
         String combined = joinNonBlank(financialGroupValue, directionValue, aggregationPolicyValue);
         BudgetSemanticResolver.NatureInference inference = BudgetSemanticResolver.classifyBusinessNature(null, combined);
         if (inference != null && inference.concept() != null && !"UNKNOWN".equalsIgnoreCase(inference.concept()) && inference.score() >= 0.58d) {
-            return mapExplicitNature(inference.concept());
+            String inferred = mapExplicitNature(inference.concept());
+            String fallbackUpper = upper(fallback);
+            if (Set.of("FINANCIAL_EXPENSE", "FINANCIAL_INCOME", "FINANCING_INFLOW", "FINANCING_OUTFLOW", "CASHFLOW_TAX").contains(fallbackUpper)
+                && Set.of("FINANCING", "TAX").contains(upper(inferred))) {
+                return fallbackUpper;
+            }
+            return inferred;
         }
         return upper(fallback);
     }
@@ -1059,19 +1145,23 @@ public final class BudgetLongNormalizer {
         return normalizeSectionKind(fallback, semanticKind, financialGroupValue, null);
     }
 
+    private static boolean hasExplicitSectionValue(String sectionValue) {
+        return sectionValue != null && !sectionValue.isBlank();
+    }
+
     private static String normalizeSectionKind(String currentSection, String semanticKind, String label, List<BigDecimal> values) {
         String explicit = upper(currentSection);
         if (!explicit.isBlank() && !"UNKNOWN".equals(explicit)) {
             return explicit;
         }
         String semantic = upper(mapExplicitNature(semanticKind));
-        if (Set.of("CASH_INFLOW", "CASH_OUTFLOW", "OPENING_BALANCE", "CLOSING_BALANCE").contains(semantic)) {
+        if (Set.of("CASH_INFLOW", "CASH_OUTFLOW", "OPENING_BALANCE", "CLOSING_BALANCE", "FINANCING_INFLOW", "FINANCING_OUTFLOW", "CASHFLOW_TAX").contains(semantic)) {
             return "CASHFLOW";
         }
         if ("ASSUMPTION".equals(semantic)) {
             return "NOTES";
         }
-        if (Set.of("REVENUE", "OPEX", "OPERATING_ADJUSTMENT", "DEPRECIATION_AMORTIZATION", "FINANCING", "TAX", "CAPEX").contains(semantic)) {
+        if (Set.of("REVENUE", "OPEX", "OPERATING_ADJUSTMENT", "DEPRECIATION_AMORTIZATION", "FINANCING", "FINANCIAL_EXPENSE", "FINANCIAL_INCOME", "TAX", "CAPEX").contains(semantic)) {
             return "P_AND_L";
         }
         String normalizedLabel = BudgetSemanticResolver.normalize(label);
@@ -1213,6 +1303,21 @@ public final class BudgetLongNormalizer {
             return new ParsedLabel(code, label);
         }
         return new ParsedLabel(null, s);
+    }
+
+    private static String resolveWideLabel(Map<String, String> record, String labelHeader, String codeHeader) {
+        if (record == null) return null;
+        String label = clean(record.get(labelHeader));
+        if (label != null) return label;
+        String codeCandidate = clean(record.get(codeHeader));
+        if (codeCandidate == null) return null;
+        return isPartidaCode(codeCandidate) ? null : codeCandidate;
+    }
+
+    private static String normalizeCodeCandidate(String rawCode) {
+        if (rawCode == null) return null;
+        String trimmed = rawCode.trim();
+        return isPartidaCode(trimmed) ? trimmed : null;
     }
 
     private static String cleanParsedLabel(String rawLabel) {

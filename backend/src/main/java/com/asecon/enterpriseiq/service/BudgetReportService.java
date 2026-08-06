@@ -20,10 +20,13 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.text.NumberFormat;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 @Service
 public class BudgetReportService {
+    private static final Logger log = LoggerFactory.getLogger(BudgetReportService.class);
     private static final String BUDGET_REPORT_TEMPLATE = loadClasspathResource("reports/budget-report-template.html");
     private static final String BUDGET_REPORT_CSS = loadClasspathResource("reports/budget-report.css");
     private static final String BRAND_IMAGE_DATA_URI = "data:image/png;base64," + loadClasspathResource("reports/enterpriseiq-image-base64.txt").replaceAll("\\s+", "");
@@ -36,6 +39,19 @@ public class BudgetReportService {
     }
 
     public byte[] renderBudgetPdf(Company company, BudgetService.BudgetPdfBundle bundle) {
+        BudgetTraceLogger.log(log, "budget-pdf-render", BudgetTraceLogger.fields(
+            "companyId", company == null ? null : company.getId(),
+            "sourceFilename", bundle == null || bundle.meta() == null ? null : bundle.meta().sourceFilename(),
+            "planImportId", bundle == null || bundle.meta() == null ? null : bundle.meta().sourceImportId(),
+            "analysisVersion", bundle == null || bundle.meta() == null ? null : bundle.meta().analysisVersion(),
+            "processingRoute", "BudgetReportService.renderBudgetPdf",
+            "income", bundle == null || bundle.summary() == null ? null : BudgetTraceLogger.fmt(bundle.summary().totalIncome()),
+            "opex", bundle == null || bundle.summary() == null ? null : BudgetTraceLogger.fmt(bundle.summary().totalExpense()),
+            "ebitda", bundle == null || bundle.summary() == null ? null : BudgetTraceLogger.fmt(bundle.summary().totalMargin()),
+            "ebit", bundle == null || bundle.summary() == null ? null : BudgetTraceLogger.fmt(bundle.summary().totalEbit()),
+            "net", bundle == null || bundle.summary() == null ? null : BudgetTraceLogger.fmt(bundle.summary().netResult()),
+            "endingBalance", bundle == null || bundle.cashflow() == null ? null : BudgetTraceLogger.fmt(bundle.cashflow().endingBalance())
+        ));
         String html = buildBudgetReportHtml(company, bundle);
         return reportService.renderPdfFromHtml(html);
     }

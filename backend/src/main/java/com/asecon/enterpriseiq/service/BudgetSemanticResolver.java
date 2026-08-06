@@ -1,6 +1,7 @@
 package com.asecon.enterpriseiq.service;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -13,8 +14,11 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public final class BudgetSemanticResolver {
+    private static final Logger log = LoggerFactory.getLogger(BudgetSemanticResolver.class);
     private static final Set<String> ESSENTIAL_HEADER_CONCEPTS = Set.of(
         "BUDGET_AMOUNT",
         "PERIOD",
@@ -44,10 +48,15 @@ public final class BudgetSemanticResolver {
         "CASH_INFLOW",
         "CASH_OUTFLOW",
         "FINANCING",
+        "FINANCIAL_EXPENSE",
+        "FINANCIAL_INCOME",
         "FINANCIAL_RESULT",
+        "FINANCING_INFLOW",
+        "FINANCING_OUTFLOW",
         "OPENING_BALANCE",
         "CLOSING_BALANCE",
         "TAX",
+        "CASHFLOW_TAX",
         "ASSUMPTION"
     );
     private static final Map<String, String> EXPLICIT_NATURE_VALUES = Map.ofEntries(
@@ -61,21 +70,19 @@ public final class BudgetSemanticResolver {
         Map.entry("depreciation amortization", "DEPRECIATION_AMORTIZATION"),
         Map.entry("depreciation", "DEPRECIATION_AMORTIZATION"),
         Map.entry("financial result", "FINANCIAL_RESULT"),
-        Map.entry("financial expense", "FINANCING"),
-        Map.entry("financial income", "FINANCING"),
+        Map.entry("financial expense", "FINANCIAL_EXPENSE"),
+        Map.entry("financial income", "FINANCIAL_INCOME"),
         Map.entry("capex", "CAPEX"),
         Map.entry("cashflow inflow", "CASH_INFLOW"),
         Map.entry("cashflow outflow", "CASH_OUTFLOW"),
-        Map.entry("cashflow tax", "TAX"),
+        Map.entry("cashflow tax", "CASHFLOW_TAX"),
         Map.entry("opening balance", "OPENING_BALANCE"),
         Map.entry("closing balance", "CLOSING_BALANCE"),
-        Map.entry("financing inflow", "FINANCING"),
-        Map.entry("financing outflow", "FINANCING"),
-        Map.entry("derived kpi", "FINANCIAL_RESULT"),
-        Map.entry("total net result", "FINANCIAL_RESULT")
+        Map.entry("financing inflow", "FINANCING_INFLOW"),
+        Map.entry("financing outflow", "FINANCING_OUTFLOW")
     );
     private static final Set<String> CATEGORY_HEADER_ALIASES = Set.of(
-        "tipo", "tipo partida", "tipo registro", "categoria", "subcategoria", "naturaleza", "line type", "category", "record type", "nature"
+        "tipo", "tipo partida", "tipo registro", "categoria", "subcategoria", "clasificacion", "classification", "naturaleza", "line type", "category", "record type", "nature"
     );
     private static final Pattern NON_ASCII_MARKS = Pattern.compile("\\p{M}+");
     private static final Pattern CAMEL_BREAK = Pattern.compile("(?<=[a-z])(?=[A-Z])");
@@ -180,6 +187,7 @@ public final class BudgetSemanticResolver {
             String normalized = normalize(header);
             List<String> values = sampleValues(sampleRows, header, 120);
             double aliasScore = tokenOverlapScore(normalized, CATEGORY_HEADER_ALIASES);
+            if (aliasScore < 0.34d) continue;
             double valueScore = natureValueScore(values);
             double score = Math.min(1d, aliasScore * 0.55d + valueScore * 0.45d);
             if (score < 0.35d) continue;
@@ -200,6 +208,7 @@ public final class BudgetSemanticResolver {
     public static NatureInference classifyRowSemantic(String clientKey, String... values) {
         NatureInference explicit = detectExplicitNature(values);
         if (explicit != null) {
+            traceResolution(clientKey, values, explicit, "explicit");
             return explicit;
         }
         Map<String, Double> scores = new LinkedHashMap<>();
@@ -235,12 +244,29 @@ public final class BudgetSemanticResolver {
         if (bestConcept != null && bestScore > 0d) {
             reasons.add("clasificado por alias semánticos en valores/categorías");
         }
-        return new NatureInference(bestConcept == null ? "UNKNOWN" : bestConcept, round(bestScore), confidenceOf(bestScore), ambiguous, reasons);
+        NatureInference inference = new NatureInference(bestConcept == null ? "UNKNOWN" : bestConcept, round(bestScore), confidenceOf(bestScore), ambiguous, reasons);
+        traceResolution(clientKey, values, inference, "scored");
+        return inference;
+    }
+
+    private static void traceResolution(String clientKey, String[] values, NatureInference inference, String route) {
+        String joined = values == null ? "" : String.join(" | ", values);
+        if (!BudgetTraceLogger.shouldTraceLabel(joined)) return;
+        BudgetTraceLogger.log(log, "semantic-resolution", BudgetTraceLogger.fields(
+            "companyId", clientKey,
+            "processingRoute", "BudgetSemanticResolver." + route,
+            "rawLabel", joined,
+            "financialNature", inference == null ? null : inference.concept(),
+            "confidence", inference == null ? null : inference.confidence(),
+            "score", inference == null ? null : inference.score()
+        ));
     }
 
     public static String normalize(String raw) {
         if (raw == null) return "";
-        String expanded = CAMEL_BREAK.matcher(raw).replaceAll(" ");
+        String expanded = repairCommonMojibake(raw);
+        expanded = repairVisibleUtf8Mojibake(expanded);
+        expanded = CAMEL_BREAK.matcher(expanded).replaceAll(" ");
         expanded = expanded.replace('&', ' ')
             .replace('/', ' ')
             .replace('\\', ' ')
@@ -276,6 +302,63 @@ public final class BudgetSemanticResolver {
         expanded = expanded.replaceAll("\\bcosts\\b", " cost ");
         expanded = expanded.replaceAll("\\s+", " ").trim();
         return expanded;
+    }
+
+    private static String repairVisibleUtf8Mojibake(String raw) {
+        if (raw == null || raw.isBlank()) return raw;
+        return raw
+            .replace("\u00C3\u00A1", "á")
+            .replace("\u00C3\u00A9", "é")
+            .replace("\u00C3\u00AD", "í")
+            .replace("\u00C3\u00B3", "ó")
+            .replace("\u00C3\u00BA", "ú")
+            .replace("\u00C3\u0081", "Á")
+            .replace("\u00C3\u0089", "É")
+            .replace("\u00C3\u008D", "Í")
+            .replace("\u00C3\u0093", "Ó")
+            .replace("\u00C3\u009A", "Ú")
+            .replace("\u00C3\u00B1", "ñ")
+            .replace("\u00C3\u0091", "Ñ")
+            .replace("\u00C3\u00BC", "ü")
+            .replace("\u00C3\u009C", "Ü")
+            .replace("\u00C3\u00A7", "ç")
+            .replace("\u00C3\u0087", "Ç")
+            .replace("\u00C2\u00A0", " ")
+            .replace("\u00C2", "")
+            .replace("\u00E2\u0082\u00AC\u0099", "'")
+            .replace("\u00E2\u0080\u0099", "'")
+            .replace("\u00E2\u0080\u009C", "\"")
+            .replace("\u00E2\u0080\u009D", "\"")
+            .replace("\u00E2\u0080\u0093", "-")
+            .replace("\u00E2\u0080\u0094", "-");
+    }
+
+    private static String repairCommonMojibake(String raw) {
+        if (raw == null || raw.isBlank()) return raw;
+        if (!looksLikeMojibake(raw)) return raw;
+        String repaired = new String(raw.getBytes(StandardCharsets.ISO_8859_1), StandardCharsets.UTF_8);
+        return mojibakeScore(repaired) < mojibakeScore(raw) ? repaired : raw;
+    }
+
+    private static boolean looksLikeMojibake(String value) {
+        return value.indexOf('Ã') >= 0
+            || value.indexOf('Â') >= 0
+            || value.indexOf('â') >= 0
+            || value.contains("\\u00");
+    }
+
+    private static int mojibakeScore(String value) {
+        if (value == null || value.isBlank()) return 0;
+        int score = 0;
+        for (int i = 0; i < value.length(); i++) {
+            char ch = value.charAt(i);
+            if (ch == 'Ã' || ch == 'Â' || ch == 'â') {
+                score += 2;
+            } else if (ch == '\\' && i + 3 < value.length() && value.charAt(i + 1) == 'u') {
+                score += 1;
+            }
+        }
+        return score;
     }
 
     public static boolean looksLikeMonthLikeValue(String raw) {
@@ -473,6 +556,27 @@ public final class BudgetSemanticResolver {
                 || normalized.contains("aprovisionamiento")
                 || normalized.contains("mercaderia")
                 || normalized.contains("materia prima")
+                || normalized.contains("sueldo")
+                || normalized.contains("salario")
+                || normalized.contains("nomina")
+                || normalized.contains("alquiler")
+                || normalized.contains("rent")
+                || normalized.contains("insurance")
+                || normalized.contains("seguro")
+                || normalized.contains("gestoria")
+                || normalized.contains("advisory fee")
+                || normalized.contains("maintenance")
+                || normalized.contains("mantenimiento")
+                || normalized.contains("reparacion")
+                || normalized.contains("repair")
+                || normalized.contains("limpieza")
+                || normalized.contains("cleaning")
+                || normalized.contains("consumible")
+                || normalized.contains("suministro")
+                || normalized.contains("utility")
+                || normalized.contains("agua")
+                || normalized.contains("luz")
+                || normalized.contains("electric")
                     ? 0.94d
                     : 0d;
             case "OPERATING_ADJUSTMENT" -> containsAll(normalized, "variacion", "existencias")

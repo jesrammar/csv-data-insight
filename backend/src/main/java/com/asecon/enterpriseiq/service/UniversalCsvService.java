@@ -143,6 +143,13 @@ public class UniversalCsvService {
     @Transactional
     public UniversalSummaryDto analyzeAndStore(Long companyId, MultipartFile file, Plan plan, TabularFileService.XlsxOptions xlsxOptions) throws IOException {
         Company company = companyRepository.findById(companyId).orElseThrow();
+        BudgetTraceLogger.log(log, "annual-upload-store-start", BudgetTraceLogger.fields(
+            "companyId", companyId,
+            "sourceFilename", file == null ? null : file.getOriginalFilename(),
+            "processingRoute", "UniversalCsvService.analyzeAndStore",
+            "sourceSheet", xlsxOptions == null || xlsxOptions.sheetIndex() == null ? "auto" : xlsxOptions.sheetIndex(),
+            "headerRow", xlsxOptions == null || xlsxOptions.headerRow1Based() == null ? "auto" : xlsxOptions.headerRow1Based()
+        ));
 
         var tabular = tabularFileService.toCsv(file, xlsxOptions);
         try {
@@ -225,6 +232,18 @@ public class UniversalCsvService {
         imp.setSummaryJson(json);
         if (analysisJson != null) imp.setAnalysisJson(analysisJson);
         imp = importRepository.save(imp);
+
+        BudgetTraceLogger.log(log, "annual-upload-store-finish", BudgetTraceLogger.fields(
+            "companyId", companyId,
+            "sourceFilename", displayFilename,
+            "universalImportId", imp.getId(),
+            "planImportId", imp.getId(),
+            "processingRoute", "UniversalCsvService.analyzeAndStore",
+            "sourceSheet", tabular.xlsxMetadata() == null ? "auto" : tabular.xlsxMetadata().sheetIndex(),
+            "headerRow", tabular.xlsxMetadata() == null ? "auto" : tabular.xlsxMetadata().headerRow1Based(),
+            "analysisStatus", result.summary().intakeDiagnosis() == null ? null : result.summary().intakeDiagnosis().canonicalStatus(),
+            "analysisKind", result.summary().intakeDiagnosis() == null ? null : result.summary().intakeDiagnosis().kind()
+        ));
 
         try {
             log.info(

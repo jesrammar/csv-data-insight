@@ -65,3 +65,6 @@ qc
 # Local Codex / scratch
 .codex/
 .tmp_*
+.tmp*/
+.tmp-*/
+/backend/.tmp-runner/

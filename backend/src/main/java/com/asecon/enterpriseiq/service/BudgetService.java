@@ -19,6 +19,9 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -26,6 +29,9 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVParser;
 import org.apache.commons.csv.CSVRecord;
@@ -35,6 +41,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class BudgetService {
+    private static final Logger log = LoggerFactory.getLogger(BudgetService.class);
     private static final List<String> MONTH_KEYS = List.of(
         "ENERO", "FEBRERO", "MARZO", "ABRIL", "MAYO", "JUNIO",
         "JULIO", "AGOSTO", "SEPTIEMBRE", "OCTUBRE", "NOVIEMBRE", "DICIEMBRE"
@@ -76,8 +83,24 @@ public class BudgetService {
     public BudgetAnalysisSnapshot latestAnalysisSnapshot(Long companyId) {
         UniversalImport imp = requireLatestAnnualBudget(companyId);
         String analysisVersion = buildAnalysisVersion(imp);
+        BudgetTraceLogger.log(log, "budget-analysis-snapshot-start", BudgetTraceLogger.fields(
+            "companyId", companyId,
+            "sourceFilename", imp.getFilename(),
+            "universalImportId", imp.getId(),
+            "planImportId", imp.getId(),
+            "analysisVersion", analysisVersion,
+            "processingRoute", "BudgetService.latestAnalysisSnapshot"
+        ));
         BudgetAnalysisSnapshot cached = analysisSnapshotCache.get(analysisVersion);
         if (cached != null) {
+            BudgetTraceLogger.log(log, "budget-analysis-snapshot-cache-hit", BudgetTraceLogger.fields(
+                "companyId", companyId,
+                "sourceFilename", imp.getFilename(),
+                "universalImportId", imp.getId(),
+                "planImportId", imp.getId(),
+                "analysisVersion", analysisVersion,
+                "processingRoute", "BudgetService.latestAnalysisSnapshot"
+            ));
             return cached;
         }
         CachedFailure cachedFailure = analysisFailureCache.get(analysisVersion);
@@ -127,6 +150,20 @@ public class BudgetService {
             BudgetLongInsightsDto insights = buildInsightsFromCanonicalAnalysis(imp, analysisVersion, canonicalAnalysis);
             BudgetSourceMetaDto meta = buildSourceMeta(imp, analysisVersion, source);
             BudgetAnalysisSnapshot snapshot = new BudgetAnalysisSnapshot(meta, summary, cashflow, insights, source);
+            BudgetTraceLogger.log(log, "budget-analysis-snapshot-finish", BudgetTraceLogger.fields(
+                "companyId", companyId,
+                "sourceFilename", imp.getFilename(),
+                "universalImportId", imp.getId(),
+                "planImportId", imp.getId(),
+                "analysisVersion", analysisVersion,
+                "processingRoute", "BudgetService.latestAnalysisSnapshot",
+                "income", BudgetTraceLogger.fmt(summary.totalIncome()),
+                "opex", BudgetTraceLogger.fmt(summary.totalExpense()),
+                "ebitda", BudgetTraceLogger.fmt(summary.totalMargin()),
+                "ebit", BudgetTraceLogger.fmt(summary.totalEbit()),
+                "net", BudgetTraceLogger.fmt(summary.netResult()),
+                "endingBalance", BudgetTraceLogger.fmt(cashflow.endingBalance())
+            ));
             analysisFailureCache.remove(analysisVersion);
             analysisSnapshotCache.put(analysisVersion, snapshot);
             return snapshot;
@@ -827,12 +864,8 @@ public class BudgetService {
         }
 
         List<BudgetMonthDto> months = new ArrayList<>();
-        Map<String, BigDecimal> visibleIncomeByMonth = prefersDeclaredPresentation(source.declaredIncomeByMonth(), source.orderedMonthKeys())
-            ? source.declaredIncomeByMonth()
-            : source.plannedIncomeByMonth();
-        Map<String, BigDecimal> visibleExpenseByMonth = prefersDeclaredPresentation(source.declaredExpenseByMonth(), source.orderedMonthKeys())
-            ? source.declaredExpenseByMonth()
-            : source.plannedExpenseByMonth();
+        Map<String, BigDecimal> visibleIncomeByMonth = new LinkedHashMap<>();
+        Map<String, BigDecimal> visibleExpenseByMonth = source.plannedExpenseByMonth();
         Map<String, BigDecimal> operatingIncomeByMonth = new LinkedHashMap<>();
         BigDecimal totalIncome = BigDecimal.ZERO;
         BigDecimal totalExpense = BigDecimal.ZERO;
@@ -840,6 +873,7 @@ public class BudgetService {
         BigDecimal totalCapex = total(source.plannedCapexByMonth().values()).setScale(2, RoundingMode.HALF_UP);
         BigDecimal totalDepreciation = total(source.plannedDepreciationByMonth().values()).setScale(2, RoundingMode.HALF_UP);
         BigDecimal financialResult = total(source.plannedFinancialResultByMonth().values()).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal totalTax = total(source.plannedTaxByMonth().values()).setScale(2, RoundingMode.HALF_UP);
         BigDecimal prevMargin = null;
         String bestMonth = null;
         String worstMonth = null;
@@ -847,13 +881,13 @@ public class BudgetService {
         BigDecimal worst = null;
 
         for (String mk : source.orderedMonthKeys) {
-            BigDecimal inc = visibleIncomeByMonth.getOrDefault(mk, BigDecimal.ZERO);
-            BigDecimal exp = visibleExpenseByMonth.getOrDefault(mk, BigDecimal.ZERO);
-            BigDecimal margin = source.plannedIncomeByMonth()
+            BigDecimal inc = source.plannedIncomeByMonth()
                 .getOrDefault(mk, BigDecimal.ZERO)
-                .add(source.plannedOperatingAdjustmentsByMonth().getOrDefault(mk, BigDecimal.ZERO))
-                .subtract(source.plannedExpenseByMonth().getOrDefault(mk, BigDecimal.ZERO));
-            operatingIncomeByMonth.put(mk, margin.add(exp));
+                .add(source.plannedOperatingAdjustmentsByMonth().getOrDefault(mk, BigDecimal.ZERO));
+            BigDecimal exp = visibleExpenseByMonth.getOrDefault(mk, BigDecimal.ZERO);
+            BigDecimal margin = inc.subtract(source.plannedExpenseByMonth().getOrDefault(mk, BigDecimal.ZERO));
+            visibleIncomeByMonth.put(mk, inc);
+            operatingIncomeByMonth.put(mk, inc);
 
             BigDecimal delta = null;
             BigDecimal deltaPct = null;
@@ -898,7 +932,12 @@ public class BudgetService {
             totalDepreciation,
             total(operatingIncomeByMonth.values()).subtract(total(source.plannedExpenseByMonth().values())).subtract(totalDepreciation).setScale(2, RoundingMode.HALF_UP),
             financialResult,
-            total(operatingIncomeByMonth.values()).subtract(total(source.plannedExpenseByMonth().values())).subtract(totalDepreciation).add(financialResult).setScale(2, RoundingMode.HALF_UP),
+            total(operatingIncomeByMonth.values())
+                .subtract(total(source.plannedExpenseByMonth().values()))
+                .subtract(totalDepreciation)
+                .add(financialResult)
+                .subtract(totalTax)
+                .setScale(2, RoundingMode.HALF_UP),
             bestMonth,
             worstMonth
         );
@@ -1202,6 +1241,8 @@ public class BudgetService {
                     forecastAmount,
                     varianceAmount
                 ));
+                CanonicalRow traced = rows.get(rows.size() - 1);
+                traceCanonicalRow("canonical-row-read", null, null, null, traced, null, null, null);
             }
 
             if (rows.isEmpty() || seenMonths.isEmpty()) {
@@ -1235,11 +1276,24 @@ public class BudgetService {
             Map<Integer, Boolean> cashflowIncluded = new LinkedHashMap<>();
             Map<Integer, Boolean> driverIncluded = new LinkedHashMap<>();
             markDuplicates(rows, exclusions);
+            markDuplicateSeries(rows, exclusions);
             markHierarchicalBreakdowns(rows, exclusions);
             Map<String, Boolean> zeroSeriesIdentity = detectZeroSeries(rows);
             Set<String> pnlDetailFinancialIdentities = collectPnlDetailFinancialIdentities(rows, exclusions);
 
-            List<String> pnlKinds = List.of("REVENUE", "OPEX", "OPERATING_ADJUSTMENT", "CAPEX", "DEPRECIATION_AMORTIZATION", "TAX", "FINANCING");
+            List<String> pnlKinds = List.of(
+                "REVENUE",
+                "OPEX",
+                "OPERATING_ADJUSTMENT",
+                "INVENTORY_VARIATION",
+                "CAPEX",
+                "DEPRECIATION_AMORTIZATION",
+                "TAX",
+                "FINANCING",
+                "FINANCIAL_RESULT",
+                "FINANCIAL_INCOME",
+                "FINANCIAL_EXPENSE"
+            );
             for (String monthKey : seenMonths.keySet()) {
                 for (String kind : pnlKinds) {
                     applyPreferredRows(
@@ -1256,11 +1310,12 @@ public class BudgetService {
                             switch (kind) {
                                 case "REVENUE" -> mergeAmount(income, monthKey, value);
                                 case "OPEX" -> mergeAmount(expense, monthKey, value);
-                                case "OPERATING_ADJUSTMENT" -> mergeAmount(operatingAdjustments, monthKey, value);
+                                case "OPERATING_ADJUSTMENT", "INVENTORY_VARIATION" -> mergeAmount(operatingAdjustments, monthKey, value);
                                 case "CAPEX" -> mergeAmount(capex, monthKey, value);
                                 case "DEPRECIATION_AMORTIZATION" -> mergeAmount(depreciation, monthKey, value);
                                 case "TAX" -> mergeAmount(tax, monthKey, value);
-                                case "FINANCING" -> mergeAmount(financialResultRaw, monthKey, value);
+                                case "FINANCING", "FINANCIAL_RESULT", "FINANCIAL_INCOME", "FINANCIAL_EXPENSE" ->
+                                    mergeAmount(financialResultRaw, monthKey, value);
                                 default -> {}
                             }
                         },
@@ -1283,7 +1338,7 @@ public class BudgetService {
                         zeroSeriesIdentity
                     );
                 }
-                for (String kind : List.of("CASH_INFLOW", "CASH_OUTFLOW", "FINANCING")) {
+                for (String kind : List.of("CASH_INFLOW", "CASH_OUTFLOW", "CASHFLOW_TAX", "FINANCING")) {
                     applyPreferredRows(
                         rows,
                         exclusions,
@@ -1298,6 +1353,7 @@ public class BudgetService {
                             switch (kind) {
                                 case "CASH_INFLOW" -> mergeAmount(cashInflow, monthKey, value);
                                 case "CASH_OUTFLOW" -> mergeAmount(cashOutflow, monthKey, value);
+                                case "CASHFLOW_TAX" -> mergeAmount(cashOutflow, monthKey, value);
                                 case "FINANCING" -> mergeAmount(financing, monthKey, value);
                                 default -> {}
                             }
@@ -1329,6 +1385,10 @@ public class BudgetService {
             ));
 
             for (CanonicalRow row : rows) {
+                if (matchesSection(row.sectionKind(), "CASHFLOW")
+                    && Set.of("CAPEX", "TAX").contains(upper(row.effectiveFinancialKind()))) {
+                    pnlIncluded.put(row.index(), false);
+                }
                 if ("REVIEW".equals(row.mappingStatus()) && !exclusions.containsKey(row.index())) {
                     exclusions.put(row.index(), "EXCLUDED_REVIEW");
                 } else if ("DERIVED_KPI".equals(row.rowType()) && !exclusions.containsKey(row.index())) {
@@ -1344,40 +1404,54 @@ public class BudgetService {
                     && !exclusions.containsKey(row.index())) {
                     exclusions.put(row.index(), "EXCLUDED_CASHFLOW_FROM_PNL");
                 }
-                boolean driver = isDriverRow(row, pnlIncluded);
+                boolean pnlEligible = isEligibleForPnL(row, pnlIncluded);
+                if (!pnlEligible) {
+                    pnlIncluded.put(row.index(), false);
+                }
+                boolean driver = isEligibleForDrivers(row, pnlIncluded);
                 driverIncluded.put(row.index(), driver);
+                traceCanonicalRow(
+                    "canonical-row-final",
+                    null,
+                    null,
+                    null,
+                    row,
+                    pnlIncluded.get(row.index()),
+                    cashflowIncluded.get(row.index()),
+                    driver
+                );
             }
 
-            Map<String, BigDecimal> financialResult = rebuildFinancialResultByMonth(rows, exclusions, pnlIncluded);
+            enforceCashflowAggregationBoundaries(rows, pnlIncluded, driverIncluded);
 
-            LongBudgetSource source = new LongBudgetSource(
+            LongBudgetSource source = rebuildCanonicalSourceFromEligibleRows(
                 detectedYear,
                 List.copyOf(seenMonths.keySet()),
-                income,
-                expense,
-                declaredIncome,
-                declaredExpense,
-                operatingAdjustments,
-                capex,
-                depreciation,
-                tax,
-                financialResult,
-                cashInflow,
-                cashOutflow,
-                financing,
-                openingBalance,
-                closingBalance,
-                actualIncome,
-                actualExpense,
-                actualCapex,
-                forecastIncome,
-                forecastExpense,
-                forecastCapex
+                rows,
+                exclusions,
+                pnlIncluded,
+                cashflowIncluded,
+                zeroSeriesIdentity
             );
             List<RowAudit> audits = buildRowAudits(rows, exclusions, aggregationPolicy, pnlIncluded, cashflowIncluded, driverIncluded);
             List<ReconciliationCheck> reconciliations = buildReconciliations(source, rows, exclusions);
             BudgetLongInsightsDto insights = buildCanonicalLongInsights(sourceFile, source.orderedMonthKeys(), rows, exclusions, driverIncluded);
             BudgetExecutionDiagnostics diagnostics = buildExecutionDiagnostics(source, audits);
+            BudgetTraceLogger.log(log, "budget-analysis-canonical-finish", BudgetTraceLogger.fields(
+                "sourceFilename", sourceFile,
+                "sourceSheet", sourceSheet,
+                "processingRoute", "BudgetService.parseCanonicalBudgetAnalysisStrict",
+                "income", BudgetTraceLogger.fmt(total(source.plannedIncomeByMonth().values())),
+                "opex", BudgetTraceLogger.fmt(total(source.plannedExpenseByMonth().values())),
+                "ebitda", BudgetTraceLogger.fmt(total(source.plannedIncomeByMonth().values()).add(total(source.plannedOperatingAdjustmentsByMonth().values())).subtract(total(source.plannedExpenseByMonth().values()))),
+                "ebit", BudgetTraceLogger.fmt(total(source.plannedIncomeByMonth().values()).add(total(source.plannedOperatingAdjustmentsByMonth().values())).subtract(total(source.plannedExpenseByMonth().values())).subtract(total(source.plannedDepreciationByMonth().values()))),
+                "financialResult", BudgetTraceLogger.fmt(total(source.plannedFinancialResultByMonth().values())),
+                "endingBalance", BudgetTraceLogger.fmt(lastValue(source.plannedClosingBalanceByMonth().values())),
+                "detailRows", diagnostics.detailRows(),
+                "pnlRows", diagnostics.pnlRows(),
+                "cashflowRows", diagnostics.cashflowRows(),
+                "driverEligibleRows", diagnostics.driverEligibleRows()
+            ));
             return new CanonicalBudgetAnalysis(source, audits, reconciliations, insights, diagnostics);
         }
     }
@@ -1449,10 +1523,32 @@ public class BudgetService {
 
     record ReconciliationCheck(String code,
                                boolean passed,
+                               String status,
                                BigDecimal expectedValue,
                                BigDecimal actualValue,
+                               BigDecimal difference,
                                BigDecimal tolerance,
-                               String warning) {}
+                               String warning,
+                               String selectedSubtotal,
+                               String comparableDetail,
+                               String excludedAdjustments) {}
+
+    private record DeclaredSubtotalObservation(String label,
+                                               BigDecimal declaredTotal,
+                                               BigDecimal detailComparableTotal,
+                                               BigDecimal difference,
+                                               String status,
+                                               String detailScope,
+                                               String excludedAdjustments,
+                                               String warning) {}
+
+    private record SourceLineSummary(String blockId,
+                                     Integer sourceRow,
+                                     String label,
+                                     String rowType,
+                                     String sectionKind,
+                                     String financialNature,
+                                     BigDecimal annualTotal) {}
 
     record BudgetExecutionDiagnostics(int normalizedRows,
                                       int detailRows,
@@ -1534,8 +1630,9 @@ public class BudgetService {
                                            Map<String, Boolean> zeroSeriesIdentity) {
         List<CanonicalRow> detail = new ArrayList<>();
         List<CanonicalRow> aggregate = new ArrayList<>();
-        List<CanonicalRow> fallbackDetail = new ArrayList<>();
-        List<CanonicalRow> fallbackAggregate = new ArrayList<>();
+        boolean strictPnlDetailsOnly = useFinancialSemantic
+            && "P_AND_L".equalsIgnoreCase(sectionKind)
+            && requiresDetailOnlyPnlFallback(semanticKind);
         for (CanonicalRow row : rows) {
             if (!Objects.equals(row.monthKey(), monthKey)) continue;
             if (!semanticKind.equals(useFinancialSemantic ? row.effectiveFinancialKind() : row.effectiveCashflowKind())) continue;
@@ -1544,29 +1641,15 @@ public class BudgetService {
             if (Boolean.TRUE.equals(zeroSeriesIdentity.get(row.canonicalIdentity()))) continue;
             if (exclusions.containsKey(row.index())) continue;
             boolean primarySection = matchesSection(row.sectionKind(), sectionKind);
-            boolean fallbackFinancialRow = useFinancialSemantic
-                && "P_AND_L".equalsIgnoreCase(sectionKind)
-                && !"REVENUE".equalsIgnoreCase(semanticKind)
-                && !"FINANCING".equalsIgnoreCase(semanticKind)
-                && matchesSection(row.sectionKind(), "CASHFLOW")
-                && !pnlDetailFinancialIdentities.contains(row.financialIdentity());
-            if (!primarySection && !fallbackFinancialRow) continue;
+            if (!primarySection) continue;
             if ("DETAIL".equals(row.rowType())) {
-                if (primarySection) {
-                    detail.add(row);
-                } else {
-                    fallbackDetail.add(row);
-                }
+                detail.add(row);
             } else {
-                if (primarySection) {
-                    aggregate.add(row);
-                } else {
-                    fallbackAggregate.add(row);
-                }
+                aggregate.add(row);
             }
         }
 
-        if (!detail.isEmpty() || !fallbackDetail.isEmpty()) {
+        if (!detail.isEmpty()) {
             for (CanonicalRow row : detail) {
                 inclusionTarget.put(row.index(), true);
                 aggregationPolicy.put(row.index(), "SUM_DETAIL");
@@ -1574,23 +1657,20 @@ public class BudgetService {
                 if (actualCollector != null) actualCollector.accept(adjustAmountForAggregation(row, row.actualAmount(), semanticKind, useFinancialSemantic));
                 if (forecastCollector != null) forecastCollector.accept(adjustAmountForAggregation(row, row.forecastAmount(), semanticKind, useFinancialSemantic));
             }
-            for (CanonicalRow row : fallbackDetail) {
-                inclusionTarget.put(row.index(), true);
-                aggregationPolicy.put(row.index(), "SUM_CASHFLOW_DETAIL_FALLBACK");
-                if (plannedCollector != null) plannedCollector.accept(adjustAmountForAggregation(row, row.plannedAmount(), semanticKind, useFinancialSemantic));
-                if (actualCollector != null) actualCollector.accept(adjustAmountForAggregation(row, row.actualAmount(), semanticKind, useFinancialSemantic));
-                if (forecastCollector != null) forecastCollector.accept(adjustAmountForAggregation(row, row.forecastAmount(), semanticKind, useFinancialSemantic));
-            }
             for (CanonicalRow row : aggregate) {
-                exclusions.putIfAbsent(row.index(), "EXCLUDED_AGGREGATE_WITH_DETAIL");
-            }
-            for (CanonicalRow row : fallbackAggregate) {
                 exclusions.putIfAbsent(row.index(), "EXCLUDED_AGGREGATE_WITH_DETAIL");
             }
             return;
         }
 
-        List<CanonicalRow> eligibleAggregate = !aggregate.isEmpty() ? aggregate : fallbackAggregate;
+        if (strictPnlDetailsOnly) {
+            for (CanonicalRow row : aggregate) {
+                exclusions.putIfAbsent(row.index(), "EXCLUDED_PNL_AGGREGATE_WITHOUT_DETAIL");
+            }
+            return;
+        }
+
+        List<CanonicalRow> eligibleAggregate = aggregate;
         if (eligibleAggregate.isEmpty()) return;
         CanonicalRow selected = eligibleAggregate.get(eligibleAggregate.size() - 1);
         inclusionTarget.put(selected.index(), true);
@@ -1604,6 +1684,18 @@ public class BudgetService {
             if (row.index() == selected.index()) continue;
             exclusions.putIfAbsent(row.index(), "EXCLUDED_DUPLICATE_CANONICAL_ROW");
         }
+    }
+
+    private static boolean requiresDetailOnlyPnlFallback(String semanticKind) {
+        return Set.of(
+            "REVENUE",
+            "OTHER_OPERATING_INCOME",
+            "OPEX",
+            "OPERATING_ADJUSTMENT",
+            "INVENTORY_VARIATION",
+            "CAPEX",
+            "DEPRECIATION_AMORTIZATION"
+        ).contains(upper(semanticKind));
     }
 
     private static void applyLastValueRows(List<CanonicalRow> rows,
@@ -1662,6 +1754,68 @@ public class BudgetService {
         }
     }
 
+    private static void markDuplicateSeries(List<CanonicalRow> rows, Map<Integer, String> exclusions) {
+        record SeriesFamily(String sectionKind, String rowType, String financialIdentity) {}
+        record SeriesMember(String seriesId, Integer order, List<CanonicalRow> rows) {}
+
+        Map<SeriesFamily, Map<String, List<CanonicalRow>>> grouped = new LinkedHashMap<>();
+        for (CanonicalRow row : rows) {
+            if (exclusions.containsKey(row.index())) continue;
+            if (!"DETAIL".equals(row.rowType())) continue;
+            if (!matchesSection(row.sectionKind(), "P_AND_L")) continue;
+            if (!isSupportedFinancialSemantic(row.effectiveFinancialKind())) continue;
+            String seriesId = row.sourceRow() != null
+                ? "ROW-" + row.sourceRow()
+                : row.blockId() + "|" + normalizeIdentityCode(row.accountingCode()) + "|" + normalizeIdentityLabel(row.normalizedLabel());
+            grouped.computeIfAbsent(
+                new SeriesFamily(row.sectionKind(), row.rowType(), row.financialIdentity()),
+                ignored -> new LinkedHashMap<>()
+            ).computeIfAbsent(seriesId, ignored -> new ArrayList<>()).add(row);
+        }
+
+        for (Map<String, List<CanonicalRow>> familySeries : grouped.values()) {
+            if (familySeries.size() < 2) continue;
+            Map<String, List<SeriesMember>> bySignature = new LinkedHashMap<>();
+            for (var entry : familySeries.entrySet()) {
+                List<CanonicalRow> seriesRows = entry.getValue();
+                Integer order = seriesRows.stream()
+                    .map(CanonicalRow::sourceRow)
+                    .filter(Objects::nonNull)
+                    .min(Integer::compareTo)
+                    .orElse(seriesRows.stream().map(CanonicalRow::index).min(Integer::compareTo).orElse(Integer.MAX_VALUE));
+                String signature = buildSeriesSignature(seriesRows);
+                bySignature.computeIfAbsent(signature, ignored -> new ArrayList<>())
+                    .add(new SeriesMember(entry.getKey(), order, seriesRows));
+            }
+            for (List<SeriesMember> duplicates : bySignature.values()) {
+                if (duplicates.size() < 2) continue;
+                duplicates.sort((left, right) -> Integer.compare(left.order(), right.order()));
+                for (int i = 1; i < duplicates.size(); i++) {
+                    for (CanonicalRow row : duplicates.get(i).rows()) {
+                        exclusions.putIfAbsent(row.index(), "EXCLUDED_DUPLICATE_CANONICAL_SERIES");
+                    }
+                }
+            }
+        }
+    }
+
+    private static String buildSeriesSignature(List<CanonicalRow> rows) {
+        List<CanonicalRow> ordered = new ArrayList<>(rows);
+        ordered.sort((left, right) -> {
+            int byMonth = safe(left.monthKey()).compareTo(safe(right.monthKey()));
+            if (byMonth != 0) return byMonth;
+            return Integer.compare(left.index(), right.index());
+        });
+        StringBuilder out = new StringBuilder();
+        for (CanonicalRow row : ordered) {
+            out.append(safe(row.monthKey()))
+                .append('=')
+                .append(normalizeAmount(firstNonNullAmount(row.plannedAmount(), row.actualAmount(), row.forecastAmount(), row.varianceAmount())))
+                .append('|');
+        }
+        return out.toString();
+    }
+
     private static Set<String> collectPnlDetailFinancialIdentities(List<CanonicalRow> rows, Map<Integer, String> exclusions) {
         Set<String> identities = new java.util.LinkedHashSet<>();
         for (CanonicalRow row : rows) {
@@ -1691,46 +1845,50 @@ public class BudgetService {
         }
 
         for (List<CanonicalRow> familyRows : grouped.values()) {
-            CanonicalRow parent = null;
+            List<CanonicalRow> genericParents = new ArrayList<>();
             List<CanonicalRow> children = new ArrayList<>();
             for (CanonicalRow row : familyRows) {
                 String code = upper(row.accountingCode());
                 String family = accountingCodeFamily(row.accountingCode());
                 if (code.equals(family)) {
-                    parent = row;
+                    genericParents.add(row);
                 } else if (!family.isBlank() && code.startsWith(family)) {
                     children.add(row);
                 }
             }
-            if (parent == null || children.isEmpty()) continue;
+            if (genericParents.isEmpty()) continue;
 
-            BigDecimal parentAmount = firstNonNullAmount(parent.plannedAmount(), parent.actualAmount(), parent.forecastAmount(), parent.varianceAmount());
-            List<CanonicalRow> breakdownRows = new ArrayList<>(children);
-            Integer parentSourceRow = parent.sourceRow();
-            Integer lastChildSourceRow = children.stream()
-                .map(CanonicalRow::sourceRow)
-                .filter(Objects::nonNull)
-                .max(Integer::compareTo)
-                .orElse(null);
-            if (parentSourceRow != null && lastChildSourceRow != null) {
+            for (CanonicalRow genericParent : genericParents) {
+                String parentFamily = accountingCodeFamily(genericParent.accountingCode());
+                Integer parentSourceRow = genericParent.sourceRow();
+                if (parentSourceRow == null || parentFamily.isBlank()) continue;
+
+                List<CanonicalRow> breakdownRows = new ArrayList<>();
                 for (CanonicalRow row : rows) {
-                    if (row.index() == parent.index()) continue;
+                    if (row.index() == genericParent.index()) continue;
+                    if (exclusions.containsKey(row.index())) continue;
                     if (!"DETAIL".equals(row.rowType())) continue;
-                    if (!matchesSection(row.sectionKind(), parent.sectionKind())) continue;
-                    if (!upper(row.effectiveFinancialKind()).equals(upper(parent.effectiveFinancialKind()))) continue;
-                    if (!Objects.equals(row.monthKey(), parent.monthKey())) continue;
+                    if (!matchesSection(row.sectionKind(), genericParent.sectionKind())) continue;
+                    if (!upper(row.effectiveFinancialKind()).equals(upper(genericParent.effectiveFinancialKind()))) continue;
+                    if (!Objects.equals(row.monthKey(), genericParent.monthKey())) continue;
                     Integer sourceRow = row.sourceRow();
-                    if (sourceRow == null || sourceRow <= parentSourceRow || sourceRow >= lastChildSourceRow) continue;
-                    if (row.accountingCode() != null && !row.accountingCode().isBlank()) continue;
+                    if (sourceRow == null || sourceRow <= parentSourceRow || sourceRow - parentSourceRow > 12) continue;
+                    String candidateCode = normalizeIdentityCode(row.accountingCode());
+                    boolean sameFamilyCode = !candidateCode.isBlank()
+                        && !candidateCode.equals(normalizeIdentityCode(genericParent.accountingCode()))
+                        && accountingCodeFamily(candidateCode).equals(parentFamily);
+                    boolean blankFollower = candidateCode.isBlank();
+                    if (!blankFollower && !sameFamilyCode) continue;
                     breakdownRows.add(row);
                 }
-            }
-            BigDecimal childrenAmount = sumCanonicalAmounts(breakdownRows);
-            if (parentAmount == null) continue;
-            if (parentAmount.subtract(childrenAmount).abs().compareTo(new BigDecimal("0.50")) > 0) continue;
 
-            for (CanonicalRow child : breakdownRows) {
-                exclusions.putIfAbsent(child.index(), "EXCLUDED_CHILD_BREAKDOWN_UNDER_PARENT");
+                if (breakdownRows.size() < 2) continue;
+                BigDecimal parentAmount = firstNonNullAmount(genericParent.plannedAmount(), genericParent.actualAmount(), genericParent.forecastAmount(), genericParent.varianceAmount());
+                if (parentAmount == null) continue;
+                BigDecimal childrenAmount = sumCanonicalAmounts(breakdownRows);
+                if (parentAmount.subtract(childrenAmount).abs().compareTo(new BigDecimal("0.50")) > 0) continue;
+
+                exclusions.putIfAbsent(genericParent.index(), "EXCLUDED_PARENT_AGGREGATE_WITH_BREAKDOWN");
             }
         }
 
@@ -1813,10 +1971,14 @@ public class BudgetService {
             if (!Boolean.TRUE.equals(pnlIncluded.get(row.index()))) continue;
             if (exclusions.containsKey(row.index())) continue;
             if (!matchesSection(row.sectionKind(), "P_AND_L")) continue;
-            if (!"FINANCING".equalsIgnoreCase(row.effectiveFinancialKind())) continue;
+            if (!List.of("FINANCING", "FINANCIAL_RESULT", "FINANCIAL_INCOME", "FINANCIAL_EXPENSE")
+                .contains(upper(row.effectiveFinancialKind()))) continue;
             BigDecimal amount = firstNonNullAmount(row.plannedAmount(), row.actualAmount(), row.forecastAmount(), row.varianceAmount());
             if (amount == null) continue;
-            rebuilt.merge(row.monthKey(), signedFinancialValue(row, amount), BigDecimal::add);
+            BigDecimal effective = "FINANCIAL_RESULT".equalsIgnoreCase(row.effectiveFinancialKind())
+                ? amount
+                : signedFinancialValue(row, amount);
+            rebuilt.merge(row.monthKey(), effective, BigDecimal::add);
         }
         return rebuilt;
     }
@@ -1842,23 +2004,287 @@ public class BudgetService {
     }
 
     private static boolean isSupportedFinancialSemantic(String semanticKind) {
-        return List.of("REVENUE", "OPEX", "OPERATING_ADJUSTMENT", "CAPEX", "DEPRECIATION_AMORTIZATION", "FINANCING", "TAX").contains(upper(semanticKind));
+        return List.of(
+            "REVENUE",
+            "OPEX",
+            "OPERATING_ADJUSTMENT",
+            "INVENTORY_VARIATION",
+            "CAPEX",
+            "DEPRECIATION_AMORTIZATION",
+            "FINANCING",
+            "FINANCIAL_RESULT",
+            "FINANCIAL_INCOME",
+            "FINANCIAL_EXPENSE",
+            "TAX"
+        ).contains(upper(semanticKind));
     }
 
     private static boolean isSupportedCashflowSemantic(String semanticKind) {
-        return List.of("CASH_INFLOW", "CASH_OUTFLOW", "FINANCING", "OPENING_BALANCE", "CLOSING_BALANCE").contains(upper(semanticKind));
+        return List.of("CASH_INFLOW", "CASH_OUTFLOW", "CASHFLOW_TAX", "FINANCING", "OPENING_BALANCE", "CLOSING_BALANCE").contains(upper(semanticKind));
     }
 
     private static boolean isFinancialSemantic(String semanticKind) {
-        return List.of("REVENUE", "OPEX", "OPERATING_ADJUSTMENT", "CAPEX", "DEPRECIATION_AMORTIZATION", "TAX").contains(upper(semanticKind));
+        return List.of(
+            "REVENUE",
+            "OPEX",
+            "OPERATING_ADJUSTMENT",
+            "INVENTORY_VARIATION",
+            "CAPEX",
+            "DEPRECIATION_AMORTIZATION",
+            "FINANCIAL_RESULT",
+            "FINANCIAL_INCOME",
+            "FINANCIAL_EXPENSE",
+            "TAX"
+        ).contains(upper(semanticKind));
+    }
+
+    private static boolean isEligibleForPnL(CanonicalRow row, Map<Integer, Boolean> pnlIncluded) {
+        if (!Boolean.TRUE.equals(pnlIncluded.get(row.index()))) return false;
+        if (!"P_AND_L".equals(row.sectionKind())) return false;
+        if ("REVIEW".equals(row.mappingStatus())) return false;
+        if ("DERIVED_KPI".equals(row.rowType())) return false;
+        return List.of(
+            "REVENUE",
+            "OTHER_OPERATING_INCOME",
+            "OPEX",
+            "OPERATING_ADJUSTMENT",
+            "INVENTORY_VARIATION",
+            "DEPRECIATION_AMORTIZATION",
+            "FINANCING",
+            "FINANCIAL_RESULT",
+            "FINANCIAL_INCOME",
+            "FINANCIAL_EXPENSE",
+            "TAX",
+            "CAPEX"
+        )
+            .contains(upper(row.effectiveFinancialKind()));
+    }
+
+    private static boolean isEligibleForDrivers(CanonicalRow row, Map<Integer, Boolean> pnlIncluded) {
+        return isEligibleForPnL(row, pnlIncluded)
+            && "DETAIL".equals(row.rowType())
+            && !"REVIEW".equals(row.mappingStatus())
+            && List.of("REVENUE", "OTHER_OPERATING_INCOME", "OPEX").contains(upper(row.effectiveFinancialKind()));
     }
 
     private static boolean isDriverRow(CanonicalRow row, Map<Integer, Boolean> pnlIncluded) {
-        return Boolean.TRUE.equals(pnlIncluded.get(row.index()))
-            && "DETAIL".equals(row.rowType())
-            && "P_AND_L".equals(row.sectionKind())
-            && !"REVIEW".equals(row.mappingStatus())
-            && List.of("REVENUE", "OPEX").contains(upper(row.effectiveFinancialKind()));
+        return isEligibleForDrivers(row, pnlIncluded);
+    }
+
+    private static void enforceCashflowAggregationBoundaries(List<CanonicalRow> rows,
+                                                             Map<Integer, Boolean> pnlIncluded,
+                                                             Map<Integer, Boolean> driverIncluded) {
+        if (rows == null || rows.isEmpty()) {
+            return;
+        }
+        List<String> violations = new ArrayList<>();
+        for (CanonicalRow row : rows) {
+            if (!matchesSection(row.sectionKind(), "CASHFLOW")) {
+                continue;
+            }
+            if (Boolean.TRUE.equals(pnlIncluded.get(row.index()))) {
+                violations.add("P&L<-" + safe(row.originalLabel()) + "@" + safe(row.monthKey()));
+            }
+            if (Boolean.TRUE.equals(driverIncluded.get(row.index()))) {
+                violations.add("DRIVER<-" + safe(row.originalLabel()) + "@" + safe(row.monthKey()));
+            }
+        }
+        if (!violations.isEmpty()) {
+            throw new IllegalStateException("Cashflow rows cannot feed P&L or drivers: " + String.join(", ", violations));
+        }
+    }
+
+    private static LongBudgetSource rebuildCanonicalSourceFromEligibleRows(Integer detectedYear,
+                                                                           List<String> orderedMonthKeys,
+                                                                           List<CanonicalRow> rows,
+                                                                           Map<Integer, String> exclusions,
+                                                                           Map<Integer, Boolean> pnlIncluded,
+                                                                           Map<Integer, Boolean> cashflowIncluded,
+                                                                           Map<String, Boolean> zeroSeriesIdentity) {
+        Map<String, BigDecimal> income = new LinkedHashMap<>();
+        Map<String, BigDecimal> expense = new LinkedHashMap<>();
+        Map<String, BigDecimal> declaredIncome = new LinkedHashMap<>();
+        Map<String, BigDecimal> declaredExpense = new LinkedHashMap<>();
+        Map<String, BigDecimal> operatingAdjustments = new LinkedHashMap<>();
+        Map<String, BigDecimal> capex = new LinkedHashMap<>();
+        Map<String, BigDecimal> depreciation = new LinkedHashMap<>();
+        Map<String, BigDecimal> tax = new LinkedHashMap<>();
+        Map<String, BigDecimal> financialResult = new LinkedHashMap<>();
+        Map<String, BigDecimal> cashInflow = new LinkedHashMap<>();
+        Map<String, BigDecimal> cashOutflow = new LinkedHashMap<>();
+        Map<String, BigDecimal> financing = new LinkedHashMap<>();
+        Map<String, BigDecimal> openingBalance = new LinkedHashMap<>();
+        Map<String, BigDecimal> closingBalance = new LinkedHashMap<>();
+        Map<String, BigDecimal> actualIncome = new LinkedHashMap<>();
+        Map<String, BigDecimal> actualExpense = new LinkedHashMap<>();
+        Map<String, BigDecimal> actualCapex = new LinkedHashMap<>();
+        Map<String, BigDecimal> forecastIncome = new LinkedHashMap<>();
+        Map<String, BigDecimal> forecastExpense = new LinkedHashMap<>();
+        Map<String, BigDecimal> forecastCapex = new LinkedHashMap<>();
+
+        for (CanonicalRow row : rows) {
+            boolean pnlSourceEligible = !exclusions.containsKey(row.index())
+                && Boolean.TRUE.equals(pnlIncluded.get(row.index()))
+                && matchesSection(row.sectionKind(), "P_AND_L");
+            boolean cashflowSourceEligible = isCashflowSourceEligible(row, exclusions, cashflowIncluded);
+            if (!pnlSourceEligible && !cashflowSourceEligible) {
+                continue;
+            }
+            if (pnlSourceEligible) {
+                mergeIncludedFinancialAmount(
+                    row,
+                    income,
+                    expense,
+                    operatingAdjustments,
+                    capex,
+                    depreciation,
+                    tax,
+                    financialResult,
+                    actualIncome,
+                    actualExpense,
+                    actualCapex,
+                    forecastIncome,
+                    forecastExpense,
+                    forecastCapex
+                );
+            }
+            if (cashflowSourceEligible) {
+                mergeIncludedCashflowAmount(
+                    row,
+                    cashInflow,
+                    cashOutflow,
+                    financing,
+                    openingBalance,
+                    closingBalance
+                );
+            }
+        }
+
+        declaredIncome.putAll(buildDeclaredPresentationSeries(
+            rows,
+            exclusions,
+            "REVENUE",
+            total(income.values()).add(total(operatingAdjustments.values())),
+            orderedMonthKeys,
+            zeroSeriesIdentity
+        ));
+        declaredExpense.putAll(buildDeclaredPresentationSeries(
+            rows,
+            exclusions,
+            "OPEX",
+            total(expense.values()),
+            orderedMonthKeys,
+            zeroSeriesIdentity
+        ));
+
+        return new LongBudgetSource(
+            detectedYear,
+            orderedMonthKeys,
+            income,
+            expense,
+            declaredIncome,
+            declaredExpense,
+            operatingAdjustments,
+            capex,
+            depreciation,
+            tax,
+            financialResult,
+            cashInflow,
+            cashOutflow,
+            financing,
+            openingBalance,
+            closingBalance,
+            actualIncome,
+            actualExpense,
+            actualCapex,
+            forecastIncome,
+            forecastExpense,
+            forecastCapex
+        );
+    }
+
+    private static void mergeIncludedFinancialAmount(CanonicalRow row,
+                                                     Map<String, BigDecimal> income,
+                                                     Map<String, BigDecimal> expense,
+                                                     Map<String, BigDecimal> operatingAdjustments,
+                                                     Map<String, BigDecimal> capex,
+                                                     Map<String, BigDecimal> depreciation,
+                                                     Map<String, BigDecimal> tax,
+                                                     Map<String, BigDecimal> financialResult,
+                                                     Map<String, BigDecimal> actualIncome,
+                                                     Map<String, BigDecimal> actualExpense,
+                                                     Map<String, BigDecimal> actualCapex,
+                                                     Map<String, BigDecimal> forecastIncome,
+                                                     Map<String, BigDecimal> forecastExpense,
+                                                     Map<String, BigDecimal> forecastCapex) {
+        String financialKind = upper(row.effectiveFinancialKind());
+        String monthKey = row.monthKey();
+        switch (financialKind) {
+            case "REVENUE", "OTHER_OPERATING_INCOME" -> {
+                mergeAmount(income, monthKey, adjustAmountForAggregation(row, row.plannedAmount(), financialKind, true));
+                mergeAmount(actualIncome, monthKey, adjustAmountForAggregation(row, row.actualAmount(), financialKind, true));
+                mergeAmount(forecastIncome, monthKey, adjustAmountForAggregation(row, row.forecastAmount(), financialKind, true));
+            }
+            case "OPEX" -> {
+                mergeAmount(expense, monthKey, adjustAmountForAggregation(row, row.plannedAmount(), financialKind, true));
+                mergeAmount(actualExpense, monthKey, adjustAmountForAggregation(row, row.actualAmount(), financialKind, true));
+                mergeAmount(forecastExpense, monthKey, adjustAmountForAggregation(row, row.forecastAmount(), financialKind, true));
+            }
+            case "OPERATING_ADJUSTMENT", "INVENTORY_VARIATION" ->
+                mergeAmount(operatingAdjustments, monthKey, adjustAmountForAggregation(row, row.plannedAmount(), financialKind, true));
+            case "CAPEX" -> {
+                mergeAmount(capex, monthKey, adjustAmountForAggregation(row, row.plannedAmount(), financialKind, true));
+                mergeAmount(actualCapex, monthKey, adjustAmountForAggregation(row, row.actualAmount(), financialKind, true));
+                mergeAmount(forecastCapex, monthKey, adjustAmountForAggregation(row, row.forecastAmount(), financialKind, true));
+            }
+            case "DEPRECIATION_AMORTIZATION" -> mergeAmount(depreciation, monthKey, adjustAmountForAggregation(row, row.plannedAmount(), financialKind, true));
+            case "TAX" -> mergeAmount(tax, monthKey, adjustAmountForAggregation(row, row.plannedAmount(), financialKind, true));
+            case "FINANCING", "FINANCIAL_INCOME", "FINANCIAL_EXPENSE" ->
+                mergeAmount(financialResult, monthKey, signedFinancialValue(row, row.plannedAmount()));
+            case "FINANCIAL_RESULT" ->
+                mergeAmount(financialResult, monthKey, adjustAmountForAggregation(row, row.plannedAmount(), financialKind, true));
+            default -> {
+            }
+        }
+    }
+
+    private static void mergeIncludedCashflowAmount(CanonicalRow row,
+                                                    Map<String, BigDecimal> cashInflow,
+                                                    Map<String, BigDecimal> cashOutflow,
+                                                    Map<String, BigDecimal> financing,
+                                                    Map<String, BigDecimal> openingBalance,
+                                                    Map<String, BigDecimal> closingBalance) {
+        String cashflowKind = upper(row.effectiveCashflowKind());
+        String monthKey = row.monthKey();
+        switch (cashflowKind) {
+            case "CASH_INFLOW" -> mergeAmount(cashInflow, monthKey, adjustAmountForAggregation(row, row.plannedAmount(), cashflowKind, false));
+            case "CASH_OUTFLOW" -> mergeAmount(cashOutflow, monthKey, adjustAmountForAggregation(row, row.plannedAmount(), cashflowKind, false));
+            case "CASHFLOW_TAX" -> mergeAmount(cashOutflow, monthKey, adjustAmountForAggregation(row, row.plannedAmount(), cashflowKind, false));
+            case "FINANCING" -> mergeAmount(financing, monthKey, adjustAmountForAggregation(row, row.plannedAmount(), cashflowKind, false));
+            case "OPENING_BALANCE" -> putLastValue(openingBalance, monthKey, row.plannedAmount());
+            case "CLOSING_BALANCE" -> putLastValue(closingBalance, monthKey, row.plannedAmount());
+            default -> {
+            }
+        }
+    }
+
+    private static boolean isCashflowSourceEligible(CanonicalRow row,
+                                                    Map<Integer, String> exclusions,
+                                                    Map<Integer, Boolean> cashflowIncluded) {
+        if (row == null || !Boolean.TRUE.equals(cashflowIncluded.get(row.index()))) {
+            return false;
+        }
+        if (!matchesSection(row.sectionKind(), "CASHFLOW")) {
+            return false;
+        }
+        String exclusion = exclusions.get(row.index());
+        if (exclusion == null || exclusion.isBlank()) {
+            return true;
+        }
+        if (!"EXCLUDED_DERIVED_KPI".equals(exclusion)) {
+            return false;
+        }
+        return Set.of("OPENING_BALANCE", "CLOSING_BALANCE").contains(upper(row.effectiveCashflowKind()));
     }
 
     private static List<RowAudit> buildRowAudits(List<CanonicalRow> rows,
@@ -1909,12 +2335,38 @@ public class BudgetService {
         addDeclaredVsMonthlyCheck(checks, "declared_capex_vs_monthly", rows, exclusions, "CAPEX", source.plannedCapexByMonth(), tolerance);
         addDeclaredVsMonthlyCheck(checks, "declared_depreciation_vs_monthly", rows, exclusions, "DEPRECIATION_AMORTIZATION", source.plannedDepreciationByMonth(), tolerance);
         addDeclaredVsMonthlyCheck(checks, "declared_financing_vs_monthly", rows, exclusions, "FINANCING", source.plannedFinancialResultByMonth(), tolerance);
+        addDetailVsDeclaredSubtotalObservation(
+            checks,
+            "detail_revenue_vs_declared_subtotal",
+            rows,
+            exclusions,
+            "REVENUE",
+            tolerance
+        );
+        addDetailVsDeclaredSubtotalObservation(
+            checks,
+            "detail_opex_vs_declared_subtotal",
+            rows,
+            exclusions,
+            "OPEX",
+            tolerance
+        );
+        addDetailVsDeclaredSubtotalObservation(
+            checks,
+            "detail_operating_adjustment_vs_declared_subtotal",
+            rows,
+            exclusions,
+            "OPERATING_ADJUSTMENT",
+            tolerance
+        );
 
         BigDecimal ebitdaComputed = total(source.plannedIncomeByMonth().values())
             .add(total(source.plannedOperatingAdjustmentsByMonth().values()))
             .subtract(total(source.plannedExpenseByMonth().values()));
         BigDecimal ebitComputed = ebitdaComputed.subtract(total(source.plannedDepreciationByMonth().values()));
-        BigDecimal netComputed = ebitComputed.add(total(source.plannedFinancialResultByMonth().values()));
+        BigDecimal netComputed = ebitComputed
+            .add(total(source.plannedFinancialResultByMonth().values()))
+            .subtract(total(source.plannedTaxByMonth().values()));
         BigDecimal closingComputed = lastValue(source.plannedClosingBalanceByMonth().values());
 
         addLabelBasedCheck(checks, "declared_ebitda", rows, exclusions, "EBITDA", ebitdaComputed, tolerance, false);
@@ -2306,7 +2758,8 @@ public class BudgetService {
             if ("CASHFLOW".equals(audit.sectionKind())) cashflowRows++;
             if (audit.includedInDrivers()) driverEligibleRows++;
             if ("EXCLUDED_AGGREGATE_WITH_DETAIL".equals(audit.exclusionReason())) aggregateRowsExcluded++;
-            if ("EXCLUDED_DUPLICATE_CANONICAL_ROW".equals(audit.exclusionReason())) duplicateRowsExcluded++;
+            if ("EXCLUDED_DUPLICATE_CANONICAL_ROW".equals(audit.exclusionReason())
+                || "EXCLUDED_DUPLICATE_CANONICAL_SERIES".equals(audit.exclusionReason())) duplicateRowsExcluded++;
             if ("EXCLUDED_NO_ACTIVITY".equals(audit.exclusionReason())) noActivityRowsExcluded++;
         }
 
@@ -2485,12 +2938,478 @@ public class BudgetService {
         checks.add(reconciliation(code, declared, actual, tolerance, "El total declarado no cuadra con la suma mensual."));
     }
 
+    private static void addDetailVsDeclaredSubtotalObservation(List<ReconciliationCheck> checks,
+                                                               String code,
+                                                               List<CanonicalRow> rows,
+                                                               Map<Integer, String> exclusions,
+                                                               String semanticKind,
+                                                               BigDecimal tolerance) {
+        if (rows == null || rows.isEmpty()) return;
+        DeclaredSubtotalObservation observation = observeDeclaredSubtotal(rows, exclusions, semanticKind, tolerance);
+        checks.add(observationReconciliation(
+            code,
+            observation.status(),
+            observation.declaredTotal(),
+            observation.detailComparableTotal(),
+            observation.difference(),
+            observation.warning(),
+            tolerance,
+            observation.label(),
+            observation.detailScope(),
+            observation.excludedAdjustments()
+        ));
+    }
+
+    private static void traceCanonicalRow(String event,
+                                          Long companyId,
+                                          Long importId,
+                                          String analysisVersion,
+                                          CanonicalRow row,
+                                          Boolean includedInPnL,
+                                          Boolean includedInCashflow,
+                                          Boolean includedInDrivers) {
+        if (row == null || !BudgetTraceLogger.shouldTraceLabel(row.originalLabel())) return;
+        BudgetTraceLogger.log(log, event, BudgetTraceLogger.fields(
+            "companyId", companyId,
+            "universalImportId", importId,
+            "planImportId", importId,
+            "analysisVersion", analysisVersion,
+            "sourceFilename", row.sourceFile(),
+            "sourceSheet", row.sourceSheet(),
+            "processingRoute", "BudgetService",
+            "canonicalRowId", row.canonicalIdentity(),
+            "sourceRow", row.sourceRow(),
+            "rawLabel", row.originalLabel(),
+            "section", row.sectionKind(),
+            "rowRole", row.rowType(),
+            "financialNature", row.effectiveFinancialKind(),
+            "cashflowNature", row.effectiveCashflowKind(),
+            "eligibleForPAndL", includedInPnL,
+            "eligibleForDrivers", includedInDrivers,
+            "includedInCashflow", includedInCashflow,
+            "monthlyTotal", BudgetTraceLogger.fmt(firstNonNullAmount(row.plannedAmount(), row.actualAmount(), row.forecastAmount(), row.varianceAmount()))
+        ));
+    }
+
+    private static DeclaredSubtotalObservation observeDeclaredSubtotal(List<CanonicalRow> rows,
+                                                                      Map<Integer, String> exclusions,
+                                                                      String semanticKind,
+                                                                      BigDecimal tolerance) {
+        BigDecimal expectedAnnualTotal = comparableDetailAnnualTotal(rows, exclusions, semanticKind);
+        List<SourceLineSummary> allSourceLines = summarizeSourceLines(rows, exclusions);
+        List<SourceLineSummary> candidates = allSourceLines.stream()
+            .filter(line -> isDeclaredSubtotalCandidate(line, semanticKind))
+            .sorted((left, right) -> {
+                BigDecimal leftDiff = left.annualTotal().subtract(expectedAnnualTotal).abs();
+                BigDecimal rightDiff = right.annualTotal().subtract(expectedAnnualTotal).abs();
+                int byDiff = leftDiff.compareTo(rightDiff);
+                if (byDiff != 0) return byDiff;
+                int byType = Integer.compare(observationAggregatePriority(right.rowType()), observationAggregatePriority(left.rowType()));
+                if (byType != 0) return byType;
+                return Integer.compare(firstNonNullInteger(left.sourceRow(), Integer.MAX_VALUE), firstNonNullInteger(right.sourceRow(), Integer.MAX_VALUE));
+            })
+            .toList();
+        if (candidates.isEmpty()) {
+            return new DeclaredSubtotalObservation(
+                null,
+                BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP),
+                BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP),
+                BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP),
+                "NO_DECLARED_SUBTOTAL",
+                null,
+                null,
+                "No hay subtotal declarado fiable para " + semanticKind + "."
+            );
+        }
+        return candidates.stream()
+            .map(candidate -> buildDeclaredSubtotalObservation(
+                allSourceLines,
+                candidate,
+                semanticKind,
+                tolerance,
+                expectedAnnualTotal
+            ))
+            .reduce(BudgetService::preferredObservation)
+            .orElseGet(() -> new DeclaredSubtotalObservation(
+                null,
+                BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP),
+                BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP),
+                BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP),
+                "NO_DECLARED_SUBTOTAL",
+                null,
+                null,
+                "No hay subtotal declarado fiable para " + semanticKind + "."
+            ));
+    }
+
+    private static DeclaredSubtotalObservation buildDeclaredSubtotalObservation(List<SourceLineSummary> blockLines,
+                                                                               SourceLineSummary subtotal,
+                                                                               String semanticKind,
+                                                                               BigDecimal tolerance,
+                                                                               BigDecimal expectedAnnualTotal) {
+        if (subtotal == null) {
+            return new DeclaredSubtotalObservation(
+                null,
+                BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP),
+                BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP),
+                BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP),
+                "NOT_COMPARABLE",
+                null,
+                null,
+                "No se pudo seleccionar un subtotal declarado para reconciliar " + semanticKind + "."
+            );
+        }
+
+        List<SourceLineSummary> backwardDetail = collectComparableBlockDetails(blockLines, subtotal, semanticKind, -1);
+        List<SourceLineSummary> forwardDetail = collectComparableBlockDetails(blockLines, subtotal, semanticKind, 1);
+        if (backwardDetail.isEmpty() && forwardDetail.isEmpty()) {
+            return new DeclaredSubtotalObservation(
+                subtotal.label(),
+                scale2(subtotal.annualTotal()),
+                BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP),
+                scale2(subtotal.annualTotal() == null ? BigDecimal.ZERO : subtotal.annualTotal().abs()),
+                "NOT_COMPARABLE",
+                "sin detalle compatible en el bloque",
+                null,
+                "El subtotal '" + subtotal.label() + "' no tiene detalle compatible suficiente en su bloque estructural para reconciliar " + semanticKind + "."
+            );
+        }
+        DeclaredSubtotalObservation backwardObservation = evaluateDeclaredSubtotalObservation(subtotal, semanticKind, tolerance, backwardDetail);
+        DeclaredSubtotalObservation forwardObservation = evaluateDeclaredSubtotalObservation(subtotal, semanticKind, tolerance, forwardDetail);
+        return preferredObservation(backwardObservation, forwardObservation);
+    }
+
+    private static DeclaredSubtotalObservation evaluateDeclaredSubtotalObservation(SourceLineSummary subtotal,
+                                                                                  String semanticKind,
+                                                                                  BigDecimal tolerance,
+                                                                                  List<SourceLineSummary> blockDetail) {
+        if (blockDetail == null || blockDetail.isEmpty()) {
+            return new DeclaredSubtotalObservation(
+                subtotal.label(),
+                scale2(subtotal.annualTotal()),
+                BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP),
+                scale2(subtotal.annualTotal() == null ? BigDecimal.ZERO : subtotal.annualTotal().abs()),
+                "NOT_COMPARABLE",
+                "sin detalle compatible en el tramo",
+                null,
+                "El subtotal '" + subtotal.label() + "' no tiene detalle comparable suficiente para reconciliar " + semanticKind + "."
+            );
+        }
+
+        Set<String> targetKinds = targetObservationNatures(semanticKind);
+        List<SourceLineSummary> targetDetail = blockDetail.stream()
+            .filter(line -> targetKinds.contains(normalizedObservationNature(line.financialNature())))
+            .toList();
+        if (targetDetail.isEmpty()) {
+            return new DeclaredSubtotalObservation(
+                subtotal.label(),
+                scale2(subtotal.annualTotal()),
+                BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP),
+                scale2(subtotal.annualTotal() == null ? BigDecimal.ZERO : subtotal.annualTotal().abs()),
+                "NOT_COMPARABLE",
+                detailScopeLabel(blockDetail),
+                null,
+                "El subtotal '" + subtotal.label() + "' no tiene detalle comparable de " + semanticKind + " dentro del mismo bloque."
+            );
+        }
+
+        Set<String> segmentKinds = blockDetail.stream()
+            .map(line -> normalizedObservationNature(line.financialNature()))
+            .filter(kind -> kind != null && !kind.isBlank())
+            .collect(Collectors.toCollection(LinkedHashSet::new));
+        Set<String> excludedKinds = new LinkedHashSet<>(segmentKinds);
+        excludedKinds.removeAll(targetKinds);
+
+        BigDecimal detailComparable = scale2(targetDetail.stream()
+            .map(SourceLineSummary::annualTotal)
+            .filter(Objects::nonNull)
+            .reduce(BigDecimal.ZERO, BigDecimal::add));
+        BigDecimal adjustmentComparable = scale2(blockDetail.stream()
+            .filter(line -> "OPERATING_ADJUSTMENT".equals(normalizedObservationNature(line.financialNature())))
+            .map(SourceLineSummary::annualTotal)
+            .filter(Objects::nonNull)
+            .reduce(BigDecimal.ZERO, BigDecimal::add));
+        BigDecimal declared = scale2(subtotal.annualTotal());
+        BigDecimal detail = detailComparable == null ? BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP) : detailComparable;
+        BigDecimal difference = scale2(declared.subtract(detail).abs());
+        BigDecimal differenceWithAdjustment = scale2(declared.subtract(detail.add(firstNonNullAmount(adjustmentComparable, BigDecimal.ZERO))).abs());
+        Set<String> nonAdjustmentExcludedKinds = new LinkedHashSet<>(excludedKinds);
+        nonAdjustmentExcludedKinds.remove("OPERATING_ADJUSTMENT");
+
+        if ("REVENUE".equals(upper(semanticKind))
+            && nonAdjustmentExcludedKinds.isEmpty()
+            && adjustmentComparable != null
+            && adjustmentComparable.abs().compareTo(BigDecimal.ZERO) > 0
+            && differenceWithAdjustment.compareTo(tolerance) <= 0) {
+            return new DeclaredSubtotalObservation(
+                subtotal.label(),
+                declared,
+                detail,
+                differenceWithAdjustment,
+                "MATCH_WITH_ADJUSTMENT",
+                detailScopeLabel(targetDetail),
+                "OPERATING_ADJUSTMENT=" + scale2(adjustmentComparable),
+                null
+            );
+        }
+
+        if (!excludedKinds.isEmpty()) {
+            return new DeclaredSubtotalObservation(
+                subtotal.label(),
+                declared,
+                detail,
+                difference,
+                "NOT_COMPARABLE",
+                detailScopeLabel(blockDetail),
+                String.join(", ", excludedKinds),
+                "El subtotal '" + subtotal.label() + "' mezcla naturalezas distintas y no es comparable de forma pura para " + semanticKind + "."
+            );
+        }
+
+        String status = difference.compareTo(tolerance) <= 0 ? "MATCH" : "MISMATCH";
+        String warning = "MATCH".equals(status)
+            ? null
+            : "El subtotal '" + subtotal.label() + "' no cuadra con el detalle comparable de " + semanticKind + ".";
+        return new DeclaredSubtotalObservation(
+            subtotal.label(),
+            declared,
+            detail,
+            difference,
+            status,
+            detailScopeLabel(targetDetail),
+            null,
+            warning
+        );
+    }
+
+    private static DeclaredSubtotalObservation preferredObservation(DeclaredSubtotalObservation left,
+                                                                    DeclaredSubtotalObservation right) {
+        if (left == null) return right;
+        if (right == null) return left;
+        int byStatus = Integer.compare(observationStatusPriority(left.status()), observationStatusPriority(right.status()));
+        if (byStatus != 0) return byStatus <= 0 ? left : right;
+        int byDiff = left.difference().compareTo(right.difference());
+        if (byDiff != 0) return byDiff <= 0 ? left : right;
+        int byScope = Integer.compare(
+            observationScopeSize(right.detailScope()),
+            observationScopeSize(left.detailScope())
+        );
+        return byScope < 0 ? left : right;
+    }
+
+    private static BigDecimal comparableDetailAnnualTotal(List<CanonicalRow> rows,
+                                                          Map<Integer, String> exclusions,
+                                                          String semanticKind) {
+        BigDecimal total = BigDecimal.ZERO;
+        Set<String> targetKinds = targetObservationNatures(semanticKind);
+        for (CanonicalRow row : rows) {
+            if (row == null) continue;
+            if (exclusions.containsKey(row.index())) continue;
+            if (!matchesSection(row.sectionKind(), "P_AND_L")) continue;
+            if (!"DETAIL".equals(row.rowType())) continue;
+            if (!targetKinds.contains(normalizedObservationNature(row.effectiveFinancialKind()))) continue;
+            BigDecimal amount = firstNonNullAmount(row.plannedAmount(), row.actualAmount(), row.forecastAmount(), row.varianceAmount());
+            if (amount != null) total = total.add(amount);
+        }
+        return scale2(total);
+    }
+
+    private static List<SourceLineSummary> summarizeSourceLines(List<CanonicalRow> rows,
+                                                                Map<Integer, String> exclusions) {
+        Map<String, List<CanonicalRow>> groups = rows.stream()
+            .filter(Objects::nonNull)
+            .filter(row -> !exclusions.containsKey(row.index()) || isPresentationEligible(row, exclusions))
+            .filter(row -> matchesSection(row.sectionKind(), "P_AND_L"))
+            .filter(row -> row.sourceRow() != null)
+            .collect(Collectors.groupingBy(
+                row -> safe(row.blockId()) + "|" + row.sourceRow() + "|" + row.rowType() + "|" + upper(row.effectiveFinancialKind()) + "|" + upper(row.sectionKind()) + "|" + safe(row.originalLabel()),
+                LinkedHashMap::new,
+                Collectors.toList()
+            ));
+
+        List<SourceLineSummary> result = new ArrayList<>();
+        for (List<CanonicalRow> group : groups.values()) {
+            CanonicalRow first = group.get(0);
+            BigDecimal annualTotal = group.stream()
+                .map(row -> firstNonNullAmount(row.plannedAmount(), row.actualAmount(), row.forecastAmount(), row.varianceAmount()))
+                .filter(Objects::nonNull)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+            result.add(new SourceLineSummary(
+                first.blockId(),
+                first.sourceRow(),
+                first.originalLabel(),
+                first.rowType(),
+                first.sectionKind(),
+                upper(first.effectiveFinancialKind()),
+                scale2(annualTotal)
+            ));
+        }
+        return result;
+    }
+
+    private static boolean isDeclaredSubtotalCandidate(SourceLineSummary line, String semanticKind) {
+        if (line == null) return false;
+        if (!matchesSection(line.sectionKind(), "P_AND_L")) return false;
+        if (!Set.of("SUBTOTAL", "TOTAL").contains(line.rowType())) return false;
+        return targetObservationNatures(semanticKind).contains(normalizedObservationNature(line.financialNature()));
+    }
+
+    private static int observationAggregatePriority(String rowType) {
+        if ("TOTAL".equals(rowType)) return 2;
+        if ("SUBTOTAL".equals(rowType)) return 1;
+        return 0;
+    }
+
+    private static int sourceRowIndex(List<SourceLineSummary> sourceLines, String blockId, Integer sourceRow) {
+        if (sourceLines == null || sourceRow == null) return -1;
+        for (int i = 0; i < sourceLines.size(); i++) {
+            SourceLineSummary line = sourceLines.get(i);
+            if (Objects.equals(safe(line.blockId()), safe(blockId)) && Objects.equals(line.sourceRow(), sourceRow)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private static List<SourceLineSummary> collectComparableBlockDetails(List<SourceLineSummary> blockLines,
+                                                                         SourceLineSummary subtotal,
+                                                                         String semanticKind,
+                                                                         int direction) {
+        if (blockLines == null || subtotal == null) return List.of();
+        List<SourceLineSummary> ordered = blockLines.stream()
+            .filter(Objects::nonNull)
+            .sorted(Comparator.comparing(line -> firstNonNullInteger(line.sourceRow(), Integer.MAX_VALUE)))
+            .toList();
+        int subtotalIndex = sourceRowIndex(ordered, subtotal.blockId(), subtotal.sourceRow());
+        if (subtotalIndex < 0) return List.of();
+
+        List<SourceLineSummary> collected = new ArrayList<>();
+        Set<String> allowedTraversalKinds = allowedObservationTraversalKinds(semanticKind);
+        for (int i = subtotalIndex + direction; i >= 0 && i < ordered.size(); i += direction) {
+            SourceLineSummary line = ordered.get(i);
+            if (!matchesSection(line.sectionKind(), "P_AND_L")) {
+                break;
+            }
+            String normalizedKind = normalizedObservationNature(line.financialNature());
+            if ("DETAIL".equals(line.rowType())
+                && allowedTraversalKinds.contains(normalizedKind)) {
+                collected.add(0, line);
+                continue;
+            }
+            if (Set.of("SUBTOTAL", "TOTAL", "DERIVED_KPI").contains(line.rowType())) {
+                if (allowedTraversalKinds.contains(normalizedKind) || normalizedKind == null || normalizedKind.isBlank() || "UNKNOWN".equals(normalizedKind)) {
+                    continue;
+                }
+                break;
+            }
+        }
+        return collected;
+    }
+
+    private static List<SourceLineSummary> collectContiguousDetailSegment(List<SourceLineSummary> blockLines, int candidateIndex) {
+        List<SourceLineSummary> collected = new ArrayList<>();
+        for (int i = candidateIndex - 1; i >= 0; i--) {
+            SourceLineSummary line = blockLines.get(i);
+            if (!"DETAIL".equals(line.rowType())) {
+                break;
+            }
+            collected.add(0, line);
+        }
+        return collected;
+    }
+
+    private static Set<String> targetObservationNatures(String semanticKind) {
+        return switch (upper(semanticKind)) {
+            case "REVENUE" -> Set.of("REVENUE");
+            case "OPEX" -> Set.of("OPEX");
+            case "OPERATING_ADJUSTMENT" -> Set.of("OPERATING_ADJUSTMENT");
+            default -> Set.of(upper(semanticKind));
+        };
+    }
+
+    private static String normalizedObservationNature(String financialNature) {
+        String kind = upper(financialNature);
+        if ("INVENTORY_VARIATION".equals(kind)) return "OPERATING_ADJUSTMENT";
+        if ("FINANCIAL_INCOME".equals(kind) || "FINANCIAL_EXPENSE".equals(kind) || "FINANCIAL_RESULT".equals(kind) || "FINANCING".equals(kind)) {
+            return "FINANCIAL";
+        }
+        return kind;
+    }
+
+    private static int observationStatusPriority(String status) {
+        return switch (upper(status)) {
+            case "MATCH" -> 0;
+            case "MATCH_WITH_ADJUSTMENT" -> 1;
+            case "MISMATCH" -> 2;
+            case "NOT_COMPARABLE" -> 3;
+            case "NO_DECLARED_SUBTOTAL" -> 4;
+            default -> 5;
+        };
+    }
+
+    private static int observationScopeSize(String detailScope) {
+        if (detailScope == null || detailScope.isBlank()) return 0;
+        return (int) Arrays.stream(detailScope.split(","))
+            .map(String::trim)
+            .filter(token -> !token.isBlank())
+            .count();
+    }
+
+    private static Set<String> allowedObservationTraversalKinds(String semanticKind) {
+        if ("REVENUE".equals(upper(semanticKind))) {
+            return Set.of("REVENUE", "OPERATING_ADJUSTMENT");
+        }
+        return targetObservationNatures(semanticKind);
+    }
+
+    private static String detailScopeLabel(List<SourceLineSummary> segment) {
+        if (segment == null || segment.isEmpty()) return null;
+        return segment.stream()
+            .map(SourceLineSummary::label)
+            .filter(Objects::nonNull)
+            .map(String::trim)
+            .filter(label -> !label.isBlank())
+            .distinct()
+            .limit(6)
+            .collect(Collectors.joining(", "));
+    }
+
     private static Map<String, BigDecimal> buildDeclaredPresentationSeries(List<CanonicalRow> rows,
                                                                            Map<Integer, String> exclusions,
                                                                            String semanticKind,
                                                                            BigDecimal expectedAnnualTotal,
                                                                            List<String> orderedMonthKeys,
                                                                            Map<String, Boolean> zeroSeriesIdentity) {
+        List<CanonicalRow> selectedRows = selectDeclaredPresentationRows(rows, exclusions, semanticKind, expectedAnnualTotal, zeroSeriesIdentity);
+        if (selectedRows.isEmpty()) return Map.of();
+
+        Map<String, BigDecimal> series = new LinkedHashMap<>();
+        for (String monthKey : orderedMonthKeys) {
+            CanonicalRow row = selectedRows.stream()
+                .filter(candidate -> Objects.equals(candidate.monthKey(), monthKey))
+                .reduce((first, second) -> second)
+                .orElse(null);
+            if (row == null) continue;
+            BigDecimal value = firstNonNullAmount(row.plannedAmount(), row.actualAmount(), row.forecastAmount(), row.varianceAmount());
+            if (value != null) {
+                series.put(monthKey, value);
+            }
+        }
+        return series;
+    }
+
+    private static List<CanonicalRow> selectDeclaredPresentationRows(List<CanonicalRow> rows,
+                                                                     Map<Integer, String> exclusions,
+                                                                     String semanticKind,
+                                                                     BigDecimal expectedAnnualTotal) {
+        return selectDeclaredPresentationRows(rows, exclusions, semanticKind, expectedAnnualTotal, Map.of());
+    }
+
+    private static List<CanonicalRow> selectDeclaredPresentationRows(List<CanonicalRow> rows,
+                                                                     Map<Integer, String> exclusions,
+                                                                     String semanticKind,
+                                                                     BigDecimal expectedAnnualTotal,
+                                                                     Map<String, Boolean> zeroSeriesIdentity) {
         Map<String, List<CanonicalRow>> byIdentity = new LinkedHashMap<>();
         for (CanonicalRow row : rows) {
             if (!matchesSection(row.sectionKind(), "P_AND_L")) continue;
@@ -2504,9 +3423,7 @@ public class BudgetService {
                 byIdentity.computeIfAbsent(row.canonicalIdentity(), ignored -> new ArrayList<>()).add(row);
             }
         }
-        if (byIdentity.isEmpty()) {
-            return Map.of();
-        }
+        if (byIdentity.isEmpty()) return List.of();
 
         String selectedIdentity = byIdentity.entrySet().stream()
             .sorted((left, right) -> {
@@ -2539,24 +3456,7 @@ public class BudgetService {
             .map(Map.Entry::getKey)
             .findFirst()
             .orElse(null);
-
-        if (selectedIdentity == null) {
-            return Map.of();
-        }
-
-        Map<String, BigDecimal> series = new LinkedHashMap<>();
-        for (String monthKey : orderedMonthKeys) {
-            CanonicalRow row = byIdentity.get(selectedIdentity).stream()
-                .filter(candidate -> Objects.equals(candidate.monthKey(), monthKey))
-                .reduce((first, second) -> second)
-                .orElse(null);
-            if (row == null) continue;
-            BigDecimal value = firstNonNullAmount(row.plannedAmount(), row.actualAmount(), row.forecastAmount(), row.varianceAmount());
-            if (value != null) {
-                series.put(monthKey, value);
-            }
-        }
-        return series;
+        return selectedIdentity == null ? List.of() : byIdentity.getOrDefault(selectedIdentity, List.of());
     }
 
     private static boolean prefersDeclaredPresentation(Map<String, BigDecimal> declaredByMonth, List<String> orderedMonthKeys) {
@@ -2656,8 +3556,49 @@ public class BudgetService {
                                                        String warning) {
         BigDecimal left = expected == null ? BigDecimal.ZERO : expected;
         BigDecimal right = actual == null ? BigDecimal.ZERO : actual;
-        boolean passed = left.subtract(right).abs().compareTo(tolerance) <= 0;
-        return new ReconciliationCheck(code, passed, left.setScale(2, RoundingMode.HALF_UP), right.setScale(2, RoundingMode.HALF_UP), tolerance, passed ? null : warning);
+        BigDecimal difference = left.subtract(right).abs();
+        boolean passed = difference.compareTo(tolerance) <= 0;
+        return new ReconciliationCheck(
+            code,
+            passed,
+            passed ? "MATCH" : "MISMATCH",
+            left.setScale(2, RoundingMode.HALF_UP),
+            right.setScale(2, RoundingMode.HALF_UP),
+            difference.setScale(2, RoundingMode.HALF_UP),
+            tolerance,
+            passed ? null : warning,
+            null,
+            null,
+            null
+        );
+    }
+
+    private static ReconciliationCheck observationReconciliation(String code,
+                                                                 String status,
+                                                                 BigDecimal expected,
+                                                                 BigDecimal actual,
+                                                                 BigDecimal difference,
+                                                                 String warning,
+                                                                 BigDecimal tolerance,
+                                                                 String selectedSubtotal,
+                                                                 String comparableDetail,
+                                                                 String excludedAdjustments) {
+        BigDecimal left = expected == null ? BigDecimal.ZERO : expected;
+        BigDecimal right = actual == null ? BigDecimal.ZERO : actual;
+        BigDecimal delta = difference == null ? left.subtract(right).abs() : difference;
+        return new ReconciliationCheck(
+            code,
+            true,
+            status == null ? "OBSERVATION" : status,
+            left.setScale(2, RoundingMode.HALF_UP),
+            right.setScale(2, RoundingMode.HALF_UP),
+            delta.setScale(2, RoundingMode.HALF_UP),
+            tolerance == null ? BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP) : tolerance.setScale(2, RoundingMode.HALF_UP),
+            warning,
+            selectedSubtotal,
+            comparableDetail,
+            excludedAdjustments
+        );
     }
 
     private static BigDecimal lastValue(Iterable<BigDecimal> values) {
@@ -2765,6 +3706,11 @@ public class BudgetService {
         return value == null ? null : value.setScale(2, RoundingMode.HALF_UP);
     }
 
+    private static String fmtMoney(BigDecimal value) {
+        BigDecimal scaled = value == null ? BigDecimal.ZERO : value.setScale(2, RoundingMode.HALF_UP);
+        return scaled.toPlainString();
+    }
+
     private static void mergeSemanticAmount(String rowType,
                                             String monthKey,
                                             BigDecimal value,
@@ -2801,6 +3747,9 @@ public class BudgetService {
                                                          String semanticKind,
                                                          boolean useFinancialSemantic) {
         if (value == null) return null;
+        if (useFinancialSemantic && "TAX".equalsIgnoreCase(semanticKind)) {
+            return value.abs();
+        }
         if (!useFinancialSemantic && "FINANCING".equalsIgnoreCase(semanticKind)) {
             return signedFinancialValue(row, value);
         }
@@ -2811,15 +3760,27 @@ public class BudgetService {
         if (row == null || value == null) return value;
         String code = upper(row.accountingCode());
         String label = upper(row.normalizedLabel());
-        if (code.startsWith("76")
+        boolean interestIncome = label.contains("INTEREST INCOME")
             || label.contains("INGRESO FINANCI")
-            || label.contains("INTEREST INCOME")
-            || label.contains("RENDIMIENTO FINANCI")) {
+            || label.contains("RENDIMIENTO FINANCI")
+            || label.contains("INTERESES COBR")
+            || label.contains("INTERES COBR");
+        boolean interestExpense = label.contains("INTEREST EXPENSE")
+            || label.contains("GASTO FINANCI")
+            || label.contains("INTERESES PAG")
+            || label.contains("INTERES PAG")
+            || label.contains("INTERESES PREST")
+            || label.contains("INTERES PREST")
+            || ((label.contains("INTERES") || label.contains("INTERESES"))
+                && !interestIncome
+                && (label.contains("PRESTAM") || label.contains("LOAN") || label.contains("DEUDA") || label.contains("BANK")));
+        if (code.startsWith("76")
+            || interestIncome) {
             return value.abs();
         }
         if (code.startsWith("66")
             || code.startsWith("67")
-            || label.contains("GASTO FINANCI")
+            || interestExpense
             || label.contains("PERDIDA")
             || label.contains("LOSS")
             || label.contains("INTEREST EXPENSE")) {
