@@ -15,6 +15,7 @@ const UniversalViewsPage = lazy(() => import('./pages/UniversalViewsPage'))
 const UniversalViewPage = lazy(() => import('./pages/UniversalViewPage'))
 const AnnualPlanningPage = lazy(() => import('./pages/AnnualPlanningPage'))
 const BudgetDashboardPage = lazy(() => import('./pages/BudgetDashboardPage'))
+const WorkforcePage = lazy(() => import('./pages/WorkforcePage'))
 const PricingPage = lazy(() => import('./pages/PricingPage'))
 const AutomationPage = lazy(() => import('./pages/AutomationPage'))
 const AdvisorPage = lazy(() => import('./pages/AdvisorPage'))
@@ -42,7 +43,7 @@ function RouteFallback() {
 }
 
 function Guard({ allow, children }: { allow: boolean; children: React.ReactNode }) {
-  if (!allow) return <Navigate to="/overview" replace />
+  if (!allow) return <Navigate to={getUserRole() === 'CLIENTE' ? '/home' : '/budget'} replace />
   return <>{children}</>
 }
 
@@ -86,7 +87,7 @@ export default function App() {
     <Layout>
       <Suspense fallback={<RouteFallback />}>
         <Routes>
-          <Route path="/" element={<Navigate to={isClient ? '/home' : '/overview'} />} />
+          <Route path="/" element={<Navigate to={isClient ? '/home' : '/budget'} />} />
           <Route
             path="/home"
             element={
@@ -95,9 +96,9 @@ export default function App() {
               </Guard>
             }
           />
-          <Route path="/overview" element={isClient ? <Navigate to="/home" replace /> : <OverviewPage />} />
-          <Route path="/dashboard" element={isClient ? <Navigate to="/cash" replace /> : <DashboardPage />} />
-          <Route path="/cash" element={<DashboardPage />} />
+          <Route path="/overview" element={<Navigate to={isClient ? '/home' : '/budget'} replace />} />
+          <Route path="/dashboard" element={<Navigate to={isClient ? '/cash' : '/budget'} replace />} />
+          <Route path="/cash" element={isClient ? <DashboardPage /> : <Navigate to="/budget" replace />} />
           <Route
             path="/alerts"
             element={
@@ -122,39 +123,11 @@ export default function App() {
               </Guard>
             }
           />
-          <Route path="/reports" element={<ReportsPage />} />
-          <Route
-            path="/tribunal"
-            element={
-              <Guard allow={!isClient}>
-                <TribunalDashboardPage />
-              </Guard>
-            }
-          />
-          <Route
-            path="/universal"
-            element={
-              <Guard allow={!isClient}>
-                <UniversalDashboardPage />
-              </Guard>
-            }
-          />
-          <Route
-            path="/universal/views"
-            element={
-              <Guard allow={!isClient}>
-                <UniversalViewsPage />
-              </Guard>
-            }
-          />
-          <Route
-            path="/universal/views/:viewId"
-            element={
-              <Guard allow={!isClient}>
-                <UniversalViewPage />
-              </Guard>
-            }
-          />
+          <Route path="/reports" element={isClient ? <ReportsPage /> : <Navigate to="/budget" replace />} />
+          <Route path="/tribunal" element={<Navigate to={isClient ? '/home' : '/imports'} replace />} />
+          <Route path="/universal" element={<Navigate to={isClient ? '/home' : '/imports'} replace />} />
+          <Route path="/universal/views" element={<Navigate to={isClient ? '/home' : '/imports'} replace />} />
+          <Route path="/universal/views/:viewId" element={<Navigate to={isClient ? '/home' : '/imports'} replace />} />
           <Route
             path="/budget"
             element={
@@ -172,6 +145,14 @@ export default function App() {
             }
           />
           <Route
+            path="/workforce"
+            element={
+              <Guard allow={!isClient}>
+                <WorkforcePage />
+              </Guard>
+            }
+          />
+          <Route
             path="/pricing"
             element={
               <Guard allow={!isClient}>
@@ -179,30 +160,9 @@ export default function App() {
               </Guard>
             }
           />
-          <Route
-            path="/automation"
-            element={
-              <Guard allow={isAdmin || isConsultor}>
-                <AutomationPage />
-              </Guard>
-            }
-          />
-          <Route
-            path="/tools"
-            element={
-              <Guard allow={!isClient}>
-                <ToolsPage />
-              </Guard>
-            }
-          />
-          <Route
-            path="/advisor"
-            element={
-              <Guard allow={!isClient}>
-                <AdvisorPage />
-              </Guard>
-            }
-          />
+          <Route path="/automation" element={<Navigate to={isClient ? '/home' : '/budget'} replace />} />
+          <Route path="/tools" element={<Navigate to={isClient ? '/home' : '/budget'} replace />} />
+          <Route path="/advisor" element={<Navigate to={isClient ? '/home' : '/budget'} replace />} />
           <Route
             path="/audit"
             element={
@@ -227,22 +187,8 @@ export default function App() {
               </Guard>
             }
           />
-          <Route
-            path="/portfolio"
-            element={
-              <Guard allow={isConsultor}>
-                <PortfolioPage />
-              </Guard>
-            }
-          />
-          <Route
-            path="/guides"
-            element={
-              <Guard allow={!isClient}>
-                <GuidesPage />
-              </Guard>
-            }
-          />
+          <Route path="/portfolio" element={<Navigate to={isClient ? '/home' : '/budget'} replace />} />
+          <Route path="/guides" element={<Navigate to={isClient ? '/home' : '/imports'} replace />} />
           <Route
             path="/settings/company"
             element={
@@ -251,22 +197,8 @@ export default function App() {
               </Guard>
             }
           />
-          <Route
-            path="/pipeline"
-            element={
-              <Guard allow={isAdmin || isConsultor}>
-                <PipelineCenterPage />
-              </Guard>
-            }
-          />
-          <Route
-            path="/monthly-close"
-            element={
-              <Guard allow={!isClient}>
-                <MonthlyClosePage />
-              </Guard>
-            }
-          />
+          <Route path="/pipeline" element={<Navigate to={isClient ? '/home' : '/imports'} replace />} />
+          <Route path="/monthly-close" element={<Navigate to={isClient ? '/home' : '/budget'} replace />} />
         </Routes>
       </Suspense>
     </Layout>

@@ -64,6 +64,7 @@ public final class BudgetInsightsCalculator {
 
         Map<String, String> monthHeader = new LinkedHashMap<>();
         String labelHeader;
+        String codeHeader;
         List<String> headers;
 
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(new ByteArrayInputStream(normalizedUniversalCsvBytes), StandardCharsets.UTF_8))) {
@@ -91,6 +92,7 @@ public final class BudgetInsightsCalculator {
                 return new BudgetLongInsightsDto(filename, createdAt, null, null, 0, BigDecimal.ZERO, null, null, BigDecimal.ZERO, List.of(), List.of(), List.of(), List.of());
             }
 
+            codeHeader = selectCodeHeader(headers);
             labelHeader = detectLabelHeader(parser, headers, monthHeader);
             if (labelHeader == null) {
                 return new BudgetLongInsightsDto(filename, createdAt, null, null, 0, BigDecimal.ZERO, null, null, BigDecimal.ZERO, List.of(), List.of(), List.of(), List.of());
@@ -124,11 +126,14 @@ public final class BudgetInsightsCalculator {
                 if (rows > maxSourceRows) break;
 
                 String labelRaw = clean(get(record, labelHeader));
-                if (labelRaw == null) continue;
+                String rawCodeValue = clean(get(record, codeHeader));
+                if (labelRaw == null && rawCodeValue == null) continue;
                 ParsedLabel parsed = parsePartidaLabel(labelRaw);
-                if (parsed.code() == null) continue; // only ITEM rows (avoid totals/text)
+                String code = firstNonBlank(normalizeCodeCandidate(rawCodeValue), parsed.code());
+                String label = parsed.label();
+                if (code == null || label == null) continue; // only ITEM rows (avoid totals/text)
 
-                ItemKey key = new ItemKey(parsed.code(), parsed.label(), "UNKNOWN");
+                ItemKey key = new ItemKey(code, label, "UNKNOWN");
                 ItemAgg agg = items.computeIfAbsent(key, k -> new ItemAgg());
 
                 for (String mk : monthTotals.keySet()) {
@@ -396,11 +401,11 @@ public final class BudgetInsightsCalculator {
         List<String> candidates = headers.stream()
             .filter(Objects::nonNull)
             .filter(h -> !monthHeader.containsValue(h))
-            .limit(5)
+            .limit(8)
             .toList();
 
         Map<String, Integer> hits = new LinkedHashMap<>();
-        for (String c : candidates) hits.put(c, 0);
+        for (String c : candidates) hits.put(c, labelHeaderNameScore(c));
 
         int rows = 0;
         for (CSVRecord record : parser) {
@@ -409,10 +414,7 @@ public final class BudgetInsightsCalculator {
             for (String c : candidates) {
                 String v = clean(get(record, c));
                 if (v == null) continue;
-                String up = v.toUpperCase(Locale.ROOT);
-                if (up.contains("TOTAL") || looksLikePartida(up)) {
-                    hits.put(c, hits.getOrDefault(c, 0) + 1);
-                }
+                hits.put(c, hits.getOrDefault(c, 0) + labelValueScore(v));
             }
         }
 
@@ -424,8 +426,54 @@ public final class BudgetInsightsCalculator {
                 best = e.getKey();
             }
         }
-        if (bestScore < 1) return null;
+        if (bestScore < 2) return null;
         return best;
+    }
+
+    private static String selectCodeHeader(List<String> headers) {
+        if (headers == null) return null;
+        for (String header : headers) {
+            if (looksLikeCodeHeader(header)) return header;
+        }
+        return null;
+    }
+
+    private static boolean looksLikeCodeHeader(String header) {
+        if (header == null) return false;
+        String normalized = BudgetSemanticResolver.normalize(header);
+        return normalized.contains("code")
+            || normalized.contains("codigo")
+            || normalized.contains("cuenta")
+            || normalized.contains("account")
+            || normalized.endsWith(" id")
+            || normalized.startsWith("id ");
+    }
+
+    private static int labelHeaderNameScore(String header) {
+        if (header == null || header.isBlank()) return Integer.MIN_VALUE / 4;
+        String normalized = BudgetSemanticResolver.normalize(header);
+        int score = 0;
+        if (normalized.contains("descripcion") || normalized.contains("description")) score += 160;
+        if (normalized.contains("concept label") || normalized.contains("concepto")) score += 140;
+        if (normalized.contains("detalle") || normalized.contains("nombre")) score += 120;
+        if (normalized.contains("label")) score += 90;
+        if (normalized.contains("concept")) score += 70;
+        if (normalized.contains("partida")) score += 32;
+        if (looksLikeCodeHeader(header)) score -= 120;
+        return score;
+    }
+
+    private static int labelValueScore(String value) {
+        if (value == null || value.isBlank()) return 0;
+        int score = 0;
+        String upper = value.toUpperCase(Locale.ROOT);
+        boolean hasLetters = containsLetters(value);
+        boolean looksLikeCodeOnly = looksLikePartida(upper) && !hasDescriptiveSuffix(value);
+        if (upper.contains("TOTAL")) score += 2;
+        if (hasLetters) score += 3;
+        if (hasDescriptiveSuffix(value)) score += 6;
+        if (looksLikeCodeOnly) score -= 10;
+        return score;
     }
 
     private record ParsedLabel(String code, String label) {}
@@ -461,6 +509,26 @@ public final class BudgetInsightsCalculator {
         int space = s.indexOf(' ');
         String first = space > 0 ? s.substring(0, space) : s;
         return isPartidaCode(first);
+    }
+
+    private static String normalizeCodeCandidate(String rawCode) {
+        if (rawCode == null) return null;
+        String trimmed = rawCode.trim();
+        return isPartidaCode(trimmed) ? trimmed : null;
+    }
+
+    private static boolean containsLetters(String value) {
+        if (value == null) return false;
+        return value.chars().anyMatch(Character::isLetter);
+    }
+
+    private static boolean hasDescriptiveSuffix(String value) {
+        ParsedLabel parsed = parsePartidaLabel(value);
+        return parsed != null
+            && parsed.code() != null
+            && parsed.label() != null
+            && !parsed.label().equals(parsed.code())
+            && containsLetters(parsed.label());
     }
 
     private static String get(CSVRecord record, String header) {

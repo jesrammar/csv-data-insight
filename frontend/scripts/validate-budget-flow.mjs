@@ -21,7 +21,10 @@ const dashboard = read('src/pages/BudgetDashboardPage.tsx')
 const api = read('src/api.ts')
 
 assert(api.includes("export async function getBudgetAnalysis(companyId: number)"), 'Falta el cliente API de /budget/analysis.')
-assert(api.includes("request<BudgetAnalysisBundle>(`/api/companies/${companyId}/budget/analysis`)"), 'La API annual no apunta a /budget/analysis.')
+assert(
+  /request<BudgetAnalysisBundle>\(\s*`\/api\/companies\/\$\{companyId\}\/budget\/analysis`/.test(api),
+  'La API annual no apunta a /budget/analysis.'
+)
 
 assert(annual.includes('getBudgetAnalysis'), 'AnnualPlanningPage no importa getBudgetAnalysis.')
 assert(countMatches(annual, /queryFn:\s*\(\)\s*=>\s*getBudgetAnalysis/g) === 1, 'AnnualPlanningPage debe usar una sola query principal a /budget/analysis.')

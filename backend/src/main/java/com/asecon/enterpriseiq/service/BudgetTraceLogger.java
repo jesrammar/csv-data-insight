@@ -29,6 +29,9 @@ public final class BudgetTraceLogger {
         "pagos de alquiler luz y agua",
         "compra de neveras y equipos",
         "prestamo recibido",
+        "comisiones de recargas loterias y paqueteria",
+        "impuesto sobre beneficios estimado",
+        "intereses del prestamo",
         "total gastos",
         "beneficio neto"
     );
@@ -55,13 +58,13 @@ public final class BudgetTraceLogger {
     public static String normalize(String value) {
         if (value == null) return "";
         String repaired = value
-            .replace("\\u00f1", "ñ")
-            .replace("\\u00e1", "á")
-            .replace("\\u00e9", "é")
-            .replace("\\u00ed", "í")
-            .replace("\\u00f3", "ó")
-            .replace("\\u00fa", "ú")
-            .replace("\\u00d1", "Ñ");
+            .replace("\\u00f1", "\u00F1")
+            .replace("\\u00e1", "\u00E1")
+            .replace("\\u00e9", "\u00E9")
+            .replace("\\u00ed", "\u00ED")
+            .replace("\\u00f3", "\u00F3")
+            .replace("\\u00fa", "\u00FA")
+            .replace("\\u00d1", "\u00D1");
         String ascii = Normalizer.normalize(repaired, Normalizer.Form.NFD)
             .replaceAll("\\p{M}+", "");
         return ascii

@@ -37,6 +37,12 @@ public final class UniversalIntakeDiagnosisService {
         "cliente", "clientes", "cif", "nif", "gestor", "manager", "minutas", "minuta", "irpf",
         "ddcc", "libros", "carga_de_trabajo", "carga", "pct_contabilidad", "nas2024"
     );
+    private static final Set<String> WORKFORCE_ALIASES = setOf(
+        "tipo_cliente", "clientes_2026", "cliente", "clientes", "cif", "nif", "dni_nie", "administrador",
+        "gestor", "manager", "minutas", "minuta", "f_alta", "f_baja", "f_pago",
+        "cont_modelos", "is_irpf", "ddcc", "libros", "carga_de_trabajo", "carga",
+        "pct_contabilidad", "promedio", "n_as_2024"
+    );
     private static final Set<String> PAYROLL_ALIASES = setOf(
         "employee_name", "employee", "pay_date", "gross_pay", "net_pay", "role", "employer_cpp", "employer_ei"
     );
@@ -63,11 +69,12 @@ public final class UniversalIntakeDiagnosisService {
         CandidateScore budget = scoreBudget(filename, safeHeaders, safeColumns, rowGranularity, budgetResult, convertedFromXlsx);
         CandidateScore accounting = scoreAccounting(filename, safeHeaders, safeColumns, rowGranularity, entities);
         CandidateScore cash = scoreCash(filename, safeHeaders, safeColumns, rowGranularity, safeRows);
+        CandidateScore workforce = scoreWorkforce(filename, safeHeaders, safeColumns);
         CandidateScore tribunal = scoreTribunal(filename, safeHeaders, safeColumns);
         CandidateScore payroll = scorePayroll(filename, safeHeaders, safeColumns);
         CandidateScore generic = scoreGeneric(filename, safeHeaders, safeColumns, rowGranularity);
 
-        List<CandidateScore> ranked = List.of(budget, accounting, cash, tribunal, payroll, generic).stream()
+        List<CandidateScore> ranked = List.of(budget, accounting, cash, workforce, tribunal, payroll, generic).stream()
             .sorted(Comparator.comparingDouble(CandidateScore::score).reversed())
             .toList();
 
@@ -196,6 +203,22 @@ public final class UniversalIntakeDiagnosisService {
         if (observedPeriods >= 1 && observedPeriods <= 3) score.add(0.08d, "El calendario observado encaja con un cierre mensual o trimestral.");
         if (looksAccounting) score.add(-0.18d, "También tiene rasgos de export contable y no solo de caja.");
         if (wideMonthHeaderHits(headers) >= 6) score.add(-0.12d, "La cabecera por meses se parece mas a un plan anual.");
+        return score.clamp();
+    }
+
+    private static CandidateScore scoreWorkforce(String filename, List<String> headers, List<UniversalColumnDto> columns) {
+        CandidateScore score = new CandidateScore("WORKFORCE_OPERATIONS", "Trabajadores / carga por gestor", "WORKFORCE", "/workforce", "Abrir Trabajadores");
+        int workforceHits = headerAliasHits(headers, WORKFORCE_ALIASES);
+        int measureColumns = countAnalytical(columns, "MEASURE");
+        int activityYears = workforceActivityYearHits(headers);
+
+        if (workforceHits > 0) score.add(Math.min(0.5d, workforceHits * 0.06d), "Las cabeceras se parecen a gestor, minutas, carga o volumen de asientos.");
+        if (containsHeaderFragment(headers, "gestor") || containsHeaderFragment(headers, "manager")) score.add(0.12d, "Incluye gestor para agrupar cartera de trabajo.");
+        if (containsHeaderFragment(headers, "minutas") || containsHeaderFragment(headers, "minuta")) score.add(0.10d, "Incluye minutas.");
+        if (containsHeaderFragment(headers, "promedio")) score.add(0.08d, "Incluye promedio operativo.");
+        if (activityYears >= 1) score.add(Math.min(0.14d, activityYears * 0.02d), "Incluye columnas historicas N AS por anio.");
+        if (measureColumns >= 2) score.add(0.06d, "Tiene varias medidas numericas reutilizables.");
+        if (hasSemantic(columns, "ACCOUNT_CODE") || hasSemantic(columns, "DEBIT_AMOUNT")) score.add(-0.14d, "Tambien tiene rasgos contables y no solo operativos.");
         return score.clamp();
     }
 
@@ -398,6 +421,17 @@ public final class UniversalIntakeDiagnosisService {
                     hits++;
                     break;
                 }
+            }
+        }
+        return hits;
+    }
+
+    private static int workforceActivityYearHits(List<String> headers) {
+        int hits = 0;
+        for (String header : headers) {
+            String normalized = normalize(header);
+            if (normalized.matches("^n_as_\\d{4}$") || normalized.matches("^nas\\d{4}$")) {
+                hits++;
             }
         }
         return hits;

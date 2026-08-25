@@ -1,4 +1,4 @@
-const eur = new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR', maximumFractionDigits: 2 })
+ï»¿const eur = new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR', maximumFractionDigits: 2 })
 const dateTimeEs = new Intl.DateTimeFormat('es-ES', {
   day: '2-digit',
   month: '2-digit',
@@ -7,10 +7,38 @@ const dateTimeEs = new Intl.DateTimeFormat('es-ES', {
   minute: '2-digit'
 })
 
-export const EMPTY_VALUE = '—'
+export const EMPTY_VALUE = '-'
 export const EMPTY_DATA_TEXT = 'Sin datos'
 export const EMPTY_MESSAGE_TEXT = 'Sin mensaje'
-export const EMPTY_ACTIVITY_TEXT = 'Sin actividad todavía'
+export const EMPTY_ACTIVITY_TEXT = 'Sin actividad todavia'
+
+const TEXT_REPAIRS: Array<[RegExp, string]> = [
+  [/\u00C3\u00A1/g, 'Ã¡'],
+  [/\u00C3\u00A9/g, 'Ã©'],
+  [/\u00C3\u00AD/g, 'Ã­'],
+  [/\u00C3\u00B3/g, 'Ã³'],
+  [/\u00C3\u00BA/g, 'Ãº'],
+  [/\u00C3\u0081/g, 'Ã'],
+  [/\u00C3\u0089/g, 'Ã‰'],
+  [/\u00C3\u008D/g, 'Ã'],
+  [/\u00C3\u0093/g, 'Ã“'],
+  [/\u00C3\u009A/g, 'Ãš'],
+  [/\u00C3\u00B1/g, 'Ã±'],
+  [/\u00C3\u0091/g, 'Ã‘'],
+  [/\u00C2\u00BF/g, 'Â¿'],
+  [/\u00C2\u00A1/g, 'Â¡'],
+  [/\u00C2\u00B7/g, 'Â·'],
+  [/\u00E2\u0080\u00A2/g, 'â€¢'],
+  [/\u00E2\u0080\u00A6/g, '...'],
+  [/\u00E2\u0080\u0094/g, '-'],
+  [/\u00E2\u0080\u0093/g, '-'],
+  [/\u00E2\u0080\u009C/g, '"'],
+  [/\u00E2\u0080\u009D/g, '"'],
+  [/\u00E2\u0080\u0098/g, "'"],
+  [/\u00E2\u0080\u0099/g, "'"],
+  [/\uFFFD/g, ''],
+  [/\u00C2/g, '']
+]
 
 export function normalizeText(value: unknown, fallback = EMPTY_VALUE) {
   const raw = String(value ?? '').trim()
@@ -24,24 +52,12 @@ export function normalizeText(value: unknown, fallback = EMPTY_VALUE) {
     // preserve raw text
   }
 
-  return candidate
-    .replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(Number.parseInt(hex, 16)))
-    .replace(/Ã¡/g, 'á')
-    .replace(/Ã©/g, 'é')
-    .replace(/Ã­/g, 'í')
-    .replace(/Ã³/g, 'ó')
-    .replace(/Ãº/g, 'ú')
-    .replace(/Ã/g, 'Á')
-    .replace(/Ã‰/g, 'É')
-    .replace(/Ã/g, 'Í')
-    .replace(/Ã“/g, 'Ó')
-    .replace(/Ãš/g, 'Ú')
-    .replace(/Ã±/g, 'ñ')
-    .replace(/Ã‘/g, 'Ñ')
-    .replace(/Â¿/g, '¿')
-    .replace(/Â¡/g, '¡')
-    .replace(/Â·/g, '·')
-    .replace(/Â/g, '')
+  let repaired = candidate.replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(Number.parseInt(hex, 16)))
+  for (const [pattern, replacement] of TEXT_REPAIRS) {
+    repaired = repaired.replace(pattern, replacement)
+  }
+
+  return repaired.trim() || fallback
 }
 
 export function formatMoney(value: unknown) {

@@ -111,8 +111,8 @@ public class BudgetService {
 
         try {
             BudgetLongNormalizer.Result canonicalResult = requireCanonicalLongResult(companyId, bytes,
-                "No he podido construir una lectura anual canónica suficiente.",
-                "La lectura anual necesita confirmación semántica antes de consolidar el plan.");
+                "No he podido construir una lectura anual canonica suficiente.",
+                "La lectura anual necesita confirmacion semantica antes de consolidar el plan.");
             CanonicalBudgetAnalysis canonicalAnalysis = parseCanonicalBudgetAnalysis(canonicalResult.longCsvBytes(), imp.getFilename(), null);
             LongBudgetSource source = canonicalAnalysis.source();
             if (source == null) {
@@ -120,7 +120,7 @@ public class BudgetService {
                     HttpStatus.BAD_REQUEST,
                     canonicalReadinessMessage(
                         canonicalResult,
-                        "La lectura anual canónica existe, pero no se pudo reconstruir su fuente oficial."
+                        "La lectura anual canonica existe, pero no se pudo reconstruir su fuente oficial."
                     )
                 );
             }
@@ -131,7 +131,7 @@ public class BudgetService {
                     HttpStatus.BAD_REQUEST,
                     canonicalReadinessMessage(
                         canonicalResult,
-                        "La lectura anual canónica existe, pero aún no aporta una cuenta de resultados suficiente para Plan anual."
+                        "La lectura anual canonica existe, pero aun no aporta una cuenta de resultados suficiente para Plan anual."
                     )
                 );
             }
@@ -142,7 +142,7 @@ public class BudgetService {
                     HttpStatus.BAD_REQUEST,
                     canonicalReadinessMessage(
                         canonicalResult,
-                        "La lectura anual canónica existe, pero aún no aporta una tesorería suficiente para Plan anual."
+                        "La lectura anual canonica existe, pero aun no aporta una tesoreria suficiente para Plan anual."
                     )
                 );
             }
@@ -175,7 +175,7 @@ public class BudgetService {
 
     public BudgetLongPreviewDto latestBudgetLongPreview(Long companyId) {
         UniversalImport imp = universalImportFileService.latestAnnualBudget(companyId)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No hay un presupuesto anual válido. Sube tu presupuesto (XLSX/CSV) a Universal."));
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No hay un presupuesto anual valido. Sube tu presupuesto (XLSX/CSV) a Universal."));
 
         byte[] bytes = universalImportFileService.normalizedCsv(companyId, imp.getId());
         var result = BudgetLongNormalizer.normalizeToLongCsv(bytes, String.valueOf(companyId), 10_000, 200);
@@ -222,12 +222,12 @@ public class BudgetService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No se pudo normalizar el presupuesto a formato largo.");
         }
         if (result.requiresConfirmation()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, confirmationMessage(result, "La lectura anual necesita confirmación semántica antes de abrir el detalle."));
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, confirmationMessage(result, "La lectura anual necesita confirmacion semantica antes de abrir el detalle."));
         }
         CanonicalBudgetAnalysis analysis = parseCanonicalBudgetAnalysis(result.longCsvBytes(), imp.getFilename(), null);
         BudgetItemDetailDto detail = buildItemDetail(analysis, imp.getId(), analysisVersion, canonicalRowId);
         if (detail == null) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "No se encontró detalle canónico para la partida seleccionada.");
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "No se encontro detalle canonico para la partida seleccionada.");
         }
         return detail;
     }
@@ -292,7 +292,7 @@ public class BudgetService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No se pudo normalizar el presupuesto a formato largo.");
         }
         if (result.requiresConfirmation()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, confirmationMessage(result, "La lectura anual necesita confirmación semántica antes de generar conclusiones."));
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, confirmationMessage(result, "La lectura anual necesita confirmacion semantica antes de generar conclusiones."));
         }
         var insights = parseCanonicalBudgetAnalysis(result.longCsvBytes(), imp.getFilename(), null).insights();
         if (insights.itemCount() == 0 || insights.monthTotals().isEmpty()) {
@@ -333,7 +333,7 @@ public class BudgetService {
                                                    byte[] bytes,
                                                    String analysisVersion) {
         if (bytes == null || bytes.length == 0) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Import universal vacío.");
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Import universal vacio.");
         }
 
         BudgetLongNormalizer.Result canonicalResult = BudgetLongNormalizer.normalizeToLongCsv(bytes, String.valueOf(companyId), 50_000, 50);
@@ -344,7 +344,7 @@ public class BudgetService {
                     HttpStatus.BAD_REQUEST,
                     canonicalReadinessMessage(
                         canonicalResult,
-                        "No he podido construir una lectura anual canónica suficiente. Revisa hoja, cabecera o estructura mensual."
+                        "No he podido construir una lectura anual canonica suficiente. Revisa hoja, cabecera o estructura mensual."
                     )
                 );
             }
@@ -353,7 +353,7 @@ public class BudgetService {
                     HttpStatus.BAD_REQUEST,
                     canonicalReadinessMessage(
                         canonicalResult,
-                        "La lectura anual necesita confirmación semántica antes de consolidar el plan."
+                        "La lectura anual necesita confirmacion semantica antes de consolidar el plan."
                     )
                 );
             }
@@ -363,7 +363,7 @@ public class BudgetService {
                 HttpStatus.BAD_REQUEST,
                 canonicalReadinessMessage(
                     canonicalResult,
-                    "La lectura anual canónica existe, pero aún no aporta una cuenta de resultados suficiente para Plan anual."
+                    "La lectura anual canonica existe, pero aun no aporta una cuenta de resultados suficiente para Plan anual."
                 )
             );
         }
@@ -484,7 +484,7 @@ public class BudgetService {
             if (income.isEmpty() || expense.isEmpty()) {
                 throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST,
-                    "He detectado meses, pero no encuentro filas de 'Total ingresos' y 'Gastos explotación'. Asegúrate de subir la hoja de presupuesto (Cuenta de explotación)."
+                    "He detectado meses, pero no encuentro filas de 'Total ingresos' y 'Gastos explotacion'. Asegurate de subir la hoja de presupuesto (Cuenta de explotacion)."
                 );
             }
 
@@ -576,7 +576,7 @@ public class BudgetService {
                                                        byte[] bytes,
                                                        String analysisVersion) {
         if (bytes == null || bytes.length == 0) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Import universal vacío.");
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Import universal vacio.");
         }
 
         BudgetLongNormalizer.Result canonicalResult = BudgetLongNormalizer.normalizeToLongCsv(bytes, String.valueOf(companyId), 50_000, 50);
@@ -587,7 +587,7 @@ public class BudgetService {
                     HttpStatus.BAD_REQUEST,
                     canonicalReadinessMessage(
                         canonicalResult,
-                        "No he podido construir una lectura anual canónica suficiente para tesorería."
+                        "No he podido construir una lectura anual canonica suficiente para tesoreria."
                     )
                 );
             }
@@ -596,7 +596,7 @@ public class BudgetService {
                     HttpStatus.BAD_REQUEST,
                     canonicalReadinessMessage(
                         canonicalResult,
-                        "La lectura anual necesita confirmación semántica antes de leer la tesorería."
+                        "La lectura anual necesita confirmacion semantica antes de leer la tesoreria."
                     )
                 );
             }
@@ -606,7 +606,7 @@ public class BudgetService {
                 HttpStatus.BAD_REQUEST,
                 canonicalReadinessMessage(
                     canonicalResult,
-                    "La lectura anual canónica existe, pero aún no aporta una tesorería suficiente para Plan anual."
+                    "La lectura anual canonica existe, pero aun no aporta una tesoreria suficiente para Plan anual."
                 )
             );
         }
@@ -730,7 +730,7 @@ public class BudgetService {
             if (inflow.isEmpty() || outflow.isEmpty()) {
                 throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST,
-                    "He detectado meses, pero no encuentro filas de Cashflow (Total facturación / Total gastos). Asegúrate de subir la hoja que contiene la tabla de tesorería."
+                    "He detectado meses, pero no encuentro filas de cashflow (Total facturacion / Total gastos). Asegurate de subir la hoja que contiene la tabla de tesoreria."
                 );
             }
 
@@ -812,7 +812,7 @@ public class BudgetService {
 
     private UniversalImport requireLatestAnnualBudget(Long companyId) {
         return universalImportFileService.latestAnnualBudget(companyId)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No hay un presupuesto anual válido. Sube tu presupuesto (XLSX/CSV) a Universal."));
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No hay un presupuesto anual valido. Sube tu presupuesto (XLSX/CSV) a Universal."));
     }
 
     private byte[] requireNormalizedCsv(Long companyId, UniversalImport imp) {
@@ -864,8 +864,12 @@ public class BudgetService {
         }
 
         List<BudgetMonthDto> months = new ArrayList<>();
-        Map<String, BigDecimal> visibleIncomeByMonth = new LinkedHashMap<>();
-        Map<String, BigDecimal> visibleExpenseByMonth = source.plannedExpenseByMonth();
+        Map<String, BigDecimal> visibleIncomeByMonth = source.declaredIncomeByMonth().isEmpty()
+            ? source.plannedIncomeByMonth()
+            : source.declaredIncomeByMonth();
+        Map<String, BigDecimal> visibleExpenseByMonth = source.declaredExpenseByMonth().isEmpty()
+            ? source.plannedExpenseByMonth()
+            : source.declaredExpenseByMonth();
         Map<String, BigDecimal> operatingIncomeByMonth = new LinkedHashMap<>();
         BigDecimal totalIncome = BigDecimal.ZERO;
         BigDecimal totalExpense = BigDecimal.ZERO;
@@ -879,14 +883,16 @@ public class BudgetService {
         String worstMonth = null;
         BigDecimal best = null;
         BigDecimal worst = null;
+        boolean declaredIncomeAlreadyEmbedsAdjustments = declaredIncomeEmbedsAdjustments(source);
 
         for (String mk : source.orderedMonthKeys) {
-            BigDecimal inc = source.plannedIncomeByMonth()
-                .getOrDefault(mk, BigDecimal.ZERO)
-                .add(source.plannedOperatingAdjustmentsByMonth().getOrDefault(mk, BigDecimal.ZERO));
+            BigDecimal visibleIncome = visibleIncomeByMonth.getOrDefault(mk, BigDecimal.ZERO);
+            BigDecimal adjustment = declaredIncomeAlreadyEmbedsAdjustments
+                ? BigDecimal.ZERO
+                : source.plannedOperatingAdjustmentsByMonth().getOrDefault(mk, BigDecimal.ZERO);
+            BigDecimal inc = visibleIncome.add(adjustment);
             BigDecimal exp = visibleExpenseByMonth.getOrDefault(mk, BigDecimal.ZERO);
-            BigDecimal margin = inc.subtract(source.plannedExpenseByMonth().getOrDefault(mk, BigDecimal.ZERO));
-            visibleIncomeByMonth.put(mk, inc);
+            BigDecimal margin = inc.subtract(exp);
             operatingIncomeByMonth.put(mk, inc);
 
             BigDecimal delta = null;
@@ -904,14 +910,14 @@ public class BudgetService {
             months.add(new BudgetMonthDto(
                 mk,
                 MONTH_LABELS.getOrDefault(mk, mk),
-                inc.setScale(2, RoundingMode.HALF_UP),
+                visibleIncome.setScale(2, RoundingMode.HALF_UP),
                 exp.setScale(2, RoundingMode.HALF_UP),
                 margin.setScale(2, RoundingMode.HALF_UP),
                 delta == null ? null : delta.setScale(2, RoundingMode.HALF_UP),
                 deltaPct
             ));
 
-            totalIncome = totalIncome.add(inc);
+            totalIncome = totalIncome.add(visibleIncome);
             totalExpense = totalExpense.add(exp);
             prevMargin = margin;
 
@@ -927,13 +933,13 @@ public class BudgetService {
             months,
             totalIncome.setScale(2, RoundingMode.HALF_UP),
             totalExpense.setScale(2, RoundingMode.HALF_UP),
-            total(operatingIncomeByMonth.values()).subtract(total(source.plannedExpenseByMonth().values())).setScale(2, RoundingMode.HALF_UP),
+            total(operatingIncomeByMonth.values()).subtract(total(visibleExpenseByMonth.values())).setScale(2, RoundingMode.HALF_UP),
             totalCapex,
             totalDepreciation,
-            total(operatingIncomeByMonth.values()).subtract(total(source.plannedExpenseByMonth().values())).subtract(totalDepreciation).setScale(2, RoundingMode.HALF_UP),
+            total(operatingIncomeByMonth.values()).subtract(total(visibleExpenseByMonth.values())).subtract(totalDepreciation).setScale(2, RoundingMode.HALF_UP),
             financialResult,
             total(operatingIncomeByMonth.values())
-                .subtract(total(source.plannedExpenseByMonth().values()))
+                .subtract(total(visibleExpenseByMonth.values()))
                 .subtract(totalDepreciation)
                 .add(financialResult)
                 .subtract(totalTax)
@@ -941,6 +947,21 @@ public class BudgetService {
             bestMonth,
             worstMonth
         );
+    }
+
+    private static boolean declaredIncomeEmbedsAdjustments(LongBudgetSource source) {
+        if (source == null || source.declaredIncomeByMonth() == null || source.declaredIncomeByMonth().isEmpty()) {
+            return false;
+        }
+        BigDecimal tolerance = new BigDecimal("0.50");
+        BigDecimal declaredIncome = total(source.declaredIncomeByMonth().values()).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal rawIncome = total(source.plannedIncomeByMonth().values()).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal withAdjustments = rawIncome
+            .add(total(source.plannedOperatingAdjustmentsByMonth().values()))
+            .setScale(2, RoundingMode.HALF_UP);
+        boolean matchesRaw = declaredIncome.subtract(rawIncome).abs().compareTo(tolerance) <= 0;
+        boolean matchesWithAdjustments = declaredIncome.subtract(withAdjustments).abs().compareTo(tolerance) <= 0;
+        return matchesWithAdjustments && !matchesRaw;
     }
 
     private CashflowSummaryDto buildCashflowSummaryFromSource(UniversalImport imp,
@@ -1058,7 +1079,7 @@ public class BudgetService {
 
     public LongBudgetSource latestLongBudgetSource(Long companyId) {
         UniversalImport imp = universalImportFileService.latestAnnualBudget(companyId)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No hay un presupuesto anual válido. Sube tu presupuesto (XLSX/CSV) a Universal."));
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No hay un presupuesto anual valido. Sube tu presupuesto (XLSX/CSV) a Universal."));
         byte[] sourceBytes = universalImportFileService.normalizedCsv(companyId, imp.getId());
         return latestLongBudgetSourceFromBytes(companyId, imp, sourceBytes);
     }
@@ -1069,11 +1090,11 @@ public class BudgetService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No se pudo normalizar el presupuesto a formato largo.");
         }
         if (result.requiresConfirmation()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, confirmationMessage(result, "La lectura anual necesita confirmación semántica antes de usarse como fuente oficial."));
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, confirmationMessage(result, "La lectura anual necesita confirmacion semantica antes de usarse como fuente oficial."));
         }
         byte[] bytes = result.longCsvBytes();
         if (bytes == null || bytes.length == 0) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Import universal vacío.");
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Import universal vacio.");
         }
 
         LongBudgetSource source = parseCanonicalBudgetSource(bytes);
@@ -1278,6 +1299,7 @@ public class BudgetService {
             markDuplicates(rows, exclusions);
             markDuplicateSeries(rows, exclusions);
             markHierarchicalBreakdowns(rows, exclusions);
+            restorePreferredDuplicateSeries(rows, exclusions);
             Map<String, Boolean> zeroSeriesIdentity = detectZeroSeries(rows);
             Set<String> pnlDetailFinancialIdentities = collectPnlDetailFinancialIdentities(rows, exclusions);
 
@@ -1799,6 +1821,159 @@ public class BudgetService {
         }
     }
 
+    private static void restorePreferredDuplicateSeries(List<CanonicalRow> rows, Map<Integer, String> exclusions) {
+        record SeriesFamily(String sectionKind, String rowType, String financialIdentity) {}
+        record SeriesMember(String seriesId, Integer order, List<CanonicalRow> rows) {}
+
+        Map<SeriesFamily, Map<String, List<CanonicalRow>>> grouped = new LinkedHashMap<>();
+        for (CanonicalRow row : rows) {
+            if (!"DETAIL".equals(row.rowType())) continue;
+            if (!matchesSection(row.sectionKind(), "P_AND_L")) continue;
+            if (!isSupportedFinancialSemantic(row.effectiveFinancialKind())) continue;
+            String seriesId = row.sourceRow() != null
+                ? "ROW-" + row.sourceRow()
+                : row.blockId() + "|" + normalizeIdentityCode(row.accountingCode()) + "|" + normalizeIdentityLabel(row.normalizedLabel());
+            grouped.computeIfAbsent(
+                new SeriesFamily(row.sectionKind(), row.rowType(), row.financialIdentity()),
+                ignored -> new LinkedHashMap<>()
+            ).computeIfAbsent(seriesId, ignored -> new ArrayList<>()).add(row);
+        }
+
+        for (Map<String, List<CanonicalRow>> familySeries : grouped.values()) {
+            if (familySeries.size() < 2) continue;
+            Map<String, List<SeriesMember>> bySignature = new LinkedHashMap<>();
+            for (var entry : familySeries.entrySet()) {
+                List<CanonicalRow> seriesRows = entry.getValue();
+                Integer order = seriesRows.stream()
+                    .map(CanonicalRow::sourceRow)
+                    .filter(Objects::nonNull)
+                    .min(Integer::compareTo)
+                    .orElse(seriesRows.stream().map(CanonicalRow::index).min(Integer::compareTo).orElse(Integer.MAX_VALUE));
+                String signature = buildSeriesSignature(seriesRows);
+                bySignature.computeIfAbsent(signature, ignored -> new ArrayList<>())
+                    .add(new SeriesMember(entry.getKey(), order, seriesRows));
+            }
+            for (List<SeriesMember> duplicates : bySignature.values()) {
+                if (duplicates.size() < 2) continue;
+                boolean hasSurvivor = duplicates.stream()
+                    .flatMap(member -> member.rows().stream())
+                    .anyMatch(row -> !exclusions.containsKey(row.index()));
+                if (hasSurvivor) continue;
+
+                SeriesMember preferred = duplicates.stream()
+                    .sorted((left, right) -> {
+                        int byPriority = Integer.compare(seriesRestorePriority(left.rows(), exclusions), seriesRestorePriority(right.rows(), exclusions));
+                        if (byPriority != 0) return byPriority;
+                        return Integer.compare(right.order(), left.order());
+                    })
+                    .findFirst()
+                    .orElse(null);
+                if (preferred == null) continue;
+                if (seriesRestorePriority(preferred.rows(), exclusions) >= 100) continue;
+                if (hasEquivalentActiveSeries(preferred.rows(), rows, exclusions)) continue;
+                for (CanonicalRow row : preferred.rows()) {
+                    exclusions.remove(row.index());
+                }
+                excludeBreakdownRowsCoveredByRestoredSeries(preferred.rows(), rows, exclusions);
+            }
+        }
+    }
+
+    private static boolean hasEquivalentActiveSeries(List<CanonicalRow> candidateRows,
+                                                     List<CanonicalRow> allRows,
+                                                     Map<Integer, String> exclusions) {
+        if (candidateRows == null || candidateRows.isEmpty() || allRows == null || allRows.isEmpty()) {
+            return false;
+        }
+        String candidateCode = normalizeIdentityCode(candidateRows.get(0).accountingCode());
+        String candidateSection = upper(candidateRows.get(0).sectionKind());
+        String candidateKind = upper(candidateRows.get(0).effectiveFinancialKind());
+        if (candidateCode.isBlank() || candidateSection.isBlank() || candidateKind.isBlank()) {
+            return false;
+        }
+
+        for (CanonicalRow candidate : candidateRows) {
+            BigDecimal candidateAmount = firstNonNullAmount(candidate.plannedAmount(), candidate.actualAmount(), candidate.forecastAmount(), candidate.varianceAmount());
+            boolean matched = false;
+            for (CanonicalRow row : allRows) {
+                if (row.index() == candidate.index()) continue;
+                if (exclusions.containsKey(row.index())) continue;
+                if (!"DETAIL".equals(row.rowType())) continue;
+                if (!candidateSection.equals(upper(row.sectionKind()))) continue;
+                if (!candidateKind.equals(upper(row.effectiveFinancialKind()))) continue;
+                if (!Objects.equals(candidate.monthKey(), row.monthKey())) continue;
+                if (!candidateCode.equals(normalizeIdentityCode(row.accountingCode()))) continue;
+                BigDecimal rowAmount = firstNonNullAmount(row.plannedAmount(), row.actualAmount(), row.forecastAmount(), row.varianceAmount());
+                if (candidateAmount == null || rowAmount == null) continue;
+                if (candidateAmount.subtract(rowAmount).abs().compareTo(new BigDecimal("0.50")) > 0) continue;
+                matched = true;
+                break;
+            }
+            if (!matched) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static int seriesRestorePriority(List<CanonicalRow> rows, Map<Integer, String> exclusions) {
+        if (rows == null || rows.isEmpty()) return Integer.MAX_VALUE;
+        int best = Integer.MAX_VALUE;
+        for (CanonicalRow row : rows) {
+            String reason = exclusions.get(row.index());
+            if ("EXCLUDED_DUPLICATE_CANONICAL_ROW".equals(reason) || "EXCLUDED_DUPLICATE_CANONICAL_SERIES".equals(reason)) {
+                best = Math.min(best, 0);
+            } else if ("EXCLUDED_PARENT_AGGREGATE_WITH_BREAKDOWN".equals(reason)
+                || "EXCLUDED_CHILD_BREAKDOWN_UNDER_PARENT".equals(reason)) {
+                best = Math.min(best, 10);
+            } else if (reason == null) {
+                best = Math.min(best, 50);
+            } else {
+                best = Math.min(best, 100);
+            }
+        }
+        return best;
+    }
+
+    private static void excludeBreakdownRowsCoveredByRestoredSeries(List<CanonicalRow> restoredRows,
+                                                                    List<CanonicalRow> allRows,
+                                                                    Map<Integer, String> exclusions) {
+        if (restoredRows == null || restoredRows.isEmpty() || allRows == null || allRows.isEmpty()) {
+            return;
+        }
+        String parentCode = normalizeIdentityCode(restoredRows.get(0).accountingCode());
+        String parentFamily = accountingCodeFamily(restoredRows.get(0).accountingCode());
+        if (parentCode.isBlank() || parentFamily.isBlank()) {
+            return;
+        }
+
+        for (CanonicalRow restored : restoredRows) {
+            BigDecimal parentAmount = firstNonNullAmount(restored.plannedAmount(), restored.actualAmount(), restored.forecastAmount(), restored.varianceAmount());
+            if (parentAmount == null) continue;
+
+            List<CanonicalRow> children = new ArrayList<>();
+            for (CanonicalRow candidate : allRows) {
+                if (candidate.index() == restored.index()) continue;
+                if (!"DETAIL".equals(candidate.rowType())) continue;
+                if (!matchesSection(candidate.sectionKind(), restored.sectionKind())) continue;
+                if (!Objects.equals(candidate.monthKey(), restored.monthKey())) continue;
+                if (!upper(candidate.effectiveFinancialKind()).equals(upper(restored.effectiveFinancialKind()))) continue;
+                String candidateCode = normalizeIdentityCode(candidate.accountingCode());
+                if (candidateCode.isBlank() || candidateCode.equals(parentCode)) continue;
+                if (!accountingCodeFamily(candidateCode).equals(parentFamily)) continue;
+                children.add(candidate);
+            }
+            if (children.isEmpty()) continue;
+
+            BigDecimal childrenAmount = sumCanonicalAmounts(children);
+            if (parentAmount.subtract(childrenAmount).abs().compareTo(new BigDecimal("0.50")) > 0) continue;
+
+            for (CanonicalRow child : children) {
+                exclusions.put(child.index(), "EXCLUDED_CHILD_BREAKDOWN_UNDER_RESTORED_PARENT");
+            }
+        }
+    }
+
     private static String buildSeriesSignature(List<CanonicalRow> rows) {
         List<CanonicalRow> ordered = new ArrayList<>(rows);
         ordered.sort((left, right) -> {
@@ -2043,6 +2218,7 @@ public class BudgetService {
         if (!"P_AND_L".equals(row.sectionKind())) return false;
         if ("REVIEW".equals(row.mappingStatus())) return false;
         if ("DERIVED_KPI".equals(row.rowType())) return false;
+        if (looksLikeCashflowOnlyRow(row)) return false;
         return List.of(
             "REVENUE",
             "OTHER_OPERATING_INCOME",
@@ -2069,6 +2245,37 @@ public class BudgetService {
 
     private static boolean isDriverRow(CanonicalRow row, Map<Integer, Boolean> pnlIncluded) {
         return isEligibleForDrivers(row, pnlIncluded);
+    }
+
+    private static boolean looksLikeCashflowOnlyRow(CanonicalRow row) {
+        if (row == null) return false;
+        String label = upper(row.normalizedLabel());
+        if (label.isBlank()) return false;
+        String cashflowKind = upper(row.effectiveCashflowKind());
+        if (Set.of("CASH_INFLOW", "CASH_OUTFLOW", "CASHFLOW_TAX", "OPENING_BALANCE", "CLOSING_BALANCE").contains(cashflowKind)) {
+            return true;
+        }
+        boolean cashBalanceLabel = label.contains("SALDO INICIAL")
+            || label.contains("SALDO FINAL")
+            || label.contains("SALDO MENSUAL")
+            || label.contains("SALDO ACUMULADO")
+            || label.contains("CASH NETO")
+            || label.contains("TESORER")
+            || label.contains("COBROS")
+            || label.contains("COBRO")
+            || label.contains("PAGOS")
+            || label.contains("PAGO");
+        boolean cashflowTaxLabel = label.contains("IMPUESTO")
+            && (label.contains("PAGO")
+                || label.contains("PAGOS")
+                || label.contains("FRACCIONAMIENTO")
+                || label.contains("CUOTA"));
+        boolean financingMovementLabel = (label.contains("PRESTAM") || label.contains("LOAN") || label.contains("CUOTA"))
+            && !label.contains("INTERES");
+        if (!cashBalanceLabel && !cashflowTaxLabel && !financingMovementLabel) {
+            return false;
+        }
+        return Set.of("DETAIL", "SUBTOTAL", "TOTAL", "DERIVED_KPI").contains(upper(row.rowType()));
     }
 
     private static void enforceCashflowAggregationBoundaries(List<CanonicalRow> rows,
@@ -3546,7 +3753,7 @@ public class BudgetService {
             ? matchingRows.stream().map(CanonicalRow::plannedAmount).filter(Objects::nonNull).reduce((first, second) -> second).orElse(null)
             : matchingRows.stream().map(CanonicalRow::plannedAmount).filter(Objects::nonNull).reduce(BigDecimal.ZERO, BigDecimal::add);
         if (declared == null) return;
-        checks.add(reconciliation(code, declared, computed, tolerance, "La fila declarada no cuadra con la reconciliación calculada."));
+        checks.add(reconciliation(code, declared, computed, tolerance, "La fila declarada no cuadra con la reconciliacion calculada."));
     }
 
     private static ReconciliationCheck reconciliation(String code,
@@ -3819,9 +4026,9 @@ public class BudgetService {
     private static String canonicalReadinessMessage(BudgetLongNormalizer.Result result, String fallback) {
         if (result == null) return fallback;
         String prefix = switch (String.valueOf(result.analysisStatus()).trim().toUpperCase(Locale.ROOT)) {
-            case "GUIDED_REVIEW_REQUIRED" -> "La lectura anual existe, pero aún necesita revisión guiada.";
-            case "INCOMPATIBLE" -> "No existe estructura anual suficiente para construir una lectura canónica.";
-            case "AUTOMATIC_ACCEPTED" -> "La lectura anual canónica existe, pero aún no ha alcanzado el mínimo operativo esperado.";
+            case "GUIDED_REVIEW_REQUIRED" -> "La lectura anual existe, pero aun necesita revision guiada.";
+            case "INCOMPATIBLE" -> "No existe estructura anual suficiente para construir una lectura canonica.";
+            case "AUTOMATIC_ACCEPTED" -> "La lectura anual canonica existe, pero aun no ha alcanzado el minimo operativo esperado.";
             default -> fallback;
         };
         return confirmationMessage(result, prefix.equals(fallback) ? fallback : prefix + " " + fallback);
@@ -3854,11 +4061,11 @@ public class BudgetService {
         if (raw == null) return null;
         String normalized = raw.trim()
             .toUpperCase(Locale.ROOT)
-            .replace('Á', 'A')
-            .replace('É', 'E')
-            .replace('Í', 'I')
-            .replace('Ó', 'O')
-            .replace('Ú', 'U');
+            .replace('\u00C1', 'A')
+            .replace('\u00C9', 'E')
+            .replace('\u00CD', 'I')
+            .replace('\u00D3', 'O')
+            .replace('\u00DA', 'U');
         if (normalized.startsWith("ENE")) return "ENERO";
         if (normalized.startsWith("FEB")) return "FEBRERO";
         if (normalized.startsWith("MAR")) return "MARZO";
@@ -3942,7 +4149,7 @@ public class BudgetService {
         if (raw == null) return false;
         String normalized = raw.trim().toUpperCase(Locale.ROOT);
         return normalized.equals("SI")
-            || normalized.equals("SÍ")
+            || normalized.equals("S\u00CD")
             || normalized.equals("TRUE")
             || normalized.equals("1")
             || normalized.equals("YES")
@@ -3950,7 +4157,7 @@ public class BudgetService {
     }
 
     private static boolean matchesCashInflowRow(String upperLabel) {
-        // TOTAL FACTURACIÓN / TOTAL FACTURACION / TOTAL COBROS
+        // TOTAL FACTURACION / TOTAL COBROS
         return (upperLabel.contains("TOTAL") && (upperLabel.contains("FACTUR") || upperLabel.contains("COBRO")));
     }
 
@@ -3986,7 +4193,7 @@ public class BudgetService {
         } else {
             cleaned = cleaned.replace(",", "");
         }
-        cleaned = cleaned.replace("€", "");
+        cleaned = cleaned.replace("\u20AC", "");
         cleaned = cleaned.trim();
         if (cleaned.isBlank()) return null;
         try {

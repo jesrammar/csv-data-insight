@@ -4,3 +4,4 @@ storage/
 *.class
 *.log
 .DS_Store
+src/test/resources/workforce-real-unzip/

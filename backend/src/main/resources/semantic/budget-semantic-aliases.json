@@ -8,14 +8,31 @@
         "ingresos por suscripciones",
         "facturacion",
         "facturacion neta",
+        "ingresos ordinarios",
+        "ingresos operativos",
+        "prestacion de servicios",
+        "servicios prestados",
         "cifra de negocio",
         "ventas",
         "ventas netas",
+        "ventas de mercaderias",
+        "ventas de productos",
         "importe ventas",
         "cobros comerciales",
         "ingresos de explotacion",
         "negocio",
-        "volumen de negocio"
+        "volumen de negocio",
+        "cuotas de abonados",
+        "cuotas de clientes",
+        "cuotas recurrentes",
+        "ingresos recurrentes",
+        "comisiones devengadas",
+        "canon mensual",
+        "honorarios facturados",
+        "canon facturado",
+        "licencias facturadas",
+        "servicios gestionados",
+        "suscripcion mensual"
       ],
       "aliasesEn": [
         "revenue",
@@ -25,6 +42,11 @@
         "subscriptions",
         "sales",
         "net sales",
+        "sales income",
+        "service revenue",
+        "service revenues",
+        "ordinary revenue",
+        "ordinary income",
         "turnover",
         "business volume",
         "operating income",
@@ -32,7 +54,17 @@
         "billing",
         "billings",
         "commercial income",
-        "customer revenue"
+        "customer revenue",
+        "membership fees",
+        "service fees",
+        "license fees billed",
+        "recurring fees",
+        "customer fees",
+        "recurring revenue",
+        "managed service revenue",
+        "commission income",
+        "royalty income",
+        "franchise income"
       ],
       "exclusions": [
         "capex",
@@ -45,6 +77,60 @@
         "gasto",
         "coste",
         "inmovilizado"
+      ]
+    },
+    "OTHER_OPERATING_INCOME": {
+      "aliasesEs": [
+        "otro ingreso operativo",
+        "otros ingresos operativos",
+        "subvencion explotacion",
+        "subvenciones explotacion",
+        "ingreso accesorio",
+        "ingresos accesorios",
+        "ingreso complementario",
+        "ingresos complementarios",
+        "bonificacion operativa",
+        "apoyo operativo",
+        "subvencion explotacion",
+        "subvenciones explotacion",
+        "subsidio operativo",
+        "otros ingresos explotacion",
+        "rappel proveedor",
+        "rappel comercial",
+        "recuperacion de gasto",
+        "bonificacion comercial"
+      ],
+      "aliasesEn": [
+        "other operating income",
+        "other operating incomes",
+        "operating grant",
+        "operating grants",
+        "ancillary income",
+        "ancillary revenue",
+        "complementary income",
+        "support income",
+        "incidental operating income",
+        "other business income",
+        "operating grant",
+        "operating grants",
+        "operating subsidy",
+        "other operating gains",
+        "supplier rebate",
+        "commercial rebate",
+        "cost recovery",
+        "operating rebate"
+      ],
+      "exclusions": [
+        "cash inflow",
+        "cash outflow",
+        "payment",
+        "collection",
+        "loan",
+        "financing",
+        "capex",
+        "investment",
+        "saldo inicial",
+        "saldo final"
       ]
     },
     "OPEX": {
@@ -69,7 +155,36 @@
         "aprovisionamientos",
         "personal",
         "nominas",
-        "alquileres"
+        "sueldos y salarios",
+        "coste laboral",
+        "costes laborales",
+        "alquileres",
+        "arrendamientos y canones",
+        "seguridad social",
+        "servicios exteriores",
+        "suministros",
+        "electricidad",
+        "agua",
+        "gas",
+        "telefonia",
+        "publicidad",
+        "marketing",
+        "transporte",
+        "combustible",
+        "honorarios",
+        "asesoria",
+        "limpieza",
+        "mantenimiento",
+        "servicios subcontratados",
+        "servicios de terceros",
+        "servicios logisticos",
+        "servicios de envasado",
+        "infraestructura cloud",
+        "hosting",
+        "licencias software",
+        "comisiones tarjeta",
+        "gastos de viaje",
+        "reparaciones"
       ],
       "aliasesEn": [
         "opex",
@@ -89,7 +204,34 @@
         "procurement",
         "payroll",
         "rent",
-        "overheads"
+        "overheads",
+        "social security",
+        "wages and salaries",
+        "labor cost",
+        "labour cost",
+        "external services",
+        "utilities",
+        "electricity",
+        "water",
+        "gas supply",
+        "telecom",
+        "marketing expense",
+        "transport cost",
+        "fuel cost",
+        "professional fees",
+        "cleaning expense",
+        "maintenance expense",
+        "subcontracted services",
+        "third party services",
+        "logistics services",
+        "packaging services",
+        "cloud infrastructure",
+        "hosting cost",
+        "software license",
+        "software licences",
+        "card processing fee",
+        "travel expense",
+        "repairs and maintenance"
       ],
       "exclusions": [
         "capex",
@@ -104,6 +246,48 @@
         "inmovilizado"
       ]
     },
+    "OPERATING_ADJUSTMENT": {
+      "aliasesEs": [
+        "ajuste operativo",
+        "ajustes operativos",
+        "variacion existencias",
+        "variacion de existencias",
+        "regularizacion existencias",
+        "regularizacion de existencias",
+        "regularizacion stock",
+        "regularizacion de stock",
+        "ajuste no monetario",
+        "ingreso no monetario",
+        "revalorizacion existencias",
+        "ajuste inventario",
+        "activacion operativa"
+      ],
+      "aliasesEn": [
+        "operating adjustment",
+        "operating adjustments",
+        "inventory variation",
+        "inventory change",
+        "stock adjustment",
+        "inventory adjustment",
+        "non cash operating adjustment",
+        "non-cash operating adjustment",
+        "working stock adjustment",
+        "operating non cash",
+        "inventory revaluation",
+        "inventory regularization",
+        "non-cash operating bridge"
+      ],
+      "exclusions": [
+        "cash inflow",
+        "cash outflow",
+        "payment",
+        "collection",
+        "saldo inicial",
+        "saldo final",
+        "opening balance",
+        "closing balance"
+      ]
+    },
     "CAPEX": {
       "aliasesEs": [
         "capex",
@@ -113,11 +297,23 @@
         "activo fijo",
         "adquisicion de activos",
         "compra de maquinaria",
+        "compra de equipos",
+        "compra de hardware",
         "gasto de capital",
         "inversion material",
         "inversion intangible",
         "altas inmovilizado",
-        "equipamiento"
+        "equipamiento",
+        "maquinaria",
+        "mobiliario",
+        "vehiculos",
+        "instalaciones",
+        "equipos informaticos",
+        "software capitalizado",
+        "reformas",
+        "servidores",
+        "adecuacion local",
+        "obra de implantacion"
       ],
       "aliasesEn": [
         "capex",
@@ -130,8 +326,18 @@
         "asset purchase",
         "asset purchases",
         "equipment purchase",
+        "hardware purchase",
         "property plant equipment",
-        "ppe"
+        "ppe",
+        "machinery",
+        "furniture",
+        "vehicles",
+        "installations",
+        "capitalized software",
+        "refurbishment",
+        "server acquisition",
+        "shop fit out",
+        "leasehold improvement"
       ],
       "exclusions": [
         "revenue",
@@ -159,7 +365,12 @@
         "gasto amortizacion",
         "depreciacion",
         "depreciaciones",
-        "deterioro inmovilizado"
+        "deterioro inmovilizado",
+        "amortizacion software",
+        "amortizacion equipos",
+        "dotacion amortizacion inmovilizado",
+        "gasto por amortizacion",
+        "depreciacion inmovilizado"
       ],
       "aliasesEn": [
         "depreciation",
@@ -171,7 +382,12 @@
         "fixed asset depreciation",
         "asset depreciation",
         "non cash depreciation",
-        "non-cash amortization"
+        "non-cash amortization",
+        "software amortization",
+        "equipment depreciation",
+        "depreciation and amortization",
+        "fixed asset amortization",
+        "depreciation of assets"
       ],
       "exclusions": [
         "revenue",
@@ -199,7 +415,10 @@
         "recuperacion clientes",
         "subvenciones cobradas",
         "otros cobros",
-        "caja entrada"
+        "caja entrada",
+        "cobros por ventas",
+        "cobros recurrentes",
+        "entrada por clientes"
       ],
       "aliasesEn": [
         "cash inflow",
@@ -213,7 +432,10 @@
         "grant receipts",
         "other receipts",
         "inflows",
-        "cash incoming"
+        "cash incoming",
+        "sales collections",
+        "recurring collections",
+        "customer cash receipts"
       ],
       "exclusions": [
         "saldo final",
@@ -241,7 +463,10 @@
         "otros pagos",
         "desembolso",
         "desembolsos",
-        "caja salida"
+        "caja salida",
+        "pagos de personal",
+        "pagos de alquiler",
+        "pagos operativos"
       ],
       "aliasesEn": [
         "cash outflow",
@@ -255,7 +480,10 @@
         "supplier payments",
         "other payments",
         "outflows",
-        "cash outgoing"
+        "cash outgoing",
+        "payroll payments",
+        "rent payments",
+        "operating payments"
       ],
       "exclusions": [
         "saldo final",
@@ -280,12 +508,10 @@
         "leasing",
         "ingresos financieros",
         "resultado financiero",
-        "amortizacion prestamo",
-        "cuota prestamo",
         "intereses financieros",
         "gastos financieros",
-        "aportacion socios",
-        "linea credito"
+        "linea credito",
+        "poliza credito"
       ],
       "aliasesEn": [
         "financing",
@@ -302,7 +528,10 @@
         "financial expense",
         "interest expense",
         "shareholder funding",
-        "credit line"
+        "credit line",
+        "credit facility",
+        "interest paid",
+        "interest received"
       ],
       "exclusions": [
         "revenue",
@@ -315,6 +544,218 @@
         "investment",
         "saldo final",
         "closing balance"
+      ]
+    },
+    "FINANCIAL_INCOME": {
+      "aliasesEs": [
+        "ingreso financiero",
+        "ingresos financieros",
+        "rendimiento financiero",
+        "intereses cobrados",
+        "interes cobrado",
+        "rentabilidad financiera",
+        "producto financiero",
+        "ingreso bancario",
+        "abono financiero",
+        "interes a favor",
+        "intereses bancarios cobrados",
+        "rendimiento deposito"
+      ],
+      "aliasesEn": [
+        "financial income",
+        "finance income",
+        "interest income",
+        "interest received",
+        "bank interest earned",
+        "financial yield",
+        "investment income",
+        "treasury income",
+        "finance revenue",
+        "interest proceeds",
+        "bank interest received",
+        "deposit yield"
+      ],
+      "exclusions": [
+        "expense",
+        "gasto",
+        "cost",
+        "pago",
+        "cash outflow",
+        "loan repayment",
+        "capex",
+        "saldo inicial",
+        "saldo final",
+        "tax payment"
+      ]
+    },
+    "FINANCIAL_EXPENSE": {
+      "aliasesEs": [
+        "gasto financiero",
+        "gastos financieros",
+        "coste financiero",
+        "costes financieros",
+        "intereses pagados",
+        "interes pagado",
+        "cargo financiero",
+        "comision financiera",
+        "recargo financiero",
+        "coste deuda",
+        "intereses deuda",
+        "comision bancaria"
+      ],
+      "aliasesEn": [
+        "financial expense",
+        "finance expense",
+        "interest expense",
+        "interest paid",
+        "financial charge",
+        "finance cost",
+        "finance costs",
+        "borrowing cost",
+        "debt expense",
+        "bank charge",
+        "debt interest",
+        "bank commission"
+      ],
+      "exclusions": [
+        "income",
+        "ingreso",
+        "collection",
+        "cash inflow",
+        "loan received",
+        "capex",
+        "saldo inicial",
+        "saldo final",
+        "tax payment",
+        "operating grant"
+      ]
+    },
+    "FINANCIAL_RESULT": {
+      "aliasesEs": [
+        "resultado financiero",
+        "saldo financiero",
+        "neto financiero",
+        "resultado fin",
+        "resultado de financiacion",
+        "balance financiero",
+        "resultado bancario",
+        "margen financiero",
+        "resultado intereses",
+        "resultado tesoreria financiera",
+        "saldo financiero neto",
+        "resultado financiero neto"
+      ],
+      "aliasesEn": [
+        "financial result",
+        "finance result",
+        "net financial result",
+        "financial net result",
+        "net finance",
+        "finance balance",
+        "financial balance",
+        "financial surplus",
+        "financial deficit",
+        "financial outcome",
+        "net financial balance",
+        "net finance result"
+      ],
+      "exclusions": [
+        "cash inflow",
+        "cash outflow",
+        "payment",
+        "collection",
+        "capex",
+        "opening balance",
+        "closing balance",
+        "saldo inicial",
+        "saldo final",
+        "tax payment"
+      ]
+    },
+    "FINANCING_INFLOW": {
+      "aliasesEs": [
+        "financiacion recibida",
+        "prestamo recibido",
+        "entrada financiacion",
+        "disposicion prestamo",
+        "disposicion deuda",
+        "aportacion socios",
+        "ampliacion capital",
+        "inyeccion capital",
+        "linea credito dispuesta",
+        "leasing recibido"
+        ,
+        "prestamo socios",
+        "financiacion socios"
+      ],
+      "aliasesEn": [
+        "financing inflow",
+        "loan received",
+        "loan drawdown",
+        "debt drawdown",
+        "financing received",
+        "shareholder funding",
+        "capital injection",
+        "credit line drawdown",
+        "funding inflow",
+        "lease financing received",
+        "shareholder loan",
+        "shareholder financing"
+      ],
+      "exclusions": [
+        "revenue",
+        "sales",
+        "gasto",
+        "expense",
+        "capex",
+        "tax payment",
+        "saldo inicial",
+        "saldo final",
+        "closing balance",
+        "operating grant"
+      ]
+    },
+    "FINANCING_OUTFLOW": {
+      "aliasesEs": [
+        "devolucion prestamo",
+        "amortizacion prestamo",
+        "salida financiacion",
+        "pago deuda",
+        "cuota principal prestamo",
+        "devolucion deuda",
+        "reembolso prestamo",
+        "cancelacion deuda",
+        "cuota leasing principal",
+        "salida por financiacion"
+        ,
+        "cancelacion prestamo",
+        "devolucion socios"
+      ],
+      "aliasesEn": [
+        "financing outflow",
+        "loan repayment",
+        "debt repayment",
+        "principal repayment",
+        "financing repayment",
+        "lease principal payment",
+        "debt service principal",
+        "funding outflow",
+        "loan amortization",
+        "debt amortization",
+        "loan cancellation",
+        "shareholder repayment"
+      ],
+      "exclusions": [
+        "revenue",
+        "sales",
+        "income",
+        "collection",
+        "capex",
+        "tax payment",
+        "saldo inicial",
+        "saldo final",
+        "closing balance",
+        "amortization expense"
       ]
     },
     "OPENING_BALANCE": {
@@ -414,7 +855,9 @@
         "retenciones",
         "pagos hacienda",
         "tasas",
-        "canon fiscal"
+        "canon fiscal",
+        "impuesto beneficios",
+        "gasto impuesto"
       ],
       "aliasesEn": [
         "tax",
@@ -428,7 +871,9 @@
         "tax expense",
         "government taxes",
         "duties",
-        "levies"
+        "levies",
+        "profit tax",
+        "income tax expense"
       ],
       "exclusions": [
         "revenue",
@@ -441,6 +886,48 @@
         "closing balance",
         "saldo inicial",
         "saldo final"
+      ]
+    },
+    "CASHFLOW_TAX": {
+      "aliasesEs": [
+        "impuesto caja",
+        "pago impuesto",
+        "pago impuestos",
+        "impuestos pagados",
+        "salida fiscal",
+        "hacienda pagada",
+        "fraccionamiento impuesto sociedades",
+        "liquidacion fiscal pagada",
+        "iva pagado",
+        "impuestos caja",
+        "pago impuesto sociedades",
+        "retenciones pagadas"
+      ],
+      "aliasesEn": [
+        "cashflow tax",
+        "tax payment",
+        "tax payments",
+        "taxes paid",
+        "cash tax",
+        "paid taxes",
+        "fiscal payment",
+        "treasury tax payment",
+        "vat payment",
+        "corporate tax payment",
+        "corporate income tax payment",
+        "withholding tax paid"
+      ],
+      "exclusions": [
+        "revenue",
+        "sales",
+        "income",
+        "capex",
+        "opening balance",
+        "closing balance",
+        "saldo inicial",
+        "saldo final",
+        "financial result",
+        "financing inflow"
       ]
     },
     "ASSUMPTION": {
@@ -456,7 +943,15 @@
         "euribor",
         "rendimiento",
         "precio kg",
-        "hectareas"
+        "hectareas",
+        "crecimiento",
+        "volumen",
+        "ticket medio",
+        "headcount",
+        "mix comercial",
+        "ocupacion",
+        "ratio conversion",
+        "cesta media"
       ],
       "aliasesEn": [
         "assumption",
@@ -470,7 +965,15 @@
         "unit price",
         "price per kg",
         "hectares",
-        "volume driver"
+        "volume driver",
+        "growth assumption",
+        "volume assumption",
+        "average ticket",
+        "staffing assumption",
+        "sales mix",
+        "occupancy assumption",
+        "conversion rate",
+        "average basket"
       ],
       "exclusions": [
         "revenue",
@@ -498,7 +1001,10 @@
         "ppto",
         "ppto mensual",
         "objetivo",
-        "importe plan"
+        "importe plan",
+        "presupuestado",
+        "importe ppto",
+        "valor planificado"
       ],
       "aliasesEn": [
         "budget",
@@ -512,7 +1018,9 @@
         "target amount",
         "budget month",
         "budget total",
-        "plan value"
+        "plan value",
+        "budgeted amount",
+        "planned value"
       ]
     },
     "ACTUAL_AMOUNT": {
@@ -528,7 +1036,10 @@
         "real acumulado",
         "importe ejecutado",
         "real eur",
-        "valor real"
+        "valor real",
+        "realizado",
+        "contabilizado",
+        "importe contabilizado"
       ],
       "aliasesEn": [
         "actual",
@@ -542,7 +1053,9 @@
         "actual eur",
         "closing actual",
         "actual total",
-        "actuals"
+        "actuals",
+        "booked amount",
+        "posted value"
       ]
     },
     "FORECAST_AMOUNT": {
@@ -558,7 +1071,10 @@
         "cierre previsto",
         "prevision mensual",
         "forecast mensual",
-        "importe previsto"
+        "importe previsto",
+        "ultimo forecast",
+        "fcst cierre",
+        "outlook cierre"
       ],
       "aliasesEn": [
         "forecast",
@@ -572,7 +1088,9 @@
         "closing estimate",
         "run rate forecast",
         "forecast value",
-        "outlook"
+        "outlook",
+        "latest forecast",
+        "closing outlook"
       ]
     },
     "PERIOD": {
@@ -588,7 +1106,9 @@
         "anio mes",
         "fecha mes",
         "cierre mes",
-        "periodo trabajo"
+        "periodo trabajo",
+        "mes clave",
+        "period key"
       ],
       "aliasesEn": [
         "period",
@@ -602,7 +1122,9 @@
         "posting period",
         "closing month",
         "reporting period",
-        "fiscal month"
+        "fiscal month",
+        "month key",
+        "period key"
       ]
     },
     "CONCEPT_CODE": {
@@ -618,7 +1140,9 @@
         "id concepto",
         "referencia cuenta",
         "codigo ceco",
-        "cta"
+        "cta",
+        "epigrafe codigo",
+        "numero cuenta"
       ],
       "aliasesEn": [
         "code",
@@ -632,7 +1156,9 @@
         "concept id",
         "account id",
         "reference code",
-        "chart account"
+        "chart account",
+        "ledger code",
+        "account key"
       ]
     },
     "CONCEPT_NAME": {
@@ -644,11 +1170,12 @@
         "nombre partida",
         "nombre cuenta",
         "detalle",
-        "subcategoria",
-        "categoria",
         "partida nombre",
         "descripcion cuenta",
-        "titulo partida"
+        "titulo partida",
+        "epigrafe",
+        "rubro",
+        "denominacion"
       ],
       "aliasesEn": [
         "concept",
@@ -658,8 +1185,6 @@
         "item name",
         "account name",
         "account description",
-        "category",
-        "subcategory",
         "line label",
         "concept label",
         "item label"

@@ -47,7 +47,6 @@ export default function ImportsPage() {
   })
   const [mode, setMode] = useState<'auto' | 'transactions' | 'universal'>('auto')
   const hasGold = plan === 'GOLD' || plan === 'PLATINUM'
-  const guidesModule = mode === 'transactions' ? 'caja' : mode === 'universal' ? 'universal' : 'caja'
 
   useEffect(() => {
     const m = String(searchParams.get('mode') || '').toLowerCase()
@@ -124,13 +123,13 @@ export default function ImportsPage() {
         return
       }
 
-      setMessage('El fichero se ha cargado, pero no parece un plan anual. Lo abrimos en Universal para revisarlo.')
+      setMessage('El fichero se ha cargado, pero no parece un plan anual. Revísalo desde Cargar datos antes de volver a Plan anual.')
       toast.push({
         tone: 'warning',
         title: 'No parece presupuesto',
-        message: `${detectedLabel}. Revisalo en Universal antes de usarlo como plan anual.`
+        message: `${detectedLabel}. Revísalo en Cargar datos antes de usarlo como plan anual.`
       })
-      navigate('/universal')
+      navigate('/imports')
       return
     }
 
@@ -142,38 +141,38 @@ export default function ImportsPage() {
     }
 
     if (detectedKind === 'CASH_TRANSACTIONS') {
-      setMessage('Parece un fichero de caja. La lectura queda en Universal y la ruta operativa natural es Caja.')
+      setMessage('Parece un fichero de caja. La carga queda registrada y puedes seguir afinándola desde Cargar datos.')
       toast.push({
         tone: 'info',
         title: 'Caja detectada',
-        message: 'Si quieres cierre mensual, el siguiente paso natural es Caja.'
+        message: 'La lectura queda registrada en esta misma pantalla para revisar calidad o volver a subir.'
       })
-      navigate('/universal')
+      navigate('/imports')
       return
     }
 
     if (detectedKind === 'TRIBUNAL_PORTFOLIO') {
-      setMessage('Parece una cartera operativa. La lectura queda en Universal y la ruta natural es Tribunal.')
+      setMessage('Parece una cartera operativa. La carga queda registrada para revisar desde Cargar datos.')
       toast.push({
         tone: 'info',
         title: 'Tribunal detectado',
         message: 'El fichero encaja mejor en cartera operativa que en una carga mensual.'
       })
-      navigate('/universal')
+      navigate('/imports')
       return
     }
 
     setMessage(
       detectedDetail
         ? `${detectedLabel}. ${detectedDetail}`
-        : `Archivo analizado en Universal${sourceLabel === 'AUTO' ? ' (auto)' : ''}.`
+        : `Archivo analizado correctamente${sourceLabel === 'AUTO' ? ' (auto)' : ''}.`
     )
     toast.push({
       tone: 'success',
       title: sourceLabel === 'AUTO' ? 'Universal (auto)' : 'Universal',
       message: detectedDetail || 'Archivo analizado correctamente.'
     })
-    navigate('/universal')
+    navigate('/imports')
   }
 
   type BatchItem = {
@@ -194,7 +193,7 @@ export default function ImportsPage() {
   }
 
   const [batchItems, setBatchItems] = useState<BatchItem[]>([])
-  const workflowHref = `/monthly-close?period=${encodeURIComponent(period)}`
+  const workflowHref = '/budget'
   const selectedPeriodImport = useMemo(() => {
     const list = ((data || []) as ImportJob[]).filter((item) => String(item.period || '') === String(period || ''))
     return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0] || null
@@ -219,10 +218,10 @@ export default function ImportsPage() {
     return {
       importState,
       reviewState: reviewReady
-        ? { title: 'Lectura disponible', detail: 'Ya puedes validar este periodo en Vista ejecutiva o Caja.' }
+        ? { title: 'Lectura disponible', detail: 'Ya puedes validar si esta carga alimenta bien el plan anual o volver a corregirla.' }
         : { title: 'Lectura bloqueada', detail: 'Primero necesitas un import válido para revisar el periodo.' },
       reportState: reportReady
-        ? { title: 'PDF disponible', detail: 'Este periodo ya tiene al menos un entregable generado.' }
+        ? { title: 'PDF disponible', detail: 'Ya existe un informe generado para esta empresa.' }
         : { title: 'PDF pendiente', detail: 'Cuando valides la lectura, podrás cerrar el periodo en Entregables.' }
     }
   }, [companyId, selectedPeriodImport, selectedPeriodReport])
@@ -1154,7 +1153,7 @@ export default function ImportsPage() {
       await queryClient.invalidateQueries({ queryKey: ['tribunal-status', companyId] })
 
       toast.push({ tone: 'success', title: 'Batch', message: 'Subida por lotes finalizada.' })
-      setMessage('Subida por lotes finalizada. Revisa el estado de imports/universal/tribunal según corresponda.')
+      setMessage('Subida por lotes finalizada. Revisa el estado de las cargas y decide si ya puedes seguir con el plan anual.')
     } finally {
       setBatchUploading(false)
     }
@@ -1183,9 +1182,9 @@ export default function ImportsPage() {
           await queryClient.invalidateQueries({ queryKey: ['tribunal-summary', companyId] })
           await queryClient.invalidateQueries({ queryKey: ['tribunal-status', companyId] })
           setTone('success')
-          setMessage('Archivo de Tribunal cargado. Te llevo a Cumplimiento (Tribunal).')
-          toast.push({ tone: 'success', title: 'Auto', message: 'Fichero cargado en Tribunal.' })
-          navigate('/tribunal')
+          setMessage('Archivo de cartera cargado. La carga queda registrada en Cargar datos para decidir el siguiente paso.')
+          toast.push({ tone: 'success', title: 'Auto', message: 'Fichero cargado correctamente.' })
+          navigate('/imports')
           return
         }
         if (autoTarget === 'transactions') {
@@ -1289,12 +1288,24 @@ export default function ImportsPage() {
     }
   }
 
+  const quickModeLabel = mode === 'auto' ? 'Auto' : mode === 'transactions' ? 'Caja' : 'Universal'
+  const quickHeroTitle = annualFlow ? 'Corrige el presupuesto anual.' : 'Sube el fichero del periodo.'
+  const quickHeroDetail = annualFlow
+    ? 'Carga el XLSX correcto y toca hoja o cabecera solo si Plan anual no detecta bien los meses.'
+    : 'Elige modo, periodo y archivo. El resto solo aparece si hace falta.'
+  const quickImportStatus = selectedPeriodImport?.status || 'Sin carga'
+
   return (
-    <div className="imports-page">
+    <div className="imports-page imports-quick-page">
       <PageHeader
         title="Cargar datos"
-        subtitle="Una sola pantalla para subir el fichero del periodo y decidir el siguiente paso."
-        actions={<span className="badge">{period}</span>}
+        subtitle="Carga el fichero correcto y decide el siguiente paso sin ruido."
+        actions={
+          <div className="imports-quick-top-actions">
+            <span className="badge">{period}</span>
+            {annualFlow ? <span className="badge badge-ok">Plan anual</span> : null}
+          </div>
+        }
       />
 
       {!companyId ? <Alert tone="warning">Selecciona una empresa para empezar.</Alert> : null}
@@ -1309,9 +1320,37 @@ export default function ImportsPage() {
         </Alert>
       ) : null}
 
-      <div className="card section soft">
+      <section className="imports-quick-hero card">
+        <div className="imports-quick-hero-copy">
+          <span className="imports-quick-eyebrow">{annualFlow ? 'Plan anual' : 'Cargar datos'}</span>
+          <h2>{quickHeroTitle}</h2>
+          <p>{quickHeroDetail}</p>
+          <div className="imports-quick-tags">
+            <span className="imports-quick-tag">{quickModeLabel}</span>
+            <span className="imports-quick-tag">{period}</span>
+            <span className="imports-quick-tag">{quickImportStatus}</span>
+          </div>
+        </div>
+        <div className="imports-quick-hero-side">
+          <div className="imports-quick-context-card">
+            <span>Ultima carga</span>
+            <strong>{selectedPeriodImport?.filename || 'Sin fichero registrado'}</strong>
+            <small>{selectedPeriodFlow.importState.detail}</small>
+          </div>
+          <div className="imports-quick-context-card">
+            <span>Siguiente paso</span>
+            <strong>{selectedPeriodFlow.reviewState.title}</strong>
+            <small>{selectedPeriodFlow.reviewState.detail}</small>
+          </div>
+        </div>
+      </section>
+
+      <div className="card section soft imports-quick-shell">
         <div className="mini-row row-baseline">
-          <h3 className="m-0">1. Subir fichero</h3>
+          <div>
+            <span>1. Carga</span>
+            <h3>Subir fichero</h3>
+          </div>
           <span className="upload-hint">Elige módulo, periodo y archivo. Nada más.</span>
         </div>
         <div className="grid grid-autofit-220 mt-12">
@@ -1329,7 +1368,13 @@ export default function ImportsPage() {
           </div>
           <div className="card soft card-pad-sm">
             <div className="upload-hint">Archivo</div>
-            <input type="file" accept=".csv,.xlsx" onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="mt-8" />
+            <label className="workforce-file-trigger mt-8">
+              <input type="file" accept=".csv,.xlsx" onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="sr-only" />
+              <span className="workforce-file-trigger-button">Seleccionar archivo</span>
+              <span className="workforce-file-trigger-name" title={file ? file.name : 'Sin fichero seleccionado.'}>
+                {file ? file.name : 'Sin fichero seleccionado.'}
+              </span>
+            </label>
             <div className="upload-hint mt-8">{file ? file.name : 'Todavía sin fichero seleccionado.'}</div>
           </div>
         </div>
@@ -1337,8 +1382,8 @@ export default function ImportsPage() {
           <Button onClick={handleUpload} disabled={!companyId || !file || uploading || !isAllowed} loading={uploading}>
             Subir
           </Button>
-          <Button variant="ghost" onClick={() => navigate('/monthly-close?period=' + encodeURIComponent(period))} disabled={!companyId}>
-            Ir al cierre
+          <Button variant="ghost" onClick={() => navigate('/budget')} disabled={!companyId}>
+            Ir al plan anual
           </Button>
         </div>
       </div>
@@ -1440,7 +1485,7 @@ export default function ImportsPage() {
                 </Button>
               ) : null}
               <Button size="sm" variant="ghost" onClick={() => navigate(workflowHref)}>
-                Abrir cierre mensual
+                Abrir plan anual
               </Button>
             </div>
           </div>
@@ -1453,28 +1498,28 @@ export default function ImportsPage() {
     <div className="imports-page">
       <PageHeader
         title="Cargar datos"
-        subtitle="Sube un CSV/XLSX y EnterpriseIQ te guía al módulo correcto."
+        subtitle="Sube un CSV/XLSX y EnterpriseIQ te guia al modulo correcto."
         actions={
           <>
             <span className="badge">
               {mode === 'auto'
-                ? 'AUTO • detecta objetivo'
+                ? 'AUTO | detecta objetivo'
                 : mode === 'transactions'
-                ? 'Caja • txn_date + amount'
-                : 'Universal • cualquier estructura'}
+                ? 'Caja | txn_date + amount'
+                : 'Universal | cualquier estructura'}
             </span>
           </>
         }
       />
 
       <div className="card section soft imports-flow-shell">
-        <div className="mini-row row-baseline">
-          <h3 className="m-0">Qué hacer aquí</h3>
-          <span className="upload-hint">Solo tres ideas: subir, resolver excepción o seguir el cierre del periodo.</span>
+        <div className="imports-quick-head">
+          <h3 className="m-0">Ruta de carga</h3>
+          <span className="upload-hint">Primero decide modo y sube. El detalle queda debajo por si hace falta.</span>
         </div>
         <div className="grid grid-autofit-220 mt-12 imports-flow-grid">
           <div className="card soft card-pad-sm imports-flow-card">
-            <div className="upload-hint">Situación</div>
+            <div className="upload-hint">Situacion</div>
             <div className="fw-800 mt-1">{importDecisionState.title}</div>
             <div className="upload-hint mt-1">{importDecisionState.detail}</div>
           </div>
@@ -1483,7 +1528,7 @@ export default function ImportsPage() {
             <div className="fw-800 mt-1">{period}</div>
             <div className="upload-hint mt-1">{selectedPeriodFlow.importState.detail}</div>
             <div className="upload-hint mt-8">
-              Revisión: {selectedPeriodFlow.reviewState.title} · Entregable: {selectedPeriodFlow.reportState.title}
+              Revision: {selectedPeriodFlow.reviewState.title} | Entregable: {selectedPeriodFlow.reportState.title}
             </div>
           </div>
           <div className="card soft card-pad-sm imports-flow-card">
@@ -1518,7 +1563,7 @@ export default function ImportsPage() {
       <div className="card section soft imports-upload-shell" ref={modeSectionRef}>
         <div className="mini-row row-baseline mb-12">
           <h3 className="m-0">1. Elegir modo</h3>
-          <span className="upload-hint">Decide si la base va a Caja, Universal o modo automático antes de subirla.</span>
+          <span className="upload-hint">Solo decide la ruta. El resto de ajustes queda plegado.</span>
         </div>
         <div className="segmented" role="tablist" aria-label="Modo de carga">
           <Button
@@ -1550,17 +1595,15 @@ export default function ImportsPage() {
           </Button>
         </div>
 
-        <details className="card soft compact-guide mt-3">
-          <summary className="upload-hint cursor-pointer">Guía rápida de carga</summary>
+        <details className="card soft compact-guide mt-3 imports-fold-panel">
+          <summary className="upload-hint cursor-pointer">Ayuda y ejemplos</summary>
           <div className="card-pad-sm">
           <div className="mini-row row-baseline">
-            <h3 className="m-0">Guía rápida</h3>
-            <Button size="sm" variant="ghost" onClick={() => navigate(`/guides?module=${guidesModule}`)}>
-              Ver guía
-            </Button>
+            <h3 className="m-0">Guia rapida</h3>
+            <span className="upload-hint">La ayuda cambia segun el modo elegido.</span>
           </div>
 
-          <div className="segmented mt-2" role="tablist" aria-label="Módulo">
+          <div className="segmented mt-2" role="tablist" aria-label="Modulo">
             <Button type="button" size="sm" variant={guideModule === 'caja' ? 'secondary' : 'ghost'} onClick={() => setGuideModule('caja')}>
               Caja
             </Button>
@@ -1594,7 +1637,7 @@ export default function ImportsPage() {
 
           {!hasGold ? (
             <div className="upload-hint mt-8">
-              Tribunal está disponible en planes GOLD/PLATINUM.
+              Tribunal esta disponible en planes GOLD/PLATINUM.
             </div>
           ) : null}
 
@@ -1618,8 +1661,8 @@ export default function ImportsPage() {
 
       {mode === 'transactions' && file && txPreview && Number(txPreview.confidence || 0) < 0.4 ? (
         <div className="section">
-          <Alert tone="warning" title="Este fichero quizá no es de transacciones">
-            La detección de columnas tiene poca confianza. Si es un presupuesto / ventas / inventario, usa el modo Universal.
+          <Alert tone="warning" title="Este fichero quiza no es de transacciones">
+            La deteccion de columnas tiene poca confianza. Si es un presupuesto, ventas o inventario, usa el modo Universal.
             <div className="mt-2">
               <Button size="sm" variant="secondary" onClick={() => setMode('universal')}>
                 Cambiar a Universal
@@ -1630,34 +1673,35 @@ export default function ImportsPage() {
       ) : null}
 
       {mode === 'auto' && file && txPreview ? (
-        <div className="section">
-          <Alert tone="info" title="Sugerencia (auto)">
-            {autoTarget === 'transactions'
-              ? 'Parece un fichero de transacciones (Caja).'
-              : autoTarget === 'tribunal'
-              ? 'Parece un fichero de Tribunal (cumplimiento).'
-              : 'Parece un dataset genérico. Recomendado: Universal.'}
-            <div className="upload-hint mt-8">
-              Confianza transacciones: {Math.round(Number(txPreview.confidence || 0) * 100)}% · Señales Tribunal: {tribunalHint.score}
+        <details className="card section soft imports-fold-panel">
+          <summary>
+            <div>
+              <strong>Sugerencia automatica</strong>
+              <div className="upload-hint">Solo abre este bloque si quieres dejar que AUTO te reoriente.</div>
             </div>
-            <div className="row row-wrap row-center gap-2 mt-2">
-              <Button size="sm" variant={autoTarget === 'transactions' ? 'secondary' : 'ghost'} onClick={() => setMode('transactions')}>
-                Usar Caja
-              </Button>
-              <Button size="sm" variant={autoTarget === 'universal' ? 'secondary' : 'ghost'} onClick={() => setMode('universal')}>
-                Usar Universal
-              </Button>
-              <Button
-                size="sm"
-                variant={autoTarget === 'tribunal' ? 'secondary' : 'ghost'}
-                onClick={() => navigate('/tribunal')}
-                disabled={!hasGold}
-              >
-                Ir a Tribunal
-              </Button>
-            </div>
-          </Alert>
-        </div>
+            <span className="badge">AUTO</span>
+          </summary>
+          <div className="imports-fold-body">
+            <Alert tone="info" title="Sugerencia (auto)">
+              {autoTarget === 'transactions'
+                ? 'Parece un fichero de transacciones (Caja).'
+                : autoTarget === 'tribunal'
+                ? 'Parece un fichero de cumplimiento. Si no vas a trabajar ese modulo, sigue por Universal.'
+                : 'Parece un dataset generico. Recomendado: Universal.'}
+              <div className="upload-hint mt-8">
+                Confianza transacciones: {Math.round(Number(txPreview.confidence || 0) * 100)}% | Senales Tribunal: {tribunalHint.score}
+              </div>
+              <div className="row row-wrap row-center gap-2 mt-2">
+                <Button size="sm" variant={autoTarget === 'transactions' ? 'secondary' : 'ghost'} onClick={() => setMode('transactions')}>
+                  Usar Caja
+                </Button>
+                <Button size="sm" variant={autoTarget === 'universal' || autoTarget === 'tribunal' ? 'secondary' : 'ghost'} onClick={() => setMode('universal')}>
+                  Usar Universal
+                </Button>
+              </div>
+            </Alert>
+          </div>
+        </details>
       ) : null}
 
       <div className="card section soft imports-upload-shell" ref={uploadSectionRef}>
@@ -1693,8 +1737,8 @@ export default function ImportsPage() {
             >
               <summary className="upload-hint cursor-pointer">
                 XLSX: hoja + cabecera (opcional)
-                {xlsxLoading ? ' • previsualizando…' : ''}
-                {xlsxPreview?.headers?.length ? ` • ${xlsxPreview.headers.length} columnas` : ''}
+                {xlsxLoading ? ' | previsualizando...' : ''}
+                {xlsxPreview?.headers?.length ? ` | ${xlsxPreview.headers.length} columnas` : ''}
               </summary>
               <div className="upload-row tight align-end">
                 <label className="stack">
@@ -1722,14 +1766,14 @@ export default function ImportsPage() {
                   />
                 </label>
                 <span className="upload-hint block mb-1">
-                  Tip: pon la fila donde están ENERO…DICIEMBRE / txn_date…
+                  Tip: pon la fila donde estan ENERO...DICIEMBRE o txn_date...
                 </span>
               </div>
 
               {xlsxPreview?.headers?.length ? (
                 <div className="upload-hint mt-2">
-                  Cabeceras detectadas: {xlsxPreview.headers.slice(0, 8).join(' · ')}
-                  {xlsxPreview.headers.length > 8 ? ' · …' : ''}
+                  Cabeceras detectadas: {xlsxPreview.headers.slice(0, 8).join(' | ')}
+                  {xlsxPreview.headers.length > 8 ? ' | ...' : ''}
                 </div>
               ) : null}
 
@@ -1738,7 +1782,7 @@ export default function ImportsPage() {
                   <Button type="button" size="sm" variant="ghost" onClick={() => setShowXlsxSample((s) => !s)}>
                     {showXlsxSample ? 'Ocultar preview' : 'Ver preview'}
                   </Button>
-                  <span className="upload-hint">Muestra: 6 filas · 8 columnas</span>
+                  <span className="upload-hint">Muestra: 6 filas | 8 columnas</span>
                 </div>
               ) : null}
 
@@ -1767,7 +1811,7 @@ export default function ImportsPage() {
                 </div>
               ) : showXlsxSample ? (
                 <div className="empty mt-2">
-                  {xlsxLoading ? 'Previsualizando…' : 'No se pudieron leer filas de muestra.'}
+                  {xlsxLoading ? 'Previsualizando...' : 'No se pudieron leer filas de muestra.'}
                 </div>
               ) : null}
             </details>
@@ -1792,7 +1836,7 @@ export default function ImportsPage() {
                   inputMode="numeric"
                   className="w-140"
                 />
-                {txPreviewLoading ? <span className="upload-hint">Analizando…</span> : null}
+                {txPreviewLoading ? <span className="upload-hint">Analizando...</span> : null}
                 {txPreview?.confidence != null ? (
                   <span className="upload-hint">Confianza: {(txPreview.confidence * 100).toFixed(0)}%</span>
                 ) : null}
@@ -1818,7 +1862,7 @@ export default function ImportsPage() {
               variant="ghost"
               onClick={() => {
                 batchAbortRef.current.abort = true
-                toast.push({ tone: 'warning', title: 'Batch', message: 'Cancelación solicitada. Se parará al terminar el fichero actual.' })
+                toast.push({ tone: 'warning', title: 'Batch', message: 'Cancelacion solicitada. Se parara al terminar el fichero actual.' })
               }}
             >
               Cancelar
@@ -1832,7 +1876,7 @@ export default function ImportsPage() {
             </summary>
             <div className="upload-hint mt-8">
               Tip: si tus ficheros incluyen el periodo en el nombre (p. ej. <span className="mono">2026-03</span> o <span className="mono">202603</span>),
-              se usará automáticamente al subir Caja.
+              se usara automaticamente al subir Caja.
             </div>
             <div className="table-wrap mt-12">
               <table className="table table-fixed">
@@ -1860,8 +1904,8 @@ export default function ImportsPage() {
                           <div className="fw-700">{it.file.name}</div>
                           {it.message ? <div className="upload-hint">{it.message}</div> : null}
                         </td>
-                        <td className="mono upload-hint">{it.period || '—'}</td>
-                        <td className="upload-hint">{it.target || '—'}</td>
+                        <td className="mono upload-hint">{it.period || '-'}</td>
+                        <td className="upload-hint">{it.target || '-'}</td>
                         <td>
                           <span className={`badge ${it.status === 'done' ? 'ok' : it.status === 'error' ? 'err' : it.status === 'uploading' ? 'warn' : ''}`}>
                             {it.status}
@@ -1876,7 +1920,7 @@ export default function ImportsPage() {
         ) : null}
         {file && isCsv ? (
           <div className="upload-hint mt-2">
-            Si es un CSV “de Excel” con varias tablas/gráficas, suele romperse al exportar. Mejor sube el <strong>XLSX original</strong> y usa el modo
+            Si es un CSV de Excel con varias tablas o graficas, suele romperse al exportar. Mejor sube el <strong>XLSX original</strong> y usa el modo
             guiado para elegir cabecera.
           </div>
         ) : null}
@@ -1891,7 +1935,7 @@ export default function ImportsPage() {
           </div>
         ) : (
           <div className="upload-hint mt-2">
-            Universal es para análisis/insights (no recalcula KPIs de Caja).
+            Universal es para analisis e insights; no recalcula KPIs de Caja.
           </div>
         )}
       </div>
@@ -1902,13 +1946,13 @@ export default function ImportsPage() {
           <div className="card-pad-sm">
           <h3 className="h3-reset">Asistente de mapeo (Caja)</h3>
           <div className="upload-hint">
-            Selecciona qué columnas significan <strong>fecha</strong> e <strong>importe</strong>. El resto es opcional.
+            Selecciona que columnas significan <strong>fecha</strong> e <strong>importe</strong>. El resto es opcional.
           </div>
           <div className="upload-row mt-12">
             <label className="stack">
               <span className="upload-hint">Fecha (txn_date)</span>
               <select value={txnDateCol} onChange={(e) => setTxnDateCol(e.target.value)}>
-                <option value="">—</option>
+                <option value="">-</option>
                 {txPreview.headers.map((h) => (
                   <option key={`d-${h}`} value={h}>
                     {h}
@@ -2005,19 +2049,19 @@ export default function ImportsPage() {
       <details className="imports-support-details" open={importsSupportOpen} ref={exceptionSectionRef}>
         <summary>
           <div>
-            <div className="fw-700">Excepciones e historial</div>
-            <div className="upload-hint">Bloqueos, calidad e imports anteriores solo cuando necesitas intervenir o auditar.</div>
+            <div className="fw-700">Soporte operativo</div>
+            <div className="upload-hint">Solo abre este bloque si necesitas resolver, reintentar o auditar una carga.</div>
           </div>
           <div className="row row-center row-wrap gap-8">
             <span className={`badge ${attentionSummary.blocked ? 'err' : 'ok'}`}>{attentionSummary.blocked} bloqueados</span>
             <span className={`badge ${attentionSummary.warnings ? 'warn' : 'ok'}`}>{attentionSummary.warnings} con avisos</span>
-            <span className={`badge ${attentionSummary.technical ? 'err' : 'ok'}`}>{attentionSummary.technical} técnicos</span>
+            <span className={`badge ${attentionSummary.technical ? 'err' : 'ok'}`}>{attentionSummary.technical} tecnicos</span>
           </div>
         </summary>
         <div className="imports-support-body">
           {!data?.length ? (
             <div className="card section">
-              <div className="empty">Todavía no hay imports ni excepciones abiertas.</div>
+              <div className="empty">Todavia no hay imports ni excepciones abiertas.</div>
             </div>
           ) : (
             <>
@@ -2026,7 +2070,7 @@ export default function ImportsPage() {
                   <div>
                     <div className="fw-700">Bandeja prioritaria</div>
                     <div className="upload-hint">
-                      Prioriza bloqueos, avisos de calidad y fallos técnicos antes de dar por bueno el periodo.
+                      Prioriza bloqueos, avisos de calidad y fallos tecnicos antes de dar por bueno el periodo.
                     </div>
                   </div>
                   <span className="badge">{attentionImports.length} casos a revisar</span>
@@ -2052,7 +2096,7 @@ export default function ImportsPage() {
                             {qualityOpenId === imp.id ? 'Cerrar' : 'Abrir'}
                           </Button>
                         </div>
-                        <div className="mt-8 fw-700">{top?.title || 'Revisión pendiente'}</div>
+                        <div className="mt-8 fw-700">{top?.title || 'Revision pendiente'}</div>
                         <div className="upload-hint mt-1">{top?.detail || 'Hay incidencias abiertas en esta carga.'}</div>
                         <div className="upload-hint mt-8">
                           <strong>Siguiente paso:</strong> {top?.action || 'Revisar la carga.'}
@@ -2068,7 +2112,7 @@ export default function ImportsPage() {
               {latestImport ? (
                 <div className="card section soft">
                   <div className="mini-row row-center row-wrap">
-                    <strong>Último import</strong>
+                    <strong>Ultimo import</strong>
                     <span className="upload-hint">{new Date(latestImport.createdAt).toLocaleString()}</span>
                   </div>
 
@@ -2101,13 +2145,13 @@ export default function ImportsPage() {
               <div className="card section soft">
                 <div className="mini-row row-baseline mb-12">
                   <h3 className="m-0">Historial operativo</h3>
-                  <span className="upload-hint">Últimas cargas, reintentos y detalle de calidad cuando necesites mirar hacia atrás.</span>
+                  <span className="upload-hint">Ultimas cargas, reintentos y detalle de calidad solo cuando necesites mirar atras.</span>
                 </div>
 
                 <div className="row row-between row-center row-wrap gap-8 fs-12 mt-2 mb-2">
                   <label className="upload-hint row row-center gap-8">
                     <input type="checkbox" checked={showAllImports} onChange={(e) => setShowAllImports(e.target.checked)} />
-                    Mostrar más
+                    Mostrar mas
                   </label>
 
                   <details>
@@ -2125,7 +2169,7 @@ export default function ImportsPage() {
                       </label>
                       <label className="upload-hint row row-center gap-8">
                         <input type="checkbox" checked={showDeadImports} onChange={(e) => setShowDeadImports(e.target.checked)} />
-                        Incluir DEAD (técnico)
+                        Incluir DEAD (tecnico)
                       </label>
                     </div>
                   </details>
@@ -2134,8 +2178,8 @@ export default function ImportsPage() {
                 <table className="table">
                   <thead>
                     <tr>
-                      <th>Qué pasó</th>
-                      <th>Situación</th>
+                      <th>Que paso</th>
+                      <th>Situacion</th>
                       <th>Siguiente paso</th>
                     </tr>
                   </thead>

@@ -58,14 +58,14 @@ public final class BudgetSemanticDictionary {
     private static DictionaryPayload loadBase() {
         try (InputStream in = BudgetSemanticDictionary.class.getResourceAsStream(BASE_RESOURCE)) {
             if (in == null) {
-                throw new IllegalStateException("No se encuentra el diccionario semántico base " + BASE_RESOURCE);
+                throw new IllegalStateException("No se encuentra el diccionario semantico base " + BASE_RESOURCE);
             }
             DictionaryPayload payload = OBJECT_MAPPER.readValue(in, DictionaryPayload.class);
             return payload == null || payload.concepts() == null
                 ? new DictionaryPayload(new LinkedHashMap<>())
                 : payload;
         } catch (Exception ex) {
-            throw new IllegalStateException("No se pudo cargar el diccionario semántico base.", ex);
+            throw new IllegalStateException("No se pudo cargar el diccionario semantico base.", ex);
         }
     }
 

@@ -29,4 +29,19 @@ class BudgetInsightsCalculatorTest {
         assertThat(result.topDrivers()).allMatch(item -> !"CLOSING_BALANCE".equals(item.semanticKind()));
         assertThat(result.topDrivers()).allMatch(item -> !"628".equals(item.code()));
     }
+
+    @Test
+    void computes_insights_from_wide_sources_with_separate_code_and_description_columns() {
+        String csv = ""
+            + "Codigo,Partida,Descripcion,ENERO,FEBRERO,MARZO,ABRIL,MAYO,JUNIO,JULIO,AGOSTO,SEPTIEMBRE,OCTUBRE,NOVIEMBRE,DICIEMBRE\n"
+            + "700.01,51000,Ventas retail,100,100,100,100,100,100,100,100,100,100,100,100\n"
+            + "640,21000,Sueldos y salarios,40,40,40,40,40,40,40,40,40,40,40,40\n";
+
+        var result = BudgetInsightsCalculator.compute("plan.csv", Instant.parse("2026-08-22T10:00:00Z"), csv.getBytes(StandardCharsets.UTF_8), 1000);
+
+        assertThat(result.topDrivers()).extracting(item -> item.code())
+            .contains("700.01", "640");
+        assertThat(result.topDrivers()).extracting(item -> item.label())
+            .contains("Ventas retail", "Sueldos y salarios");
+    }
 }

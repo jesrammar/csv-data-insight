@@ -18,6 +18,7 @@ type Props = {
   valueSuffix?: string
   className?: string
   height?: number
+  activeDataIndex?: number | null
   onClick?: (params: any) => void
   onAxisHover?: (axisValue: string) => void
   onLeave?: () => void
@@ -94,42 +95,45 @@ function baseOption(module: ChartModule): EChartsCoreOption {
     backgroundColor: 'transparent',
     color: MODULE_PALETTES[module] || MODULE_PALETTES.default,
     animation: true,
-    animationDuration: 650,
+    animationDuration: 820,
+    animationDelay: 40,
     animationEasing: 'cubicOut',
-    animationDurationUpdate: 260,
+    animationDurationUpdate: 320,
     animationEasingUpdate: 'cubicOut',
-    textStyle: { color: '#e2e8f0', fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif', fontSize: 12 },
-    grid: { left: 16, right: 16, top: 34, bottom: 30, containLabel: true },
+    textStyle: { color: '#e2e8f0', fontFamily: 'Manrope, Segoe UI, sans-serif', fontSize: 13 },
+    grid: { left: 18, right: 18, top: 54, bottom: 38, containLabel: true },
     legend: {
-      top: 0,
+      top: 4,
       left: 0,
       itemWidth: 10,
       itemHeight: 10,
-      itemGap: 12,
+      itemGap: 14,
       icon: 'roundRect',
-      textStyle: { color: 'rgba(226, 232, 240, 0.78)', fontSize: 12 }
+      textStyle: { color: 'rgba(226, 232, 240, 0.82)', fontSize: 13, fontWeight: 700 },
+      padding: [0, 2, 0, 2]
     },
     xAxis: {
       axisLine: { lineStyle: { color: 'rgba(148, 163, 184, 0.25)', width: 1 } },
       axisTick: { show: false },
-      axisLabel: { color: 'rgba(226, 232, 240, 0.72)', fontSize: 11, margin: 12 },
+      axisLabel: { color: 'rgba(226, 232, 240, 0.74)', fontSize: 12, margin: 13, fontWeight: 700 },
       splitLine: { show: false }
     },
     yAxis: {
       axisLine: { show: false },
       axisTick: { show: false },
-      axisLabel: { color: 'rgba(226, 232, 240, 0.66)', fontSize: 11, margin: 12 },
+      axisLabel: { color: 'rgba(226, 232, 240, 0.68)', fontSize: 11, margin: 12, fontWeight: 700 },
       splitLine: { show: true, lineStyle: { color: 'rgba(148, 163, 184, 0.12)', width: 1 } }
     },
     tooltip: {
       trigger: 'axis',
       renderMode: 'richText',
+      confine: true,
       borderWidth: 1,
-      backgroundColor: 'rgba(15, 23, 42, 0.95)',
+      backgroundColor: 'rgba(10, 18, 32, 0.96)',
       borderColor: 'rgba(148, 163, 184, 0.22)',
-      padding: [10, 12],
-      extraCssText: 'box-shadow: 0 18px 40px rgba(2, 8, 20, 0.45); border-radius: 12px;',
-      textStyle: { color: '#e2e8f0', fontSize: 12 },
+      padding: [12, 14],
+      extraCssText: 'box-shadow: 0 24px 52px rgba(2, 8, 20, 0.52); border-radius: 16px; backdrop-filter: blur(12px);',
+      textStyle: { color: '#e2e8f0', fontSize: 13, fontWeight: 700, lineHeight: 20 },
       axisPointer: {
         type: 'cross',
         crossStyle: { color: 'rgba(148, 163, 184, 0.2)' },
@@ -148,7 +152,7 @@ function baseOption(module: ChartModule): EChartsCoreOption {
       {
         query: { maxWidth: 520 },
         option: {
-          grid: { left: 12, right: 12, top: 28, bottom: 26, containLabel: true },
+          grid: { left: 12, right: 12, top: 42, bottom: 26, containLabel: true },
           legend: { itemGap: 8, itemWidth: 9, itemHeight: 9, textStyle: { fontSize: 11 } },
           xAxis: { axisLabel: { fontSize: 10, margin: 10 } },
           yAxis: { axisLabel: { fontSize: 10, margin: 10 } }
@@ -176,6 +180,7 @@ function polishSeries(option: any): any {
       if (base.showSymbol == null) base.showSymbol = false
       if (base.symbol == null) base.symbol = 'circle'
       if (base.symbolSize == null) base.symbolSize = 7
+      if (base.areaStyle == null) base.areaStyle = { opacity: 0.08 }
 
       const lineStyle = { ...(base.lineStyle || {}) }
       if (lineStyle.width == null) lineStyle.width = 3
@@ -200,11 +205,11 @@ function polishSeries(option: any): any {
     }
 
     if (type === 'bar') {
-      if (base.barMaxWidth == null) base.barMaxWidth = 26
+      if (base.barMaxWidth == null) base.barMaxWidth = 28
       const itemStyle = { ...(base.itemStyle || {}) }
-      if (itemStyle.borderRadius == null) itemStyle.borderRadius = 8
-      if (itemStyle.shadowBlur == null) itemStyle.shadowBlur = 16
-      if (itemStyle.shadowOffsetY == null) itemStyle.shadowOffsetY = 10
+      if (itemStyle.borderRadius == null) itemStyle.borderRadius = [10, 10, 8, 8]
+      if (itemStyle.shadowBlur == null) itemStyle.shadowBlur = 18
+      if (itemStyle.shadowOffsetY == null) itemStyle.shadowOffsetY = 12
       if (itemStyle.shadowColor == null) itemStyle.shadowColor = 'rgba(2, 8, 20, 0.5)'
       base.itemStyle = itemStyle
       base.emphasis = {
@@ -303,6 +308,7 @@ export default function EChart({
   valueSuffix = '',
   className,
   height,
+  activeDataIndex,
   onClick,
   onAxisHover,
   onLeave
@@ -316,22 +322,26 @@ export default function EChart({
     const withTheme = mergeOptions(baseOption(module), option)
     const withZoom = withAutoZoom(withTheme as any)
     const withPolish = polishSeries(withZoom as any)
+    const hasXAxis = Boolean((option as any)?.xAxis)
+    const customTooltipFormatter = (option as any)?.tooltip?.formatter
     const extraTooltip = {
-      tooltip: {
-        formatter: (params: any) => {
-          const items = Array.isArray(params) ? params : [params]
-          const axisLabel = String(items?.[0]?.axisValue ?? items?.[0]?.name ?? '')
-          const rows = items
-            .map((p: any) => {
-              const name = String(p?.seriesName ?? '')
-              const value = defaultFormat(extractSeriesDataPoint(p?.data), valueSuffix)
-              return `${name}: ${value}`
-            })
-            .join('\n')
-          return `${axisLabel}\n${rows}`
-        }
-      },
-      axisPointer: { link: [{ xAxisIndex: 'all' }] }
+      tooltip: customTooltipFormatter
+        ? {}
+        : {
+            formatter: (params: any) => {
+              const items = Array.isArray(params) ? params : [params]
+              const axisLabel = String(items?.[0]?.axisValue ?? items?.[0]?.name ?? '')
+              const rows = items
+                .map((p: any) => {
+                  const name = String(p?.seriesName ?? '')
+                  const value = defaultFormat(extractSeriesDataPoint(p?.data), valueSuffix)
+                  return `${name}: ${value}`
+                })
+                .join('\n')
+              return rows ? `${axisLabel}\n${rows}` : axisLabel
+            }
+          },
+      ...(hasXAxis ? { axisPointer: { link: [{ xAxisIndex: 'all' }] } } : {})
     }
     return mergeOptions(withPolish as any, extraTooltip as any)
   }, [module, option, valueSuffix])
@@ -435,6 +445,20 @@ export default function EChart({
     if (!ready) return
     chartRef.current?.setOption(mergedOption, { notMerge: true, lazyUpdate: true })
   }, [mergedOption, ready])
+
+  useEffect(() => {
+    if (!ready) return
+    const chart = chartRef.current
+    if (!chart) return
+
+    try {
+      chart.dispatchAction({ type: 'downplay', seriesIndex: 0 })
+      if (activeDataIndex == null || activeDataIndex < 0) return
+      chart.dispatchAction({ type: 'highlight', seriesIndex: 0, dataIndex: activeDataIndex })
+    } catch {
+      // ignore
+    }
+  }, [activeDataIndex, ready])
 
   const downloadPng = () => {
     const chart = chartRef.current

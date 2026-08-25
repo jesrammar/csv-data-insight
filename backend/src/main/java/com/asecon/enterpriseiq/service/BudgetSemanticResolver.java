@@ -61,28 +61,151 @@ public final class BudgetSemanticResolver {
     );
     private static final Map<String, String> EXPLICIT_NATURE_VALUES = Map.ofEntries(
         Map.entry("revenue", "REVENUE"),
+        Map.entry("ingreso", "REVENUE"),
+        Map.entry("ingreso operativo", "REVENUE"),
+        Map.entry("ingreso de explotacion", "REVENUE"),
+        Map.entry("ingreso recurrente", "REVENUE"),
+        Map.entry("canon facturado", "REVENUE"),
+        Map.entry("operating revenue", "REVENUE"),
+        Map.entry("operating income", "REVENUE"),
+        Map.entry("sales revenue", "REVENUE"),
+        Map.entry("turnover", "REVENUE"),
+        Map.entry("recurring revenue", "REVENUE"),
+        Map.entry("managed service revenue", "REVENUE"),
+        Map.entry("commission income", "REVENUE"),
+        Map.entry("royalty income", "REVENUE"),
+        Map.entry("franchise income", "REVENUE"),
         Map.entry("other operating income", "OTHER_OPERATING_INCOME"),
+        Map.entry("operating grant", "OTHER_OPERATING_INCOME"),
+        Map.entry("otro ingreso operativo", "OTHER_OPERATING_INCOME"),
+        Map.entry("otros ingresos operativos", "OTHER_OPERATING_INCOME"),
+        Map.entry("subvencion explotacion", "OTHER_OPERATING_INCOME"),
+        Map.entry("subvenciones explotacion", "OTHER_OPERATING_INCOME"),
+        Map.entry("supplier rebate", "OTHER_OPERATING_INCOME"),
+        Map.entry("rappel proveedor", "OTHER_OPERATING_INCOME"),
+        Map.entry("commercial rebate", "OTHER_OPERATING_INCOME"),
+        Map.entry("cost recovery", "OTHER_OPERATING_INCOME"),
+        Map.entry("operating rebate", "OTHER_OPERATING_INCOME"),
         Map.entry("subtotal revenue", "REVENUE"),
         Map.entry("opex", "OPEX"),
+        Map.entry("operating expense", "OPEX"),
+        Map.entry("operating expenses", "OPEX"),
+        Map.entry("gasto operativo", "OPEX"),
+        Map.entry("gastos operativos", "OPEX"),
+        Map.entry("coste operativo", "OPEX"),
+        Map.entry("costes operativos", "OPEX"),
+        Map.entry("costes generales", "OPEX"),
+        Map.entry("cost of goods sold", "OPEX"),
+        Map.entry("labor cost", "OPEX"),
+        Map.entry("labour cost", "OPEX"),
+        Map.entry("arrendamientos y canones", "OPEX"),
+        Map.entry("software license", "OPEX"),
+        Map.entry("travel expense", "OPEX"),
         Map.entry("subtotal opex", "OPEX"),
         Map.entry("operating adjustment", "OPERATING_ADJUSTMENT"),
+        Map.entry("ajuste operativo", "OPERATING_ADJUSTMENT"),
+        Map.entry("ajustes operativos", "OPERATING_ADJUSTMENT"),
         Map.entry("inventory variation", "OPERATING_ADJUSTMENT"),
+        Map.entry("inventory adjustment", "OPERATING_ADJUSTMENT"),
+        Map.entry("variacion de existencias", "OPERATING_ADJUSTMENT"),
+        Map.entry("regularizacion de existencias", "OPERATING_ADJUSTMENT"),
+        Map.entry("cash inflow", "CASH_INFLOW"),
+        Map.entry("cashflow inflow", "CASH_INFLOW"),
         Map.entry("depreciation amortization", "DEPRECIATION_AMORTIZATION"),
         Map.entry("depreciation", "DEPRECIATION_AMORTIZATION"),
+        Map.entry("amortizacion", "DEPRECIATION_AMORTIZATION"),
+        Map.entry("amortizacion inmovilizado", "DEPRECIATION_AMORTIZATION"),
+        Map.entry("depreciation expense", "DEPRECIATION_AMORTIZATION"),
+        Map.entry("amortization expense", "DEPRECIATION_AMORTIZATION"),
         Map.entry("financial result", "FINANCIAL_RESULT"),
+        Map.entry("resultado financiero", "FINANCIAL_RESULT"),
         Map.entry("financial expense", "FINANCIAL_EXPENSE"),
+        Map.entry("gasto financiero", "FINANCIAL_EXPENSE"),
+        Map.entry("gastos financieros", "FINANCIAL_EXPENSE"),
+        Map.entry("interest expense", "FINANCIAL_EXPENSE"),
+        Map.entry("exchange loss", "FINANCIAL_EXPENSE"),
+        Map.entry("negative exchange difference", "FINANCIAL_EXPENSE"),
         Map.entry("financial income", "FINANCIAL_INCOME"),
+        Map.entry("ingreso financiero", "FINANCIAL_INCOME"),
+        Map.entry("ingresos financieros", "FINANCIAL_INCOME"),
+        Map.entry("interest income", "FINANCIAL_INCOME"),
+        Map.entry("intereses cobrados", "FINANCIAL_INCOME"),
+        Map.entry("exchange gain", "FINANCIAL_INCOME"),
+        Map.entry("positive exchange difference", "FINANCIAL_INCOME"),
         Map.entry("capex", "CAPEX"),
-        Map.entry("cashflow inflow", "CASH_INFLOW"),
+        Map.entry("inversion", "CAPEX"),
+        Map.entry("inmovilizado", "CAPEX"),
+        Map.entry("capital expenditure", "CAPEX"),
+        Map.entry("hardware purchase", "CAPEX"),
+        Map.entry("leasehold improvement", "CAPEX"),
+        Map.entry("shop fit out", "CAPEX"),
+        Map.entry("cobro", "CASH_INFLOW"),
+        Map.entry("cobros", "CASH_INFLOW"),
+        Map.entry("sales collections", "CASH_INFLOW"),
+        Map.entry("customer cash receipts", "CASH_INFLOW"),
+        Map.entry("cash outflow", "CASH_OUTFLOW"),
         Map.entry("cashflow outflow", "CASH_OUTFLOW"),
+        Map.entry("pago", "CASH_OUTFLOW"),
+        Map.entry("pagos", "CASH_OUTFLOW"),
+        Map.entry("payroll payments", "CASH_OUTFLOW"),
+        Map.entry("rent payments", "CASH_OUTFLOW"),
         Map.entry("cashflow tax", "CASHFLOW_TAX"),
+        Map.entry("impuesto caja", "CASHFLOW_TAX"),
+        Map.entry("cash tax", "CASHFLOW_TAX"),
+        Map.entry("tax payment", "CASHFLOW_TAX"),
+        Map.entry("tax installment", "CASHFLOW_TAX"),
+        Map.entry("pago fraccionado", "CASHFLOW_TAX"),
         Map.entry("opening balance", "OPENING_BALANCE"),
+        Map.entry("saldo inicial", "OPENING_BALANCE"),
+        Map.entry("opening cash", "OPENING_BALANCE"),
         Map.entry("closing balance", "CLOSING_BALANCE"),
+        Map.entry("saldo final", "CLOSING_BALANCE"),
+        Map.entry("ending cash", "CLOSING_BALANCE"),
         Map.entry("financing inflow", "FINANCING_INFLOW"),
-        Map.entry("financing outflow", "FINANCING_OUTFLOW")
+        Map.entry("financiacion recibida", "FINANCING_INFLOW"),
+        Map.entry("financing received", "FINANCING_INFLOW"),
+        Map.entry("prestamo recibido", "FINANCING_INFLOW"),
+        Map.entry("loan received", "FINANCING_INFLOW"),
+        Map.entry("loan drawdown", "FINANCING_INFLOW"),
+        Map.entry("shareholder funding", "FINANCING_INFLOW"),
+        Map.entry("aportacion socios", "FINANCING_INFLOW"),
+        Map.entry("financiacion socios", "FINANCING_INFLOW"),
+        Map.entry("financing outflow", "FINANCING_OUTFLOW"),
+        Map.entry("devolucion prestamo", "FINANCING_OUTFLOW"),
+        Map.entry("amortizacion prestamo", "FINANCING_OUTFLOW"),
+        Map.entry("loan repayment", "FINANCING_OUTFLOW"),
+        Map.entry("principal repayment", "FINANCING_OUTFLOW"),
+        Map.entry("devolucion socios", "FINANCING_OUTFLOW"),
+        Map.entry("cancelacion prestamo", "FINANCING_OUTFLOW"),
+        Map.entry("tax", "TAX"),
+        Map.entry("impuesto", "TAX"),
+        Map.entry("impuesto sociedades", "TAX"),
+        Map.entry("corporate tax", "TAX"),
+        Map.entry("income tax", "TAX"),
+        Map.entry("tax expense", "TAX"),
+        Map.entry("current tax", "TAX"),
+        Map.entry("deferred tax", "TAX"),
+        Map.entry("impuesto corriente", "TAX"),
+        Map.entry("impuesto diferido", "TAX"),
+        Map.entry("assumption", "ASSUMPTION"),
+        Map.entry("supuesto", "ASSUMPTION"),
+        Map.entry("forecast driver", "ASSUMPTION"),
+        Map.entry("average basket", "ASSUMPTION"),
+        Map.entry("average order value", "ASSUMPTION"),
+        Map.entry("occupancy rate", "ASSUMPTION"),
+        Map.entry("churn assumption", "ASSUMPTION")
     );
     private static final Set<String> CATEGORY_HEADER_ALIASES = Set.of(
-        "tipo", "tipo partida", "tipo registro", "categoria", "subcategoria", "clasificacion", "classification", "naturaleza", "line type", "category", "record type", "nature"
+        "tipo", "tipo partida", "tipo registro", "categoria", "subcategoria", "clasificacion", "classification",
+        "naturaleza", "naturaleza financiera", "financial nature", "financial group", "semantic group",
+        "line type", "category", "record type", "nature"
+    );
+    private static final Set<String> STRONG_NATURE_HEADER_ALIASES = Set.of(
+        "naturaleza", "nature", "financial nature", "naturaleza financiera", "financial group", "nature group",
+        "grupo financiero", "tipo partida", "tipo operacion", "line type", "record type", "semantic group"
+    );
+    private static final Set<String> SEMANTIC_NOISE_TOKENS = Set.of(
+        "de", "del", "la", "el", "los", "las", "y", "and", "of", "for", "to", "por", "para", "con", "en"
     );
     private static final Pattern NON_ASCII_MARKS = Pattern.compile("\\p{M}+");
     private static final Pattern CAMEL_BREAK = Pattern.compile("(?<=[a-z])(?=[A-Z])");
@@ -157,7 +280,9 @@ public final class BudgetSemanticResolver {
             ))
             .toList();
         boolean requiresConfirmation = deduped.values().stream()
-            .anyMatch(inference -> ESSENTIAL_HEADER_CONCEPTS.contains(inference.concept()) && inference.ambiguous());
+            .anyMatch(inference -> ESSENTIAL_HEADER_CONCEPTS.contains(inference.concept())
+                && (inference.score() < 0.58d
+                || (inference.ambiguous() && !hasStrongHeaderMatch(inference.concept(), inference.header(), clientKey))));
 
         return new Resolution(deduped, notes, requiresConfirmation);
     }
@@ -189,8 +314,10 @@ public final class BudgetSemanticResolver {
             double aliasScore = tokenOverlapScore(normalized, CATEGORY_HEADER_ALIASES);
             if (aliasScore < 0.34d) continue;
             double valueScore = natureValueScore(values);
-            double score = Math.min(1d, aliasScore * 0.55d + valueScore * 0.45d);
-            if (score < 0.35d) continue;
+            boolean strongHeader = tokenOverlapScore(normalized, STRONG_NATURE_HEADER_ALIASES) >= 0.84d;
+            if (!strongHeader && valueScore < 0.18d) continue;
+            double score = Math.min(1d, aliasScore * 0.45d + valueScore * 0.55d + (strongHeader ? 0.10d : 0d));
+            if (score < 0.42d) continue;
             List<String> reasons = new ArrayList<>();
             if (aliasScore > 0.3d) reasons.add("cabecera compatible con tipología de partida");
             if (valueScore > 0.3d) reasons.add("los valores parecen clasificar ingreso, gasto o inversión");
@@ -290,12 +417,32 @@ public final class BudgetSemanticResolver {
         expanded = expanded.replaceAll("\\bcta\\b", " cuenta ");
         expanded = expanded.replaceAll("\\bejerc\\b", " ejercicio ");
         expanded = expanded.replaceAll("\\bprev\\b", " prevision ");
+        expanded = expanded.replaceAll("\\bpresup\\b", " presupuesto ");
+        expanded = expanded.replaceAll("\\bfcst\\b", " forecast ");
+        expanded = expanded.replaceAll("\\bsubv\\b", " subvencion ");
+        expanded = expanded.replaceAll("\\bamort\\b", " amortizacion ");
+        expanded = expanded.replaceAll("\\bp\\s*l\\b", " profit loss ");
+        expanded = expanded.replaceAll("\\bpyg\\b", " perdidas ganancias ");
+        expanded = expanded.replaceAll("\\bcogs\\b", " cost of goods sold ");
+        expanded = expanded.replaceAll("\\brrhh\\b", " personal ");
+        expanded = expanded.replaceAll("\\bfx\\b", " exchange ");
+        expanded = expanded.replaceAll("\\bteleco\\b", " telefonia ");
+        expanded = expanded.replaceAll("\\bseg soc\\b", " seguridad social ");
+        expanded = expanded.replaceAll("\\bsegsocial\\b", " seguridad social ");
         expanded = expanded.replaceAll("\\breal\\b", " real ");
         expanded = expanded.replaceAll("\\bmeses\\b", " mes ");
         expanded = expanded.replaceAll("\\bingresos\\b", " ingreso ");
         expanded = expanded.replaceAll("\\bgastos\\b", " gasto ");
         expanded = expanded.replaceAll("\\bcostes\\b", " coste ");
         expanded = expanded.replaceAll("\\bventas\\b", " venta ");
+        expanded = expanded.replaceAll("\\bcompras\\b", " compra ");
+        expanded = expanded.replaceAll("\\bcobros\\b", " cobro ");
+        expanded = expanded.replaceAll("\\bpagos\\b", " pago ");
+        expanded = expanded.replaceAll("\\bprestamos\\b", " prestamo ");
+        expanded = expanded.replaceAll("\\bsubvenciones\\b", " subvencion ");
+        expanded = expanded.replaceAll("\\bamortizaciones\\b", " amortizacion ");
+        expanded = expanded.replaceAll("\\bimpuestos\\b", " impuesto ");
+        expanded = expanded.replaceAll("\\bnominas\\b", " nomina ");
         expanded = expanded.replaceAll("\\bactuals\\b", " actual ");
         expanded = expanded.replaceAll("\\brevenues\\b", " revenue ");
         expanded = expanded.replaceAll("\\bexpenses\\b", " expense ");
@@ -475,14 +622,14 @@ public final class BudgetSemanticResolver {
 
     private static double relatedScore(String concept, String normalizedHeader) {
         return switch (concept) {
-            case "BUDGET_AMOUNT" -> normalizedHeader.contains("budget") || normalizedHeader.contains("presupuesto") || normalizedHeader.contains("plan") ? 0.18d : 0d;
+            case "BUDGET_AMOUNT" -> normalizedHeader.contains("budget") || normalizedHeader.contains("presupuesto") || normalizedHeader.contains("plan") || normalizedHeader.contains("ppto") || normalizedHeader.contains("importe") ? 0.18d : 0d;
             case "ACTUAL_AMOUNT" -> normalizedHeader.contains("actual") || normalizedHeader.contains("real") || normalizedHeader.contains("ejecutado") ? 0.18d : 0d;
             case "FORECAST_AMOUNT" -> normalizedHeader.contains("forecast") || normalizedHeader.contains("prevision") || normalizedHeader.contains("estimate") ? 0.18d : 0d;
             case "VARIANCE" -> normalizedHeader.contains("desviacion") || normalizedHeader.contains("variance") || normalizedHeader.contains("delta") ? 0.18d : 0d;
-            case "PERIOD" -> normalizedHeader.contains("periodo") || normalizedHeader.contains("month") || normalizedHeader.contains("mes") ? 0.18d : 0d;
-            case "CONCEPT_CODE" -> normalizedHeader.contains("codigo") || normalizedHeader.contains("code") || normalizedHeader.contains("cuenta") ? 0.15d : 0d;
-            case "CONCEPT_NAME" -> normalizedHeader.contains("concepto") || normalizedHeader.contains("descripcion") || normalizedHeader.contains("name") ? 0.15d : 0d;
-            case "COST_CENTER" -> normalizedHeader.contains("centro") || normalizedHeader.contains("cost center") ? 0.15d : 0d;
+            case "PERIOD" -> normalizedHeader.contains("periodo") || normalizedHeader.contains("month") || normalizedHeader.contains("mes") || normalizedHeader.contains("ejercicio") ? 0.18d : 0d;
+            case "CONCEPT_CODE" -> normalizedHeader.contains("codigo") || normalizedHeader.contains("code") || normalizedHeader.contains("cuenta") || normalizedHeader.contains("ledger") ? 0.15d : 0d;
+            case "CONCEPT_NAME" -> normalizedHeader.contains("concepto") || normalizedHeader.contains("descripcion") || normalizedHeader.contains("name") || normalizedHeader.contains("epigrafe") || normalizedHeader.contains("denominacion") ? 0.15d : 0d;
+            case "COST_CENTER" -> normalizedHeader.contains("centro") || normalizedHeader.contains("cost center") || normalizedHeader.contains("analitic") ? 0.15d : 0d;
             case "DEPARTMENT" -> normalizedHeader.contains("departamento") || normalizedHeader.contains("department") ? 0.15d : 0d;
             case "CURRENCY" -> normalizedHeader.contains("moneda") || normalizedHeader.contains("currency") ? 0.15d : 0d;
             default -> 0d;
@@ -492,9 +639,40 @@ public final class BudgetSemanticResolver {
     private static double semanticRuleBoost(String concept, String normalized) {
         if (normalized == null || normalized.isBlank()) return 0d;
         return switch (concept) {
+            case "REVENUE" -> normalized.contains("revenue")
+                || normalized.contains("venta")
+                || normalized.contains("facturacion")
+                || normalized.contains("suscripcion")
+                || normalized.contains("abonado")
+                || normalized.contains("royalty")
+                || normalized.contains("franchise fee")
+                || normalized.contains("membership fee")
+                || normalized.contains("cuota socio")
+                || normalized.contains("cuota miembro")
+                || normalized.contains("service fee")
+                || normalized.contains("fee income")
+                || containsAll(normalized, "canon", "facturado")
+                || containsAll(normalized, "honorario", "recurrente")
+                || containsAll(normalized, "cifra", "negocio")
+                || containsAll(normalized, "operating", "revenue")
+                || containsAll(normalized, "operating", "income")
+                || containsAll(normalized, "service", "income")
+                || containsAll(normalized, "ingreso", "servicio")
+                || containsAll(normalized, "honorario", "facturado")
+                || containsAll(normalized, "ingreso", "operativo")
+                    ? 0.95d
+                    : 0d;
             case "OTHER_OPERATING_INCOME" -> containsAll(normalized, "operating", "income")
                 || containsAll(normalized, "ingreso", "operativo")
                 || containsAll(normalized, "ingreso", "explotacion")
+                || containsAll(normalized, "subvencion", "explotacion")
+                || containsAll(normalized, "operating", "grant")
+                || containsAll(normalized, "supplier", "rebate")
+                || containsAll(normalized, "rappel", "proveedor")
+                || containsAll(normalized, "bonificacion", "operativa")
+                || containsAll(normalized, "compensacion", "operativa")
+                || normalized.contains("ancillary income")
+                || normalized.contains("ingreso accesorio")
                     ? 0.95d
                     : 0d;
             case "OPENING_BALANCE" -> containsAll(normalized, "saldo", "inicial")
@@ -540,15 +718,71 @@ public final class BudgetSemanticResolver {
                         ? 0.98d
                         : 0.86d)
                     : 0d;
+            case "FINANCIAL_INCOME" -> containsAll(normalized, "ingreso", "financ")
+                || containsAll(normalized, "interest", "income")
+                || containsAll(normalized, "financial", "income")
+                || containsAll(normalized, "bank", "interest")
+                || containsAll(normalized, "interes", "cobrado")
+                || containsAll(normalized, "rendimiento", "financ")
+                || containsAll(normalized, "positive", "exchange")
+                || containsAll(normalized, "diferencia", "positiva")
+                    ? 0.99d
+                    : 0d;
+            case "FINANCIAL_EXPENSE" -> containsAll(normalized, "gasto", "financ")
+                || containsAll(normalized, "coste", "financ")
+                || containsAll(normalized, "interest", "expense")
+                || containsAll(normalized, "financial", "expense")
+                || containsAll(normalized, "interes", "pagado")
+                || containsAll(normalized, "comision", "bancaria")
+                || containsAll(normalized, "exchange", "loss")
+                || containsAll(normalized, "negative", "exchange")
+                || containsAll(normalized, "diferencia", "negativa")
+                || containsAll(normalized, "loan", "fee")
+                || containsAll(normalized, "bank", "fee")
+                    ? 0.99d
+                    : 0d;
             case "FINANCIAL_RESULT" -> containsAll(normalized, "resultado", "financ")
                 || containsAll(normalized, "financial", "result")
                 || containsAll(normalized, "net", "finance")
+                    ? 0.99d
+                    : 0d;
+            case "FINANCING_INFLOW" -> containsAll(normalized, "prestamo", "recibido")
+                || containsAll(normalized, "financiacion", "recibida")
+                || containsAll(normalized, "loan", "received")
+                || containsAll(normalized, "loan", "drawdown")
+                || containsAll(normalized, "financing", "inflow")
+                || containsAll(normalized, "aportacion", "socios")
+                || containsAll(normalized, "capital", "injection")
+                    ? 0.98d
+                    : 0d;
+            case "FINANCING_OUTFLOW" -> containsAll(normalized, "devolucion", "prestamo")
+                || containsAll(normalized, "amortizacion", "prestamo")
+                || containsAll(normalized, "loan", "repayment")
+                || containsAll(normalized, "financing", "outflow")
+                || containsAll(normalized, "principal", "repayment")
+                || containsAll(normalized, "debt", "repayment")
+                    ? 0.98d
+                    : 0d;
+            case "CASHFLOW_TAX" -> containsAll(normalized, "pago", "impuesto")
+                || containsAll(normalized, "impuesto", "caja")
+                || containsAll(normalized, "tax", "payment")
+                || containsAll(normalized, "fraccionamiento", "impuesto")
+                || containsAll(normalized, "hacienda", "pago")
+                || containsAll(normalized, "pago", "fraccionado")
+                || containsAll(normalized, "tax", "installment")
+                || containsAll(normalized, "vat", "payment")
+                || containsAll(normalized, "paid", "tax")
                     ? 0.98d
                     : 0d;
             case "TAX" -> normalized.contains("impuesto")
                 || normalized.contains("iva")
                 || normalized.contains("tax")
                 || normalized.contains("vat")
+                || containsAll(normalized, "income", "tax")
+                || containsAll(normalized, "corporate", "tax")
+                || containsAll(normalized, "impuesto", "corriente")
+                || containsAll(normalized, "impuesto", "diferido")
+                || containsAll(normalized, "deferred", "tax")
                     ? 0.9d
                     : 0d;
             case "OPEX" -> normalized.contains("compra")
@@ -559,11 +793,32 @@ public final class BudgetSemanticResolver {
                 || normalized.contains("sueldo")
                 || normalized.contains("salario")
                 || normalized.contains("nomina")
+                || normalized.contains("seguridad social")
                 || normalized.contains("alquiler")
+                || normalized.contains("arrendamiento")
                 || normalized.contains("rent")
+                || normalized.contains("lease expense")
                 || normalized.contains("insurance")
                 || normalized.contains("seguro")
+                || normalized.contains("honorario")
+                || normalized.contains("asesoria")
+                || normalized.contains("consultoria")
+                || normalized.contains("marketing")
+                || normalized.contains("publicidad")
+                || normalized.contains("transporte")
+                || normalized.contains("combustible")
+                || normalized.contains("telefonia")
+                || normalized.contains("telefono")
+                || normalized.contains("internet")
+                || containsToken(normalized, "gas")
+                || normalized.contains("telecom")
                 || normalized.contains("gestoria")
+                || normalized.contains("wages")
+                || normalized.contains("salary")
+                || normalized.contains("personnel")
+                || normalized.contains("benefit")
+                || normalized.contains("social charge")
+                || normalized.contains("social contribution")
                 || normalized.contains("advisory fee")
                 || normalized.contains("maintenance")
                 || normalized.contains("mantenimiento")
@@ -574,14 +829,41 @@ public final class BudgetSemanticResolver {
                 || normalized.contains("consumible")
                 || normalized.contains("suministro")
                 || normalized.contains("utility")
-                || normalized.contains("agua")
-                || normalized.contains("luz")
+                || normalized.contains("stationery")
+                || normalized.contains("office supply")
+                || normalized.contains("security service")
+                || normalized.contains("warehouse")
+                || normalized.contains("storage")
+                || normalized.contains("courier")
+                || normalized.contains("shipping")
+                || normalized.contains("freight")
+                || normalized.contains("merchant fee")
+                || normalized.contains("card fee")
+                || normalized.contains("hosting")
+                || normalized.contains("outsourcing")
+                || normalized.contains("subcontrat")
+                || normalized.contains("external service")
+                || normalized.contains("third party service")
+                || normalized.contains("cloud infrastructure")
+                || normalized.contains("software recurrente")
+                || normalized.contains("software license")
+                || normalized.contains("software licence")
+                || normalized.contains("saas")
+                || normalized.contains("licencia saas")
+                || containsToken(normalized, "agua")
+                || containsToken(normalized, "luz")
                 || normalized.contains("electric")
+                || containsAll(normalized, "servicio", "subcontrat")
+                || containsAll(normalized, "servicio", "logistic")
+                || containsAll(normalized, "servicio", "envas")
+                || containsAll(normalized, "servicio", "recolec")
+                || containsAll(normalized, "infraestructura", "cloud")
                     ? 0.94d
                     : 0d;
             case "OPERATING_ADJUSTMENT" -> containsAll(normalized, "variacion", "existencias")
                 || containsAll(normalized, "variation", "inventory")
                 || containsAll(normalized, "change", "inventory")
+                || containsAll(normalized, "ajuste", "operativo")
                     ? 0.96d
                     : 0d;
             case "CAPEX" -> normalized.contains("amortizacion")
@@ -591,11 +873,30 @@ public final class BudgetSemanticResolver {
                     : normalized.contains("inmovilizado")
                 || normalized.contains("capital expenditure")
                 || normalized.contains("asset purchase")
+                || normalized.contains("fixed asset")
                 || normalized.contains("investment")
+                || normalized.contains("leasehold improvement")
+                || normalized.contains("fit out")
+                || containsAll(normalized, "compra", "maquinaria")
+                || containsAll(normalized, "compra", "equipo")
+                || containsAll(normalized, "compra", "mobiliario")
+                || containsAll(normalized, "compra", "vehiculo")
+                || containsAll(normalized, "compra", "instalacion")
+                || containsAll(normalized, "purchase", "equipment")
+                || containsAll(normalized, "purchase", "hardware")
+                || containsAll(normalized, "purchase", "server")
+                || containsAll(normalized, "asset", "equipment")
+                || containsAll(normalized, "activo", "fijo")
+                || containsAll(normalized, "adquisicion", "equipo")
+                || containsAll(normalized, "adquisicion", "mobiliario")
+                || containsAll(normalized, "adquisicion", "vehiculo")
+                || containsAll(normalized, "inversion", "software")
+                || containsAll(normalized, "reforma", "instalacion")
                     ? 0.95d
                     : 0d;
             case "DEPRECIATION_AMORTIZATION" -> normalized.contains("amortizacion")
                 || normalized.contains("depreciation")
+                || containsAll(normalized, "dotacion", "amortizacion")
                     ? 0.95d
                     : 0d;
             case "ASSUMPTION" -> normalized.contains("hipotesis")
@@ -605,7 +906,19 @@ public final class BudgetSemanticResolver {
                 || containsToken(normalized, "ipc")
                 || containsToken(normalized, "euribor")
                 || containsToken(normalized, "precio")
+                || containsAll(normalized, "price", "unit")
                 || containsToken(normalized, "tarifa")
+                || normalized.contains("crecimiento")
+                || normalized.contains("volumen")
+                || normalized.contains("ticket medio")
+                || normalized.contains("average basket")
+                || normalized.contains("average order value")
+                || normalized.contains("occupancy")
+                || normalized.contains("occupancy rate")
+                || normalized.contains("headcount")
+                || containsAll(normalized, "mix", "comercial")
+                || containsAll(normalized, "sales", "mix")
+                || containsAll(normalized, "product", "mix")
                     ? 0.88d
                     : 0d;
             default -> 0d;
@@ -663,7 +976,7 @@ public final class BudgetSemanticResolver {
         for (String value : values) {
             String normalized = normalize(value);
             if (normalized.isBlank()) continue;
-            String concept = EXPLICIT_NATURE_VALUES.get(normalized);
+            String concept = normalizedExplicitNatureValues().get(normalized);
             if (concept != null) {
                 return new NatureInference(concept, 0.99d, "HIGH", false, List.of("clasificado por naturaleza explicita de origen"));
             }
@@ -676,6 +989,13 @@ public final class BudgetSemanticResolver {
         return aliasMatchScore(normalizedHeader, aliases.stream().map(BudgetSemanticResolver::normalize).collect(Collectors.toCollection(LinkedHashSet::new)));
     }
 
+    private static boolean hasStrongHeaderMatch(String concept, String header, String clientKey) {
+        String normalizedHeader = normalize(header);
+        double aliasScore = aliasMatchScore(normalizedHeader, normalizedAliases(concept, clientKey));
+        double relatedScore = relatedScore(concept, normalizedHeader);
+        return aliasScore >= 0.84d || (aliasScore >= 0.75d && relatedScore >= 0.15d);
+    }
+
     private static double aliasMatchScore(String normalizedCandidate, Collection<String> normalizedAliases) {
         double best = 0d;
         Set<String> candidateTokens = tokenSet(normalizedCandidate);
@@ -683,13 +1003,19 @@ public final class BudgetSemanticResolver {
             if (alias == null || alias.isBlank()) continue;
             String normalizedAlias = normalize(alias);
             if (normalizedAlias.isBlank()) continue;
+            Set<String> aliasTokens = tokenSet(normalizedAlias);
             if (normalizedCandidate.equals(normalizedAlias)) {
                 return 1d;
             }
-            if (normalizedCandidate.contains(normalizedAlias) || normalizedAlias.contains(normalizedCandidate)) {
+            boolean shortSingleTokenAlias = aliasTokens.size() == 1 && normalizedAlias.length() <= 4;
+            if (shortSingleTokenAlias) {
+                String aliasToken = aliasTokens.iterator().next();
+                if (candidateTokens.contains(aliasToken)) {
+                    best = Math.max(best, 0.84d);
+                }
+            } else if (normalizedCandidate.contains(normalizedAlias) || normalizedAlias.contains(normalizedCandidate)) {
                 best = Math.max(best, 0.84d);
             }
-            Set<String> aliasTokens = tokenSet(normalizedAlias);
             if (!candidateTokens.isEmpty() && !aliasTokens.isEmpty()) {
                 long common = candidateTokens.stream().filter(aliasTokens::contains).count();
                 double ratio = common / (double) Math.max(candidateTokens.size(), aliasTokens.size());
@@ -706,7 +1032,24 @@ public final class BudgetSemanticResolver {
         return List.of(normalized.split("\\s+")).stream()
             .map(String::trim)
             .filter(token -> !token.isBlank())
+            .filter(token -> !SEMANTIC_NOISE_TOKENS.contains(token))
             .collect(Collectors.toCollection(LinkedHashSet::new));
+    }
+
+    private static Map<String, String> normalizedExplicitNatureValues() {
+        return NormalizedExplicitNatureHolder.VALUES;
+    }
+
+    private static final class NormalizedExplicitNatureHolder {
+        private static final Map<String, String> VALUES = EXPLICIT_NATURE_VALUES.entrySet().stream()
+            .collect(Collectors.toMap(
+                entry -> BudgetSemanticResolver.normalize(entry.getKey()),
+                Map.Entry::getValue,
+                (left, right) -> left,
+                LinkedHashMap::new
+            ));
+
+        private NormalizedExplicitNatureHolder() {}
     }
 
     private static Set<String> normalizedAliases(String concept, String clientKey) {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { getCompanies, getCompanySettings, getUserRole, logout } from '../api'
@@ -7,10 +7,6 @@ import Button from './ui/Button'
 import Icon from './ui/Icon'
 import { setActiveCompanySelection, useCompanySelection } from '../hooks/useCompany'
 import { getWorkPeriod, nowYm, setWorkPeriod } from '../utils/workPeriod'
-
-function routeMatches(pathname: string, prefixes: string[]) {
-  return prefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`))
-}
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate()
@@ -40,32 +36,6 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const role = getUserRole()
   const isClient = role === 'CLIENTE'
   const isAdmin = role === 'ADMIN'
-  const isConsultor = role === 'CONSULTOR'
-  const activePeriod = companyId ? getWorkPeriod(companyId) || nowYm() : nowYm()
-  const monthlyCloseHref = `/monthly-close?period=${encodeURIComponent(activePeriod)}`
-
-  const pathname = location.pathname
-  const analysisRouteActive = useMemo(
-    () =>
-      routeMatches(pathname, [
-        '/imports',
-        '/dashboard',
-        '/cash',
-        '/tribunal',
-        '/universal',
-        '/pipeline',
-        '/advisor',
-        '/automation',
-        '/tools',
-        '/guides',
-        '/portfolio',
-        '/settings/company'
-      ]),
-    [pathname]
-  )
-  const adminRouteActive = useMemo(() => routeMatches(pathname, ['/admin']), [pathname])
-  const [analysisOpen, setAnalysisOpen] = useState(() => analysisRouteActive)
-  const [adminOpen, setAdminOpen] = useState(() => adminRouteActive)
 
   useEffect(() => {
     const list = (companies || []) as any[]
@@ -110,17 +80,15 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   }, [isClient])
 
   useEffect(() => {
-    if (analysisRouteActive) setAnalysisOpen(true)
-  }, [analysisRouteActive])
-
-  useEffect(() => {
-    if (adminRouteActive) setAdminOpen(true)
-  }, [adminRouteActive])
-
-  useEffect(() => {
     document.body.classList.remove('density-compact')
     localStorage.removeItem('uiDensity')
   }, [])
+
+  useEffect(() => {
+    window.scrollTo(0, 0)
+    const mainArea = document.querySelector('.main-area')
+    if (mainArea instanceof HTMLElement) mainArea.scrollTop = 0
+  }, [location.pathname])
 
   async function handleLogout() {
     try {
@@ -173,105 +141,22 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           ) : (
             <>
               <div className="nav-section">Ruta consultora</div>
-              <NavLink to="/overview" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-                <Icon name="overview" />
-                Vista ejecutiva
-              </NavLink>
-              <NavLink to={monthlyCloseHref} className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-                <Icon name="overview" />
-                Cierre mensual
-              </NavLink>
-              <NavLink to="/reports" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-                <Icon name="reports" />
-                Entregables
-              </NavLink>
               <NavLink to="/budget" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
                 <Icon name="overview" />
                 Plan anual
               </NavLink>
-
-              <details className="nav-group mt-12" open={analysisOpen} onToggle={(event) => setAnalysisOpen(event.currentTarget.open)}>
-                <summary className="nav-section nav-section-toggle">
-                  <span>Analisis</span>
-                  <span className="nav-section-caret">{analysisOpen ? '-' : '+'}</span>
-                </summary>
-                <div className="nav-group-body">
-                  <NavLink to="/imports" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-                    <Icon name="imports" />
-                    Cargar datos
-                  </NavLink>
-                  <NavLink to="/dashboard" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-                    <Icon name="dashboard" />
-                    Caja
-                  </NavLink>
-                  <NavLink to="/universal" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-                    <Icon name="dashboard" />
-                    Universal
-                  </NavLink>
-                  <NavLink to="/tribunal" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-                    <Icon name="dashboard" />
-                    Tribunal
-                  </NavLink>
-                  <NavLink to="/pipeline" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-                    <Icon name="overview" />
-                    Pipeline
-                  </NavLink>
-                </div>
-              </details>
-
-              <details className="nav-group mt-3">
-                <summary className="nav-section nav-section-toggle">
-                  <span>Mas</span>
-                  <span className="nav-section-caret">+</span>
-                </summary>
-                <div className="nav-group-body">
-                  <NavLink to="/advisor" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-                    <Icon name="overview" />
-                    Seguimiento
-                  </NavLink>
-                  {isConsultor ? (
-                    <NavLink to="/portfolio" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-                      <Icon name="overview" />
-                      Cartera
-                    </NavLink>
-                  ) : null}
-                  <NavLink to="/settings/company" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-                    <Icon name="settings" />
-                    Ajustes empresa
-                  </NavLink>
-                  <NavLink to="/guides" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-                    <Icon name="help" />
-                    Guias
-                  </NavLink>
-                  <NavLink to="/tools" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-                    <Icon name="overview" />
-                    Herramientas
-                  </NavLink>
-                  <NavLink to="/automation" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-                    <Icon name="overview" />
-                    Automatizacion
-                  </NavLink>
-                </div>
-              </details>
-
-              {isAdmin ? (
-                <details className="nav-group mt-3" open={adminOpen} onToggle={(event) => setAdminOpen(event.currentTarget.open)}>
-                  <summary className="nav-section nav-section-toggle">
-                    <span>Admin</span>
-                    <span className="nav-section-caret">{adminOpen ? '-' : '+'}</span>
-                  </summary>
-                  <div className="nav-group-body">
-                    <NavLink to="/admin/users" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-                      <Icon name="admin" />
-                      Usuarios y cartera
-                    </NavLink>
-                    <NavLink to="/admin/storage" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-                      <Icon name="admin" />
-                      Storage cleanup
-                    </NavLink>
-                  </div>
-                </details>
-              ) : null}
+              <NavLink to="/imports" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+                <Icon name="imports" />
+                Cargar datos
+              </NavLink>
+              <NavLink to="/workforce" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+                <Icon name="dashboard" />
+                Trabajadores
+              </NavLink>
+              <NavLink to="/settings/company" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+                <Icon name="settings" />
+                Ajustes
+              </NavLink>
             </>
           )}
         </nav>

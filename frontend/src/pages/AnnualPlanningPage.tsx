@@ -1,4 +1,4 @@
-// @ts-nocheck
+﻿// @ts-nocheck
 import { useEffect, useMemo, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -19,7 +19,6 @@ import Section from '../components/ui/Section'
 import EChart from '../components/charts/EChart'
 import { EMPTY_DATA_TEXT, formatDateTime, formatMoney, formatText, normalizeText } from '../utils/format'
 import { useToast } from '../components/ui/ToastProvider'
-import { setWorkPeriod } from '../utils/workPeriod'
 
 function isGoldPlan(planRaw?: string | null) {
   const normalized = String(planRaw || '')
@@ -98,7 +97,7 @@ function buildNetComparisonChart(months: BudgetComparisonMonth[]) {
         data: months.map((item) => (item.hasActual ? toNumber(item.actualNet) : null))
       },
       {
-        name: 'Desviación',
+        name: 'Desviacion',
         type: 'line',
         yAxisIndex: 1,
         smooth: true,
@@ -188,10 +187,17 @@ export default function AnnualPlanningPage() {
   const annualReadingReady = structureValidated && annualInsightsReady && !comparisonReady
   const comparisonLive = comparisonReady && comparisonMonths.length > 0
   const showRecoveryHint = cameFromAnnualUpload && annualSourceDetected && !structureValidated
+  const statusBadgeClassName = wrongAnnualSource
+    ? 'badge annual-status-pill annual-status-pill-err'
+    : comparisonLive
+      ? 'badge annual-status-pill annual-status-pill-ok'
+      : annualSourceDetected
+        ? 'badge annual-status-pill annual-status-pill-warn'
+        : 'badge annual-status-pill'
 
   const statusTitle =
     wrongAnnualSource
-      ? 'La última carga no corresponde a un plan anual'
+      ? 'La ultima carga no corresponde a un plan anual'
       : !annualSourceDetected
         ? 'Sin presupuesto anual'
         : !structureValidated
@@ -204,15 +210,15 @@ export default function AnnualPlanningPage() {
 
   const statusDetail =
     wrongAnnualSource
-      ? normalizeText(workflow?.statusDetail || 'La última carga encaja mejor en otro flujo.')
+      ? normalizeText(workflow?.statusDetail || 'La ultima carga encaja mejor en otro flujo.')
       : !annualSourceDetected
-        ? 'Sube un presupuesto anual o una previsión mensual para activar esta vista.'
+        ? 'Sube un presupuesto anual o una prevision mensual para activar esta vista.'
         : !structureValidated
-          ? 'El fichero ya está dentro. Falta validar hoja y cabecera para convertirlo en una lectura anual útil.'
+          ? 'El fichero ya esta dentro. Falta validar hoja y cabecera para convertirlo en una lectura anual util.'
           : !annualInsightsReady
-            ? 'La estructura existe, pero todavía falta cerrar la lectura anual consultiva.'
+            ? 'La estructura existe, pero todavia falta cerrar la lectura anual consultiva.'
             : !comparisonReady
-              ? 'El plan ya puede leerse. La comparativa se activará cuando existan meses reales comparables.'
+              ? 'El plan ya puede leerse. La comparativa se activara cuando existan meses reales comparables.'
               : 'Ya existe contraste real vs presupuesto para este ejercicio.'
 
   const nextStepTitle = wrongAnnualSource
@@ -225,19 +231,19 @@ export default function AnnualPlanningPage() {
           ? 'Comparativa real vs presupuesto lista'
           : annualReadingReady
             ? 'Ya puedes leer el plan'
-            : 'El plan ya está dentro'
+            : 'El plan ya esta dentro'
 
   const nextStepDetail = wrongAnnualSource
-    ? 'La última carga encaja mejor en otro módulo. No la uses como presupuesto anual.'
+    ? 'La ultima carga encaja mejor en otro modulo. No la uses como presupuesto anual.'
     : !annualSourceDetected
       ? 'Necesitas un XLSX o CSV anual con meses y partidas para activar esta vista.'
       : needsValidation
-        ? 'El fichero ya se detectó como anual, pero todavía no se ha convertido en una lectura fiable.'
+        ? 'El fichero ya se detecto como anual, pero todavia no se ha convertido en una lectura fiable.'
         : comparisonLive
           ? `${comparison?.commonMonths || 0} meses ya comparan plan frente a real del ejercicio ${comparisonYear}.`
           : annualReadingReady
-            ? 'La lectura anual ya es útil. Falta que entren más meses reales para abrir la comparativa.'
-            : 'La estructura está entrando, pero aún no ofrece una lectura anual completa.'
+            ? 'La lectura anual ya es util. Falta que entren mas meses reales para abrir la comparativa.'
+            : 'La estructura esta entrando, pero aun no ofrece una lectura anual completa.'
 
   const comparisonMonthsByLabel = useMemo(() => {
     const map = new Map<string, BudgetComparisonMonth>()
@@ -255,18 +261,10 @@ export default function AnnualPlanningPage() {
     return monthKeyToPeriod(month.monthKey, comparisonYear)
   }
 
-  const openMonthWorkflow = (month?: BudgetComparisonMonth | null) => {
+  const openMonthAnalysis = (month?: BudgetComparisonMonth | null) => {
     const period = resolvePeriod(month)
-    if (!companyId || !period) return
-    setWorkPeriod(companyId, period)
-    navigate(`/monthly-close?period=${encodeURIComponent(period)}`)
-  }
-
-  const openMonthCash = (month?: BudgetComparisonMonth | null) => {
-    const period = resolvePeriod(month)
-    if (!companyId || !period) return
-    setWorkPeriod(companyId, period)
-    navigate('/dashboard', { state: { drillPeriod: period } })
+    if (!period) return
+    navigate('/budget/dashboard')
   }
 
   const drilldownCards = useMemo(() => {
@@ -307,7 +305,7 @@ export default function AnnualPlanningPage() {
       positive,
       'positive',
       positive
-        ? `Neto real ${formatMoney(positive.actualNet)} frente a ${formatMoney(positive.plannedNet)}. Desviación ${fmtDeltaMoney(positive.netVariance)}.`
+          ? `Neto real ${formatMoney(positive.actualNet)} frente a ${formatMoney(positive.plannedNet)}. Desviacion ${fmtDeltaMoney(positive.netVariance)}.`
         : ''
     )
 
@@ -317,7 +315,7 @@ export default function AnnualPlanningPage() {
       negative,
       'negative',
       negative
-        ? `Neto real ${formatMoney(negative.actualNet)} frente a ${formatMoney(negative.plannedNet)}. Desviación ${fmtDeltaMoney(negative.netVariance)}.`
+          ? `Neto real ${formatMoney(negative.actualNet)} frente a ${formatMoney(negative.plannedNet)}. Desviacion ${fmtDeltaMoney(negative.netVariance)}.`
         : ''
     )
 
@@ -364,7 +362,7 @@ export default function AnnualPlanningPage() {
       anchor.click()
       anchor.remove()
       URL.revokeObjectURL(url)
-      toast.push({ tone: 'success', title: 'Informe anual', message: 'La descarga del PDF ya está en marcha.' })
+      toast.push({ tone: 'success', title: 'Informe anual', message: 'La descarga del PDF ya esta en marcha.' })
     } catch (err: any) {
       toast.push({ tone: 'danger', title: 'Error', message: String(err?.message || err || 'No se pudo descargar el informe anual.') })
     } finally {
@@ -373,203 +371,283 @@ export default function AnnualPlanningPage() {
   }
 
   const primaryAction = wrongAnnualSource
-    ? { label: 'Abrir Universal', onClick: () => navigate('/universal') }
+    ? { label: 'Ir a Cargar datos', onClick: () => navigate('/imports?mode=universal&flow=budget') }
     : !annualSourceDetected
       ? { label: 'Subir presupuesto', onClick: () => navigate('/imports?mode=universal&flow=budget') }
       : !structureValidated
         ? { label: 'Corregir carga', onClick: () => navigate('/imports?mode=universal&flow=budget') }
         : !comparisonReady
-          ? { label: 'Abrir análisis técnico', onClick: () => navigate('/budget/dashboard') }
+          ? { label: 'Abrir analisis tecnico', onClick: () => navigate('/budget/dashboard') }
           : { label: 'Descargar informe anual', onClick: handleDownloadAnnualReport }
+
+  const annualOpsOpen = analysisLoading || wrongAnnualSource || needsValidation
+  const annualGuidanceOpen = annualOpsOpen || !comparisonLive
 
   return (
     <div className="annual-budget-page">
       <PageHeader
         title="Plan anual"
-        subtitle="Una vista breve para saber si el plan vale y dónde se desvía."
-        actions={<span className="badge">{statusTitle}</span>}
+        subtitle="Presupuesto, caja y desvio real en una lectura anual ejecutiva."
+        actions={
+          <div className="annual-top-actions">
+            <span className={statusBadgeClassName}>{statusTitle}</span>
+            {comparisonLive ? <span className="badge badge-ok">Comparativa activa</span> : null}
+          </div>
+        }
       />
 
       {!hasGold ? <Alert tone="warning">Disponible desde Gold.</Alert> : null}
       {!companyId ? <Alert tone="warning">Selecciona una empresa.</Alert> : null}
-      {analysisLoading ? <Alert tone="info">Leyendo la última carga anual. En ficheros XLSX complejos puede tardar un poco.</Alert> : null}
+      {analysisLoading ? <Alert tone="info">Leyendo la ultima carga anual. En XLSX complejos puede tardar un poco.</Alert> : null}
       {cameFromAnnualUpload && annualSourceDetected ? (
-        <Alert tone="info">Presupuesto detectado. Esta pantalla ya relee la última carga anual válida.</Alert>
+        <Alert tone="info">Presupuesto detectado. Esta pantalla ya relee la ultima carga anual valida.</Alert>
       ) : null}
       {wrongAnnualSource ? (
         <Alert tone="warning">
-          La última carga no encaja como plan anual. Abre Universal o sube un presupuesto anual real.
+          La ultima carga no encaja como plan anual. Corrige la carga desde Cargar datos o sube un presupuesto anual real.
         </Alert>
       ) : null}
       {showRecoveryHint ? (
-        <Alert tone="info">El fichero anual ya está cargado. Si aún no ves una lectura útil, abre el análisis técnico o corrige hoja y cabecera.</Alert>
+        <Alert tone="info">El fichero anual ya esta cargado. Si aun no ves una lectura util, abre el analisis tecnico o corrige hoja y cabecera.</Alert>
       ) : null}
       {workflowError ? <Alert tone="danger">{formatText(String((workflowError as any)?.message || workflowError))}</Alert> : null}
 
-      <div className="card section soft">
-        <div className="mini-row row-baseline">
-          <h3 className="m-0">1. Estado del plan</h3>
-          <span className="upload-hint">Solo la lectura operativa del flujo anual.</span>
-        </div>
-        <div className="grid grid-autofit-220 mt-12">
-          <div className="card soft card-pad-sm">
-            <div className="upload-hint">Situación</div>
-            <div className="fw-800 mt-1">{analysisLoading ? 'Leyendo presupuesto anual' : statusTitle}</div>
-            <div className="upload-hint mt-1">
-              {analysisLoading ? 'Estoy reconstruyendo la lectura canónica y la tesorería del último fichero anual.' : statusDetail}
+      <div className="card section soft annual-hero-shell">
+        <div className="annual-hero-grid">
+          <div className="annual-hero-copy">
+            <span className="annual-eyebrow">Plan anual</span>
+            <div className="annual-hero-title">{analysisLoading ? 'Leyendo presupuesto anual' : statusTitle}</div>
+            <div className="annual-hero-detail">
+              {analysisLoading ? 'Estoy reconstruyendo la lectura canonica y la tesoreria del ultimo fichero anual.' : statusDetail}
+            </div>
+            <div className="annual-hero-tags">
+              <span className="annual-hero-tag">{annualSourceDetected ? 'Fuente detectada' : 'Sin fuente anual'}</span>
+              <span className="annual-hero-tag">{plannedMonthsAvailable} meses listos</span>
+              <span className="annual-hero-tag">{comparisonLive ? 'Comparativa activa' : 'Sin contraste completo'}</span>
+            </div>
+            <div className="row row-wrap gap-8 mt-12 annual-hero-actions">
+              <Button size="sm" variant="secondary" loading={downloading} onClick={primaryAction.onClick}>
+                {primaryAction.label}
+              </Button>
+              {comparisonLive ? (
+                <Button size="sm" variant="ghost" onClick={() => navigate('/budget/dashboard')}>
+                  Abrir analisis tecnico
+                </Button>
+              ) : null}
             </div>
           </div>
-          <div className="card soft card-pad-sm">
-            <div className="upload-hint">Fuente</div>
-            <div className="fw-800 mt-1">{analysisLoading ? 'Procesando última carga anual' : formatText(sourceFilename, 'Sin fichero anual')}</div>
-            <div className="upload-hint mt-1">{analysisLoading ? 'La vista se actualizará sola cuando termine.' : sourceCreatedAt ? formatDateTime(sourceCreatedAt) : 'Carga pendiente.'}</div>
-            {sourceSheetIndex != null || sourceHeaderRow != null ? (
-              <div className="upload-hint mt-8">
-                Último intento usado: hoja {sourceSheetIndex != null ? Number(sourceSheetIndex) + 1 : '-'} · cabecera fila {sourceHeaderRow ?? '-'}
+          <div className="annual-hero-side">
+            <div className="annual-side-heading">
+              <span>Base anual</span>
+              <strong>Fuente, meses y estado de lectura.</strong>
+            </div>
+            <div className="annual-side-meta mt-12">
+              <div>
+                <span className="annual-card-label">Fuente</span>
+                <strong>{analysisLoading ? 'Procesando...' : formatText(sourceFilename, 'Sin fichero anual')}</strong>
+                <span className="annual-card-note">{analysisLoading ? 'Actualizando lectura...' : sourceCreatedAt ? formatDateTime(sourceCreatedAt) : 'Carga pendiente.'}</span>
               </div>
-            ) : null}
-            {workflow?.sourceAttemptTrendTitle ? (
-              <div className="upload-hint mt-8">
-                  <strong>{formatText(workflow.sourceAttemptTrendTitle, '')}.</strong> {formatText(workflow?.sourceAttemptTrendDetail, '')}
+              <div>
+                <span className="annual-card-label">Meses listos</span>
+                <strong>{analysisLoading ? '...' : plannedMonthsAvailable}</strong>
+                <span className="annual-card-note">{analysisLoading ? 'Preparando lectura anual...' : `${actualMonthsAvailable} con contraste`}</span>
               </div>
-            ) : null}
-          </div>
-          <div className="card soft card-pad-sm">
-            <div className="upload-hint">Meses comparables</div>
-            <div className="fw-800 mt-1">{analysisLoading ? '...' : comparison?.commonMonths ?? 0}</div>
-            <div className="upload-hint mt-1">
-              {analysisLoading ? 'Preparando lectura anual...' : `${plannedMonthsAvailable} plan · ${actualMonthsAvailable} contraste`}
+              <div>
+                <span className="annual-card-label">Estado real</span>
+                <strong>{analysisLoading ? 'En proceso' : comparisonLive ? 'Comparativa activa' : annualSourceDetected ? 'Carga anual dentro' : 'Sin lectura anual'}</strong>
+                <span className="annual-card-note">
+                  {analysisLoading
+                    ? 'La vista se refresca al terminar.'
+                    : needsValidation
+                    ? 'Falta fijar hoja o cabecera.'
+                    : comparisonLive
+                    ? 'Lista para explicar el ejercicio.'
+                    : 'Esperando una lectura anual valida.'}
+                </span>
+              </div>
             </div>
           </div>
         </div>
-        <div className="row row-wrap gap-8 mt-12">
-          <Button size="sm" variant="secondary" loading={downloading} onClick={primaryAction.onClick}>
-            {primaryAction.label}
-          </Button>
-          {wrongAnnualSource ? (
-            <Button size="sm" variant="ghost" onClick={() => navigate('/imports?mode=universal&flow=budget')}>
-              Subir presupuesto correcto
-            </Button>
-          ) : null}
-          {annualSourceDetected && !structureValidated ? (
-            <Button size="sm" variant="ghost" onClick={() => navigate('/budget/dashboard')}>
-              Abrir análisis técnico
-            </Button>
-          ) : null}
-          {needsValidation ? (
-            <>
-              <Button size="sm" variant="ghost" onClick={() => navigate('/imports?mode=universal&flow=budget&focus=sheet')}>
-                Elegir otra hoja
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => navigate('/imports?mode=universal&flow=budget&focus=header')}>
-                Cambiar fila de cabecera
-              </Button>
-            </>
-          ) : null}
-        </div>
-        {needsValidation ? (
-          <div className="upload-hint mt-8">
-            Qué probar ahora: si el Excel tiene varias hojas, empieza por <strong>Elegir otra hoja</strong>. Si la hoja es correcta pero los meses no se detectan bien, prueba <strong>Cambiar fila de cabecera</strong>.
-          </div>
-        ) : null}
       </div>
 
-      <Section title="2. Qué falta exactamente" subtitle="Una sola salida clara según el estado real del flujo.">
-        <div className="card soft">
-          <div className="overview-card-eyebrow">
-            {comparisonLive ? 'Comparativa activa' : needsValidation ? 'Bloqueo operativo' : 'Siguiente paso'}
+      <details className="card section soft annual-fold-panel" open={annualOpsOpen}>
+        <summary>
+          <div className="annual-fold-summary">
+            <strong>Control de origen</strong>
+            <span>Hoja, cabecera y trazabilidad solo cuando hacen falta.</span>
           </div>
-          <div className="annual-stage-title mt-1">{nextStepTitle}</div>
-          <div className="annual-stage-detail mt-1">{nextStepDetail}</div>
-          <div className="grid grid-autofit-220 mt-12">
-            <div className="card soft card-pad-sm">
-              <div className="upload-hint">Hoja usada</div>
-              <div className="fw-800 mt-1">{sourceSheetIndex != null ? `Hoja ${Number(sourceSheetIndex) + 1}` : EMPTY_DATA_TEXT}</div>
-              <div className="upload-hint mt-1">Último intento guardado</div>
+          <span className="badge">{annualOpsOpen ? 'abierto' : 'detalle'}</span>
+        </summary>
+        <div className="annual-fold-body">
+          <div className="grid grid-autofit-220">
+            <div className="card soft card-pad-sm annual-info-card">
+              <div className="annual-card-label">Situacion</div>
+              <div className="annual-card-title">{analysisLoading ? 'Leyendo presupuesto anual' : statusTitle}</div>
+              <div className="annual-card-note">
+                {analysisLoading ? 'Estoy reconstruyendo la lectura canonica y la tesoreria del ultimo fichero anual.' : statusDetail}
+              </div>
             </div>
-            <div className="card soft card-pad-sm">
-              <div className="upload-hint">Cabecera usada</div>
-              <div className="fw-800 mt-1">{sourceHeaderRow != null ? `Fila ${sourceHeaderRow}` : EMPTY_DATA_TEXT}</div>
-              <div className="upload-hint mt-1">Punto de arranque del parseo</div>
+            <div className="card soft card-pad-sm annual-info-card">
+              <div className="annual-card-label">Fuente</div>
+              <div className="annual-card-title">{analysisLoading ? 'Procesando ultima carga anual' : formatText(sourceFilename, 'Sin fichero anual')}</div>
+              <div className="annual-card-note">{analysisLoading ? 'La vista se actualizara sola cuando termine.' : sourceCreatedAt ? formatDateTime(sourceCreatedAt) : 'Carga pendiente.'}</div>
+              {sourceSheetIndex != null || sourceHeaderRow != null ? (
+                <div className="annual-card-note">
+                  Ultimo intento usado: hoja {sourceSheetIndex != null ? Number(sourceSheetIndex) + 1 : '-'} | cabecera fila {sourceHeaderRow ?? '-'}
+                </div>
+              ) : null}
+              {workflow?.sourceAttemptTrendTitle ? (
+                <div className="annual-card-note">
+                  <strong>{formatText(workflow.sourceAttemptTrendTitle, '')}.</strong> {formatText(workflow?.sourceAttemptTrendDetail, '')}
+                </div>
+              ) : null}
             </div>
-            <div className="card soft card-pad-sm">
-              <div className="upload-hint">Meses listos</div>
-              <div className="fw-800 mt-1">{plannedMonthsAvailable}</div>
-              <div className="upload-hint mt-1">Meses del plan ya reconocidos</div>
+            <div className="card soft card-pad-sm annual-info-card">
+              <div className="annual-card-label">Meses comparables</div>
+              <div className="annual-card-title">{analysisLoading ? '...' : comparison?.commonMonths ?? 0}</div>
+              <div className="annual-card-note">
+                {analysisLoading ? 'Preparando lectura anual...' : `${plannedMonthsAvailable} plan | ${actualMonthsAvailable} contraste`}
+              </div>
             </div>
+          </div>
+          <div className="row row-wrap gap-8 mt-12">
+            <Button size="sm" variant="secondary" loading={downloading} onClick={primaryAction.onClick}>
+              {primaryAction.label}
+            </Button>
+            {wrongAnnualSource ? (
+              <Button size="sm" variant="ghost" onClick={() => navigate('/imports?mode=universal&flow=budget')}>
+                Subir presupuesto correcto
+              </Button>
+            ) : null}
+            {annualSourceDetected && !structureValidated ? (
+              <Button size="sm" variant="ghost" onClick={() => navigate('/budget/dashboard')}>
+                Abrir analisis tecnico
+              </Button>
+            ) : null}
+            {needsValidation ? (
+              <>
+                <Button size="sm" variant="ghost" onClick={() => navigate('/imports?mode=universal&flow=budget&focus=sheet')}>
+                  Elegir otra hoja
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => navigate('/imports?mode=universal&flow=budget&focus=header')}>
+                  Cambiar fila de cabecera
+                </Button>
+              </>
+            ) : null}
           </div>
           {needsValidation ? (
-            <div className="row row-wrap gap-8 mt-12">
-              <Button size="sm" variant="secondary" onClick={() => navigate('/imports?mode=universal&flow=budget&focus=sheet')}>
-                Elegir otra hoja
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => navigate('/imports?mode=universal&flow=budget&focus=header')}>
-                Cambiar cabecera
-              </Button>
-            </div>
-          ) : null}
-          {comparisonLive ? (
-            <div className="row row-wrap gap-8 mt-12">
-              <Button size="sm" variant="secondary" onClick={() => navigate('/budget/dashboard')}>
-                Ver análisis anual
-              </Button>
-              <Button size="sm" variant="ghost" loading={downloading} onClick={handleDownloadAnnualReport}>
-                Descargar informe anual
-              </Button>
+            <div className="annual-inline-note">
+              Que probar ahora: si el Excel tiene varias hojas, empieza por <strong>Elegir otra hoja</strong>. Si la hoja es correcta pero los meses no se detectan bien, prueba <strong>Cambiar fila de cabecera</strong>.
             </div>
           ) : null}
         </div>
-      </Section>
+      </details>
+
+      <details className="card section soft annual-fold-panel" open={annualGuidanceOpen}>
+        <summary>
+          <div className="annual-fold-summary">
+            <strong>Siguiente paso</strong>
+            <span>La accion mas util segun el estado real del flujo.</span>
+          </div>
+          <span className="badge">{comparisonLive ? 'listo' : needsValidation ? 'revisar' : 'siguiente paso'}</span>
+        </summary>
+        <div className="annual-fold-body">
+          <div className="card soft annual-stage-shell">
+            <div className="annual-card-label">
+              {comparisonLive ? 'Comparativa activa' : needsValidation ? 'Bloqueo operativo' : 'Siguiente paso'}
+            </div>
+            <div className="annual-stage-title">{nextStepTitle}</div>
+            <div className="annual-stage-detail">{nextStepDetail}</div>
+            <div className="grid grid-autofit-220 mt-12">
+              <div className="card soft card-pad-sm annual-info-card">
+                <div className="annual-card-label">Hoja usada</div>
+                <div className="annual-card-title">{sourceSheetIndex != null ? `Hoja ${Number(sourceSheetIndex) + 1}` : EMPTY_DATA_TEXT}</div>
+                <div className="annual-card-note">Ultimo intento guardado</div>
+              </div>
+              <div className="card soft card-pad-sm annual-info-card">
+                <div className="annual-card-label">Cabecera usada</div>
+                <div className="annual-card-title">{sourceHeaderRow != null ? `Fila ${sourceHeaderRow}` : EMPTY_DATA_TEXT}</div>
+                <div className="annual-card-note">Punto de arranque del parseo</div>
+              </div>
+              <div className="card soft card-pad-sm annual-info-card">
+                <div className="annual-card-label">Meses listos</div>
+                <div className="annual-card-title">{plannedMonthsAvailable}</div>
+                <div className="annual-card-note">Meses del plan ya reconocidos</div>
+              </div>
+            </div>
+            {needsValidation ? (
+              <div className="row row-wrap gap-8 mt-12">
+                <Button size="sm" variant="secondary" onClick={() => navigate('/imports?mode=universal&flow=budget&focus=sheet')}>
+                  Elegir otra hoja
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => navigate('/imports?mode=universal&flow=budget&focus=header')}>
+                  Cambiar cabecera
+                </Button>
+              </div>
+            ) : null}
+            {comparisonLive ? (
+              <div className="row row-wrap gap-8 mt-12">
+                <Button size="sm" variant="secondary" onClick={() => navigate('/budget/dashboard')}>
+                  Ver analisis anual
+                </Button>
+                <Button size="sm" variant="ghost" loading={downloading} onClick={handleDownloadAnnualReport}>
+                  Descargar informe anual
+                </Button>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </details>
 
       <Section
-        title="3. Señales clave"
+        title="3. KPIs clave"
         subtitle={
           comparisonLive
-            ? 'Ya hay valor consultivo: solo tres señales para explicar el ejercicio.'
-            : 'Solo las tres señales que merece la pena mirar ahora.'
+            ? 'Tres cifras para explicar el ejercicio sin ruido.'
+            : 'Las tres cifras que merece la pena mirar ahora.'
         }
       >
-        <div className="grid grid-autofit-220 mt-12">
-          <div className="card soft card-pad-sm">
-            <div className="upload-hint">Margen previsto</div>
-            <div className="fw-800 mt-1">{formatMoney(summary?.totalMargin)}</div>
+        <div className="grid annual-kpi-grid mt-12">
+          <div className="card soft card-pad-sm annual-kpi-card">
+            <div className="annual-card-label">Margen previsto</div>
+            <div className="annual-kpi-value">{formatMoney(summary?.totalMargin)}</div>
+            <div className="annual-card-note">Base anual agregada</div>
           </div>
-          <div className="card soft card-pad-sm">
-            <div className="upload-hint">Neto YTD real vs previsto</div>
-            <div className="fw-800 mt-1">{fmtDeltaMoney(comparison?.netVarianceYtd)}</div>
+          <div className="card soft card-pad-sm annual-kpi-card">
+            <div className="annual-card-label">Neto YTD vs plan</div>
+            <div className="annual-kpi-value">{fmtDeltaMoney(comparison?.netVarianceYtd)}</div>
+            <div className="annual-card-note">Desviacion acumulada</div>
           </div>
-          <div className="card soft card-pad-sm">
-            <div className="upload-hint">Saldo final YTD</div>
-            <div className="fw-800 mt-1">{fmtDeltaMoney(comparison?.endingBalanceVarianceYtd)}</div>
+          <div className="card soft card-pad-sm annual-kpi-card">
+            <div className="annual-card-label">Saldo final YTD</div>
+            <div className="annual-kpi-value">{fmtDeltaMoney(comparison?.endingBalanceVarianceYtd)}</div>
+            <div className="annual-card-note">Caja frente a objetivo</div>
           </div>
         </div>
       </Section>
 
       {comparisonLive ? (
-        <Section title="4. Comparativa real vs presupuesto" subtitle="Aquí ya se ve si el plan aguanta o se desvía.">
+        <Section title="4. Comparativa real vs presupuesto" subtitle="Dos vistas para ver si el plan aguanta o se desvia.">
           {drilldownCards.length ? (
             <div className="grid annual-drill-grid mb-3">
               {drilldownCards.map((card) => (
                 <div key={card.key} className={`card soft annual-drill-card annual-drill-card-${card.tone}`}>
-                  <div className="upload-hint">{card.eyebrow}</div>
-                  <div className="annual-stage-title mt-1">{card.title}</div>
-                  <div className="annual-stage-detail mt-1">{card.detail}</div>
+                  <div className="annual-card-label">{card.eyebrow}</div>
+                  <div className="annual-stage-title">{card.title}</div>
+                  <div className="annual-stage-detail">{card.detail}</div>
                   <div className="annual-drill-actions mt-12">
-                    <Button size="sm" variant="secondary" onClick={() => openMonthWorkflow(card.month)}>
-                      Abrir cierre mensual
-                    </Button>
-                    <Button size="sm" variant="ghost" onClick={() => openMonthCash(card.month)}>
-                      Ver caja
+                    <Button size="sm" variant="secondary" onClick={() => openMonthAnalysis(card.month)}>
+                      Abrir mes
                     </Button>
                   </div>
                 </div>
               ))}
             </div>
           ) : null}
-          <div className="grid">
-            <div className="card">
+          <div className="annual-chart-grid">
+            <div className="card annual-chart-card">
               <h3 className="h3-reset">Neto previsto vs real</h3>
-              <div className="upload-hint mt-1">Cada punto muestra si el mes fue mejor o peor de lo previsto.</div>
+              <div className="annual-card-note">Cada mes muestra si el neto real queda por encima o por debajo del plan.</div>
               <EChart
                 module="budget"
                 valueSuffix="€"
@@ -577,13 +655,13 @@ export default function AnnualPlanningPage() {
                 option={netChart as any}
                 onClick={(params) => {
                   const clicked = comparisonMonthsByLabel.get(String(params?.name || ''))
-                  if (clicked) openMonthCash(clicked)
+                  if (clicked) openMonthAnalysis(clicked)
                 }}
               />
             </div>
-            <div className="card">
+            <div className="card annual-chart-card">
               <h3 className="h3-reset">Saldo previsto vs real</h3>
-              <div className="upload-hint mt-1">Sirve para ver si el plan protege caja o se queda corto.</div>
+              <div className="annual-card-note">Permite ver si la caja prevista se sostiene con el comportamiento real.</div>
               <EChart
                 module="budget"
                 valueSuffix="€"
@@ -591,7 +669,7 @@ export default function AnnualPlanningPage() {
                 option={balanceChart as any}
                 onClick={(params) => {
                   const clicked = comparisonMonthsByLabel.get(String(params?.name || ''))
-                  if (clicked) openMonthCash(clicked)
+                  if (clicked) openMonthAnalysis(clicked)
                 }}
               />
             </div>
@@ -601,6 +679,7 @@ export default function AnnualPlanningPage() {
     </div>
   )
 }
+
 
 
 

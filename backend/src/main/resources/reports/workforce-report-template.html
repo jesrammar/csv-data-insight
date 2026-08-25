@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+  <title>Workforce</title>
+  <style>
+{{REPORT_CSS}}
+  </style>
+</head>
+<body>
+  <section class="cover">
+    <table class="cover-layout">
+      <tr>
+        <td class="cover-copy">
+          <div class="cover-topline">EnterpriseIQ</div>
+          <div class="cover-title">Workforce</div>
+          <div class="cover-subtitle">Lectura ejecutiva de estructura operativa, costes y seguimiento por gestor.</div>
+
+          <div class="cover-summary-card">
+            <table class="cover-meta-table">
+              <tr>
+                <td class="cover-meta-cell">
+                  <div class="meta-label">Empresa</div>
+                  <div class="meta-value">{{COMPANY_NAME}}</div>
+                </td>
+                <td class="cover-meta-cell">
+                  <div class="meta-label">Generado</div>
+                  <div class="meta-value">{{GENERATED_AT}}</div>
+                </td>
+              </tr>
+              <tr>
+                <td class="cover-meta-cell">
+                  <div class="meta-label">Workforce</div>
+                  <div class="meta-value meta-value-file">{{WORKFORCE_SOURCE}}</div>
+                  <div class="meta-sub">{{WORKFORCE_STATUS}}</div>
+                </td>
+                <td class="cover-meta-cell">
+                  <div class="meta-label">Costes</div>
+                  <div class="meta-value meta-value-file">{{LABOR_SOURCE}}</div>
+                  <div class="meta-sub">{{LABOR_STATUS}}</div>
+                </td>
+              </tr>
+            </table>
+          </div>
+        </td>
+        <td class="cover-visual">
+          <div class="cover-image-shell">
+            <img class="cover-image" src="{{BRAND_IMAGE_SRC}}" alt="EnterpriseIQ" />
+          </div>
+        </td>
+      </tr>
+    </table>
+
+    <div class="cover-kpi-panel">
+      <div class="cover-kicker">Resumen</div>
+      {{COVER_KPI_HTML}}
+    </div>
+  </section>
+
+  <section class="report-section keep-together">
+    <div class="section-kicker">Vision general</div>
+    <div class="section-title">1. Resumen ejecutivo</div>
+    {{EXECUTIVE_HTML}}
+  </section>
+
+  <section class="report-section">
+    <div class="section-kicker">Operacion</div>
+    <div class="section-title">2. Distribucion operativa</div>
+    {{OPERATIONS_HTML}}
+  </section>
+
+  <section class="report-section">
+    <div class="section-kicker">Economia</div>
+    <div class="section-title">3. Costes laborales</div>
+    {{COSTS_HTML}}
+  </section>
+
+  <section class="report-section">
+    <div class="section-kicker">Cruce</div>
+    <div class="section-title">4. Coste vs actividad</div>
+    {{COST_ACTIVITY_HTML}}
+  </section>
+
+  <section class="report-section">
+    <div class="section-kicker">Riesgo</div>
+    <div class="section-title">5. Hallazgos y puntos a revisar</div>
+    {{RISKS_HTML}}
+  </section>
+
+  <section class="report-section">
+    <div class="section-kicker">Siguiente paso</div>
+    <div class="section-title">6. Acciones recomendadas</div>
+    {{RECOMMENDATIONS_HTML}}
+  </section>
+</body>
+</html>

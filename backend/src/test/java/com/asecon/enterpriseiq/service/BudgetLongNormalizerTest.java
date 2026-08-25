@@ -144,12 +144,17 @@ class BudgetLongNormalizerTest {
             .filteredOn(row -> List.of(
                 "Ventas de fruta fresca",
                 "Productos gourmet de temporada",
-                "Zumos y batidos frescos",
-                "Ingresos accesorios"
+                "Zumos y batidos frescos"
             ).contains(row.label()))
             .allMatch(row -> row.rowType() == BudgetLongNormalizer.RowType.DETAIL)
             .allMatch(row -> "REVENUE".equals(row.semanticKind()))
             .allMatch(row -> "P_AND_L".equals(row.sectionKind()))
+            .allMatch(row -> !"REVIEW".equals(row.mappingStatus()));
+        assertThat(result.sampleRows()).filteredOn(row -> "Ingresos accesorios".equals(row.label()))
+            .allMatch(row -> row.rowType() == BudgetLongNormalizer.RowType.DETAIL)
+            .allMatch(row -> List.of("REVENUE", "OTHER_OPERATING_INCOME").contains(row.semanticKind()))
+            .allMatch(row -> "P_AND_L".equals(row.sectionKind()))
+            .allMatch(row -> "REVENUE".equals(row.financialNature()))
             .allMatch(row -> !"REVIEW".equals(row.mappingStatus()));
     }
 
@@ -170,6 +175,108 @@ class BudgetLongNormalizerTest {
             .allMatch(row -> "TAX".equals(row.semanticKind()))
             .allMatch(row -> "P_AND_L".equals(row.sectionKind()))
             .allMatch(row -> !"REVIEW".equals(row.mappingStatus()));
+    }
+
+    @ParameterizedTest(name = "[{index}] {0} -> {1}")
+    @MethodSource("explicitEconomicConcepts")
+    void resolves_explicit_economic_concepts_from_structural_values(String rawValue, String expectedConcept) {
+        var inference = BudgetSemanticResolver.classifyBusinessNature("7", rawValue);
+
+        assertThat(inference.concept()).isEqualTo(expectedConcept);
+        assertThat(inference.score()).isGreaterThanOrEqualTo(0.90d);
+        assertThat(inference.ambiguous()).isFalse();
+    }
+
+    @Test
+    void normalizes_long_sources_with_explicit_financial_and_cashflow_concepts() {
+        String csv = ""
+            + "mes_nombre,seccion,clase de registro,grupo financiero,sentido,criterio de agregacion,concepto,importe eur\n"
+            + "Enero,Resultado,Detalle,Otros ingresos operativos,positivo,sum,Subvencion operativa,500\n"
+            + "Enero,Resultado,Detalle,Ajuste operativo,neutro,sum,Regularizacion de existencias,40\n"
+            + "Enero,Resultado,Detalle,Ingreso financiero,positivo,sum,Rendimiento bancario,25\n"
+            + "Enero,Resultado,Detalle,Gasto financiero,negativo,sum,Intereses del prestamo,-50\n"
+            + "Enero,Tesoreria,Detalle,Financiacion recibida,positivo,sum,Prestamo recibido,2000\n"
+            + "Enero,Tesoreria,Detalle,Devolucion prestamo,negativo,sum,Cuota principal prestamo,-300\n"
+            + "Enero,Tesoreria,Detalle,Impuesto caja,negativo,sum,Pago impuesto sociedades,-120\n"
+            + "Enero,Tesoreria,Indicador,Saldo inicial,neutro,last value,Saldo inicial,1000\n"
+            + "Enero,Tesoreria,Indicador,Saldo final,neutro,last value,Saldo final,1105\n";
+
+        var result = BudgetLongNormalizer.normalizeToLongCsv(csv.getBytes(StandardCharsets.UTF_8), "7", 1000, 80);
+
+        assertThat(result.analysisStatus()).isEqualTo("AUTOMATIC_ACCEPTED");
+        assertThat(result.requiresConfirmation()).isFalse();
+        assertThat(result.sampleRows()).filteredOn(row -> "Subvencion operativa".equals(row.label()))
+            .allMatch(row -> row.rowType() == BudgetLongNormalizer.RowType.DETAIL)
+            .allMatch(row -> "REVENUE".equals(row.semanticKind()))
+            .allMatch(row -> "P_AND_L".equals(row.sectionKind()))
+            .allMatch(row -> "REVENUE".equals(row.financialNature()))
+            .allMatch(row -> !"REVIEW".equals(row.mappingStatus()));
+        assertThat(result.sampleRows()).filteredOn(row -> "Regularizacion de existencias".equals(row.label()))
+            .allMatch(row -> "OPERATING_ADJUSTMENT".equals(row.semanticKind()))
+            .allMatch(row -> "P_AND_L".equals(row.sectionKind()));
+        assertThat(result.sampleRows()).filteredOn(row -> "Rendimiento bancario".equals(row.label()))
+            .allMatch(row -> "FINANCIAL_INCOME".equals(row.semanticKind()))
+            .allMatch(row -> "P_AND_L".equals(row.sectionKind()))
+            .allMatch(row -> "FINANCING".equals(row.financialNature()));
+        assertThat(result.sampleRows()).filteredOn(row -> "Intereses del prestamo".equals(row.label()))
+            .allMatch(row -> "FINANCIAL_EXPENSE".equals(row.semanticKind()))
+            .allMatch(row -> "P_AND_L".equals(row.sectionKind()))
+            .allMatch(row -> "FINANCING".equals(row.financialNature()));
+        assertThat(result.sampleRows()).filteredOn(row -> "Prestamo recibido".equals(row.label()))
+            .allMatch(row -> "FINANCING_INFLOW".equals(row.semanticKind()))
+            .allMatch(row -> "CASHFLOW".equals(row.sectionKind()))
+            .allMatch(row -> "FINANCING".equals(row.cashflowNature()));
+        assertThat(result.sampleRows()).filteredOn(row -> "Cuota principal prestamo".equals(row.label()))
+            .allMatch(row -> "FINANCING_OUTFLOW".equals(row.semanticKind()))
+            .allMatch(row -> "CASHFLOW".equals(row.sectionKind()))
+            .allMatch(row -> "FINANCING".equals(row.cashflowNature()));
+        assertThat(result.sampleRows()).filteredOn(row -> "Pago impuesto sociedades".equals(row.label()))
+            .allMatch(row -> "CASHFLOW_TAX".equals(row.semanticKind()))
+            .allMatch(row -> "CASHFLOW".equals(row.sectionKind()))
+            .allMatch(row -> "CASHFLOW_TAX".equals(row.cashflowNature()));
+        assertThat(result.sampleRows()).filteredOn(row -> "Saldo inicial".equals(row.label()))
+            .allMatch(row -> row.rowType() == BudgetLongNormalizer.RowType.DERIVED_KPI)
+            .allMatch(row -> "OPENING_BALANCE".equals(row.semanticKind()))
+            .allMatch(row -> "CASHFLOW".equals(row.sectionKind()));
+        assertThat(result.sampleRows()).filteredOn(row -> "Saldo final".equals(row.label()))
+            .allMatch(row -> row.rowType() == BudgetLongNormalizer.RowType.DERIVED_KPI)
+            .allMatch(row -> "CLOSING_BALANCE".equals(row.semanticKind()))
+            .allMatch(row -> "CASHFLOW".equals(row.sectionKind()));
+    }
+
+    @Test
+    void normalizes_long_sources_with_role_group_direction_and_policy_headers_used_by_professional_budgets() {
+        String csv = ""
+            + "period_key,statement block,record role,financial bucket,economic sign,aggregation mode,concept code,concept,amount\n"
+            + "2026-01,P&L,DETAIL,REVENUE,positive,sum,705,Cuotas recurrentes,15000\n"
+            + "2026-01,P&L,DETAIL,OPEX,negative,sum,640,Coste laboral,-7200\n"
+            + "2026-01,P&L,DETAIL,TAX,negative,sum,630,Current tax,-900\n"
+            + "2026-01,CASH FLOW,DETAIL,CASH_INFLOW,positive,sum,,Cobros clientes,16000\n"
+            + "2026-01,CASH FLOW,DERIVED_KPI,CLOSING_BALANCE,neutral,last value,,Saldo final,12500\n";
+
+        var result = BudgetLongNormalizer.normalizeToLongCsv(csv.getBytes(StandardCharsets.UTF_8), "7", 1000, 80);
+
+        assertThat(result.analysisStatus()).isEqualTo("AUTOMATIC_ACCEPTED");
+        assertThat(result.requiresConfirmation()).isFalse();
+        assertThat(result.sampleRows()).filteredOn(row -> "Cuotas recurrentes".equals(row.label()))
+            .allMatch(row -> row.rowType() == BudgetLongNormalizer.RowType.DETAIL)
+            .allMatch(row -> "REVENUE".equals(row.semanticKind()))
+            .allMatch(row -> "P_AND_L".equals(row.sectionKind()));
+        assertThat(result.sampleRows()).filteredOn(row -> "Coste laboral".equals(row.label()))
+            .allMatch(row -> row.rowType() == BudgetLongNormalizer.RowType.DETAIL)
+            .allMatch(row -> "OPEX".equals(row.semanticKind()))
+            .allMatch(row -> "P_AND_L".equals(row.sectionKind()));
+        assertThat(result.sampleRows()).filteredOn(row -> "Current tax".equals(row.label()))
+            .allMatch(row -> "TAX".equals(row.semanticKind()))
+            .allMatch(row -> "P_AND_L".equals(row.sectionKind()));
+        assertThat(result.sampleRows()).filteredOn(row -> "Cobros clientes".equals(row.label()))
+            .allMatch(row -> "CASH_INFLOW".equals(row.semanticKind()))
+            .allMatch(row -> "CASHFLOW".equals(row.sectionKind()))
+            .allMatch(row -> "CASH_INFLOW".equals(row.cashflowNature()));
+        assertThat(result.sampleRows()).filteredOn(row -> "Saldo final".equals(row.label()))
+            .allMatch(row -> row.rowType() == BudgetLongNormalizer.RowType.DERIVED_KPI)
+            .allMatch(row -> "CLOSING_BALANCE".equals(row.semanticKind()))
+            .allMatch(row -> "CASHFLOW".equals(row.sectionKind()));
     }
 
     @Test
@@ -312,9 +419,13 @@ class BudgetLongNormalizerTest {
         assertThat(result.sampleRows()).filteredOn(row -> row.label().equals("Amortización inmovilizado"))
             .allMatch(row -> "DEPRECIATION_AMORTIZATION".equals(row.semanticKind()));
         assertThat(result.sampleRows()).filteredOn(row -> row.label().equals("Ingresos financieros"))
-            .allMatch(row -> "FINANCING".equals(row.semanticKind()));
+            .allMatch(row -> List.of("FINANCIAL_INCOME", "FINANCING").contains(row.semanticKind()))
+            .allMatch(row -> "FINANCING".equals(row.financialNature()))
+            .allMatch(row -> "P_AND_L".equals(row.sectionKind()));
         assertThat(result.sampleRows()).filteredOn(row -> row.label().equals("Gastos financieros"))
-            .allMatch(row -> "FINANCING".equals(row.semanticKind()));
+            .allMatch(row -> List.of("FINANCIAL_EXPENSE", "FINANCING").contains(row.semanticKind()))
+            .allMatch(row -> "FINANCING".equals(row.financialNature()))
+            .allMatch(row -> "P_AND_L".equals(row.sectionKind()));
         assertThat(result.sampleRows()).filteredOn(row -> row.label().equals(revenueAggregateLabel) || row.label().equals(opexAggregateLabel))
             .allMatch(row -> row.rowType() != BudgetLongNormalizer.RowType.DETAIL);
     }
@@ -422,6 +533,25 @@ class BudgetLongNormalizerTest {
     }
 
     @Test
+    void classifies_operating_adjustments_from_structural_columns_in_long_annual_sources() {
+        String csv = ""
+            + "Periodo,Seccion,Cuenta,Descripcion,Clase de registro,Grupo financiero,Importe EUR,Sentido,Criterio de agregacion\n"
+            + "2026-01-01,Explotacion,610710,Regularizacion de stock de productos,Detalle,Ajuste operativo,1800,No caja,SUM\n"
+            + "2026-02-01,Explotacion,610710,Regularizacion de stock de productos,Detalle,Ajuste operativo,-900,No caja,SUM\n"
+            + "2026-01-01,Explotacion,700100,Ventas mostrador,Detalle,Ventas,12000,Ingreso,SUM\n";
+
+        var result = BudgetLongNormalizer.normalizeToLongCsv(csv.getBytes(StandardCharsets.UTF_8), "7", 10_000, 80);
+
+        assertThat(result.analysisStatus()).isEqualTo("AUTOMATIC_ACCEPTED");
+        assertThat(result.requiresConfirmation()).isFalse();
+        assertThat(result.sampleRows()).filteredOn(row -> "Regularizacion de stock de productos".equals(row.label()))
+            .allMatch(row -> row.rowType() == BudgetLongNormalizer.RowType.DETAIL)
+            .allMatch(row -> "OPERATING_ADJUSTMENT".equals(row.semanticKind()))
+            .allMatch(row -> "P_AND_L".equals(row.sectionKind()))
+            .allMatch(row -> !"REVIEW".equals(row.mappingStatus()));
+    }
+
+    @Test
     void accepts_explicit_nature_enums_and_repeated_headers_without_literal_totals() {
         String csv = ""
             + "Documento anual,,,,,,,,,,,,,,,,\n"
@@ -485,6 +615,24 @@ class BudgetLongNormalizerTest {
             .allMatch(row -> row.rowType() == BudgetLongNormalizer.RowType.DERIVED_KPI)
             .allMatch(row -> "CASHFLOW".equals(row.sectionKind()))
             .allMatch(row -> "UNKNOWN".equals(row.semanticKind()));
+    }
+
+    @Test
+    void prefers_descripcion_over_numeric_partida_when_both_headers_exist() {
+        String csv = ""
+            + "Codigo,Partida,Descripcion,Enero,Febrero,Marzo,Abril,Mayo,Junio,Julio,Agosto,Septiembre,Octubre,Noviembre,Diciembre\n"
+            + "700.01,51000,Ventas retail,10,10,10,10,10,10,10,10,10,10,10,10\n"
+            + "640,21000,Sueldos y salarios,5,5,5,5,5,5,5,5,5,5,5,5\n";
+
+        var result = BudgetLongNormalizer.normalizeToLongCsv(csv.getBytes(StandardCharsets.UTF_8), "7", 10_000, 60);
+
+        assertThat(result.labelHeader()).isEqualTo("Descripcion");
+        assertThat(result.sampleRows()).filteredOn(row -> "700.01".equals(row.code()))
+            .extracting(BudgetLongNormalizer.LongRow::label)
+            .contains("Ventas retail");
+        assertThat(result.sampleRows()).filteredOn(row -> "640".equals(row.code()))
+            .extracting(BudgetLongNormalizer.LongRow::label)
+            .contains("Sueldos y salarios");
     }
 
     @Test
@@ -584,6 +732,22 @@ class BudgetLongNormalizerTest {
             Arguments.of("Ventas de mantecados", "Materias primas de harina y azúcar", "Servicios de envasado", "REV-01", "MAT-02", "PACK-03", "PAY-03", "DEP-04", "FININC-05", "FINEXP-06", "Revenue", "Operating expenses", "Cash payments", true),
             Arguments.of("Ventas de productos", "Consumo de mercaderías", "Servicios logísticos", "", "", "", "", "", "", "", "Sales", "Total operating costs", "Supplier payments", false),
             Arguments.of("Ingresos por suscripciones", "Infraestructura cloud", "Servicios subcontratados", "REV-SUB", "CLOUD-04", "SERV-05", "PEOPLE-06", "DEP-07", "FIN-08", "INT-09", "Ingresos por servicios", "Costes operacionales", "Payments", true)
+        );
+    }
+
+    private static Stream<Arguments> explicitEconomicConcepts() {
+        return Stream.of(
+            Arguments.of("Otros ingresos operativos", "OTHER_OPERATING_INCOME"),
+            Arguments.of("Ingreso financiero", "FINANCIAL_INCOME"),
+            Arguments.of("Gasto financiero", "FINANCIAL_EXPENSE"),
+            Arguments.of("Resultado financiero", "FINANCIAL_RESULT"),
+            Arguments.of("Financiación recibida", "FINANCING_INFLOW"),
+            Arguments.of("Devolución préstamo", "FINANCING_OUTFLOW"),
+            Arguments.of("Impuesto caja", "CASHFLOW_TAX"),
+            Arguments.of("Saldo inicial", "OPENING_BALANCE"),
+            Arguments.of("Saldo final", "CLOSING_BALANCE"),
+            Arguments.of("Amortización inmovilizado", "DEPRECIATION_AMORTIZATION"),
+            Arguments.of("Inversión inmovilizado", "CAPEX")
         );
     }
 

@@ -165,7 +165,7 @@ function backendUnavailableMessage() {
 
   return (
     `No se pudo conectar con el backend (${api}). ` +
-    `¿Está levantado? Con Docker: http://localhost:8081. ` +
+    `Esta levantado? Con Docker: http://localhost:8081. ` +
     `Con Maven suele ser http://localhost:8080 (configura VITE_API_URL).`
   )
 }
@@ -174,7 +174,7 @@ function normalizeFetchError(err: any, timeoutMs: number) {
   const msg = String(err?.message || err || '')
   if (err?.name === 'AbortError') {
     return new Error(
-      `Tiempo de espera agotado (${Math.round(timeoutMs / 1000)}s). Si el fichero es grande, súbelo por periodos o usa Universal.`
+      `Tiempo de espera agotado (${Math.round(timeoutMs / 1000)}s). Si el fichero es grande, subelo por periodos o usa Universal.`
     )
   }
 
@@ -711,6 +711,361 @@ export async function getTribunalSummary(companyId: number) {
   return request(`/api/companies/${companyId}/tribunal/summary`)
 }
 
+export type WorkforceImportDto = {
+  id: number
+  companyId: number
+  importKind: 'WORKFORCE' | 'LABOR_COSTS'
+  filename: string
+  createdAt: string
+  rowCount: number
+  warningCount: number
+  errorCount: number
+  errorSummary?: string | null
+  referencePeriod: string
+  referenceLabel: string
+  status: 'ACTIVE' | 'SUPERSEDED'
+  referenceYear?: number | null
+  referenceMonth?: number | null
+  coverageStartMonth?: number | null
+  coverageEndMonth?: number | null
+  annualCoverage: boolean
+  versionNumber: number
+  detectedColumns: string[]
+  activityYears: number[]
+}
+
+export type WorkforceKpiDto = {
+  totalClients: number
+  totalGestores: number
+  activeClients: number
+  inactiveClients: number
+  totalMinutas: number | null
+  totalCarga: number | null
+  totalVolumenAsientos: number | null
+}
+
+export type WorkforceStatusBreakdownDto = {
+  ok: number
+  no: number
+  negative: number
+  pending: number
+  unknown: number
+}
+
+export type WorkforceGestorDto = {
+  gestor: string
+  totalClients: number
+  activeClients: number
+  inactiveClients: number
+  totalMinutas: number | null
+  totalCarga: number | null
+  cargaMedia: number | null
+  totalVolumenAsientos: number | null
+  pctContabilidadMedio: number | null
+  costePersonalAnual: number | null
+  ssEmpresaAnual: number | null
+  costeLaboralAnual: number | null
+  costePorCliente: number | null
+  costePor1000Minutas: number | null
+  costePor1000Asientos: number | null
+  minutasPor1000Coste: number | null
+  asientosPor1000Coste: number | null
+  contModelosOk: number
+  isIrpfOk: number
+  ddccOk: number
+  librosOk: number
+  contModelosStates: WorkforceStatusBreakdownDto
+  isIrpfStates: WorkforceStatusBreakdownDto
+  ddccStates: WorkforceStatusBreakdownDto
+  librosStates: WorkforceStatusBreakdownDto
+  annualSeatTotals: Record<string, number>
+}
+
+export type WorkforceMonthlyCostDto = {
+  month: string
+  costePersonal: number | null
+  ssEmpresa: number | null
+  costeTotal: number | null
+}
+
+export type WorkforceLaborCostGestorDto = {
+  gestor: string
+  costePersonalMensual: Record<string, number>
+  ssEmpresaMensual: Record<string, number>
+  costeTotalMensual: Record<string, number>
+  costePersonalAnual: number | null
+  ssEmpresaAnual: number | null
+  costeLaboralAnual: number | null
+}
+
+export type WorkforceLaborCostReviewDto = {
+  sourceGestor: string
+  normalizedGestor?: string | null
+  status: string
+  detail: string
+  rows: number
+}
+
+export type WorkforceLaborCostWorkerDto = {
+  canonicalWorkerId?: string | null
+  identityStrategy?: string | null
+  workerLabel: string
+  sourceWorker?: string | null
+  sourceGestor?: string | null
+  normalizedGestor?: string | null
+  canonicalGestor?: string | null
+  matchingState: 'MATCHED' | 'REVIEW' | 'UNMATCHED' | string
+  matchingDetail?: string | null
+  currency?: string | null
+  costePersonalMensual: Record<string, number>
+  ssEmpresaMensual: Record<string, number>
+  costeTotalMensual: Record<string, number>
+  costePersonalAnual: number | null
+  ssEmpresaAnual: number | null
+  costeLaboralAnual: number | null
+}
+
+export type WorkforceLaborCostCanonicalImportDto = {
+  matchedWorkforceImportId?: number | null
+  matchedWorkforceReferencePeriod?: string | null
+  matchedWorkforceReferenceLabel?: string | null
+  currency?: string | null
+  multiCurrency: boolean
+  detectedCurrencies: string[]
+  workers: WorkforceLaborCostWorkerDto[]
+}
+
+export type WorkforceLaborCostsDto = {
+  totalCostePersonalAnual: number | null
+  totalSsEmpresaAnual: number | null
+  totalCosteLaboralAnual: number | null
+  costeMedioPorGestor: number | null
+  monthlyTotals: WorkforceMonthlyCostDto[]
+  gestores: WorkforceLaborCostGestorDto[]
+  reviewCount: number
+  reviews: WorkforceLaborCostReviewDto[]
+}
+
+export type WorkforceHistoryPointDto = {
+  importId: number
+  referencePeriod?: string | null
+  referenceLabel?: string | null
+  filename: string
+  createdAt: string
+  totalClients: number
+  activeClients: number
+  inactiveClients: number
+  totalMinutas: number | null
+  totalCarga: number | null
+  totalVolumenAsientos: number | null
+}
+
+export type WorkforceGestorHistoryPointDto = {
+  importId: number
+  referencePeriod?: string | null
+  referenceLabel?: string | null
+  filename: string
+  createdAt: string
+  totalClients: number
+  activeClients: number
+  inactiveClients: number
+  totalMinutas: number | null
+  totalCarga: number | null
+  cargaMedia: number | null
+  totalVolumenAsientos: number | null
+  pctContabilidadMedio: number | null
+}
+
+export type WorkforceGestorHistoryDto = {
+  gestor: string
+  points: WorkforceGestorHistoryPointDto[]
+}
+
+export type WorkforceLaborCostHistoryPointDto = {
+  importId: number
+  referencePeriod?: string | null
+  referenceLabel?: string | null
+  filename: string
+  createdAt: string
+  totalCostePersonalAnual: number | null
+  totalSsEmpresaAnual: number | null
+  totalCosteLaboralAnual: number | null
+  gestorCount: number
+}
+
+export type WorkforceLaborCostGestorHistoryPointDto = {
+  referencePeriod?: string | null
+  referenceLabel?: string | null
+  createdAt: string
+  costePersonalAnual: number | null
+  ssEmpresaAnual: number | null
+  costeLaboralAnual: number | null
+}
+
+export type WorkforceLaborCostGestorHistoryDto = {
+  gestor: string
+  points: WorkforceLaborCostGestorHistoryPointDto[]
+}
+
+export type WorkforceLaborCostHistoryDto = {
+  imports: WorkforceLaborCostHistoryPointDto[]
+  gestores: WorkforceLaborCostGestorHistoryDto[]
+}
+
+export type WorkforceHistoryDto = {
+  imports: WorkforceHistoryPointDto[]
+  gestores: WorkforceGestorHistoryDto[]
+}
+
+export type WorkforceInsightsDto = {
+  executiveReadings: string[]
+  priorityReview: string[]
+  costActivityReadings: string[]
+  findings: string[]
+  reviewPoints: string[]
+  recommendedActions: string[]
+  limitations: string[]
+}
+
+export type WorkforceSummaryDto = {
+  kpis: WorkforceKpiDto
+  gestores: WorkforceGestorDto[]
+  detectedColumns: string[]
+  activityYears: number[]
+  laborCosts?: WorkforceLaborCostsDto | null
+  pairedLaborCosts?: WorkforceLaborCostsDto | null
+  history?: WorkforceHistoryDto | null
+  laborCostsHistory?: WorkforceLaborCostHistoryDto | null
+  insights?: WorkforceInsightsDto | null
+  workforceImport?: WorkforceImportDto | null
+  laborCostsImport?: WorkforceImportDto | null
+  pairedLaborCostsImport?: WorkforceImportDto | null
+  workforceImports?: WorkforceImportDto[]
+  laborCostImports?: WorkforceImportDto[]
+}
+
+export type WorkforceLaborCostComparisonTotalsDto = {
+  baseCostePersonal: number | null
+  comparisonCostePersonal: number | null
+  deltaCostePersonal: number | null
+  deltaPctCostePersonal: number | null
+  deltaPctCostePersonalState: string
+  baseSsEmpresa: number | null
+  comparisonSsEmpresa: number | null
+  deltaSsEmpresa: number | null
+  deltaPctSsEmpresa: number | null
+  deltaPctSsEmpresaState: string
+  baseCosteTotal: number | null
+  comparisonCosteTotal: number | null
+  deltaCosteTotal: number | null
+  deltaPctCosteTotal: number | null
+  deltaPctCosteTotalState: string
+  reconciledBaseCosteTotal: number | null
+  reconciledComparisonCosteTotal: number | null
+}
+
+export type WorkforceLaborCostComparisonCountsDto = {
+  baseWorkers: number
+  comparisonWorkers: number
+  comparableWorkers: number
+  onlyBaseWorkers: number
+  onlyComparisonWorkers: number
+  reviewWorkers: number
+  unmatchedWorkers: number
+  validBaseWorkers: number
+  validComparisonWorkers: number
+}
+
+export type WorkforceLaborCostComparisonManagerDto = {
+  gestor: string
+  baseWorkers: number
+  comparisonWorkers: number
+  baseCosteTotal: number | null
+  comparisonCosteTotal: number | null
+  deltaCosteTotal: number | null
+  deltaPctCosteTotal: number | null
+  deltaPctCosteTotalState: string
+}
+
+export type WorkforceLaborCostComparisonWorkerDto = {
+  canonicalWorkerId?: string | null
+  workerLabel: string
+  identityStrategy?: string | null
+  baseGestor?: string | null
+  comparisonGestor?: string | null
+  baseMatchingState?: string | null
+  comparisonMatchingState?: string | null
+  comparisonState: 'MATCHED' | 'ONLY_BASE' | 'ONLY_COMPARISON' | 'REVIEW' | string
+  detail?: string | null
+  baseCostePersonal: number | null
+  comparisonCostePersonal: number | null
+  deltaCostePersonal: number | null
+  baseSsEmpresa: number | null
+  comparisonSsEmpresa: number | null
+  deltaSsEmpresa: number | null
+  baseCosteTotal: number | null
+  comparisonCosteTotal: number | null
+  deltaCosteTotal: number | null
+  deltaPctCosteTotal: number | null
+  deltaPctCosteTotalState: string
+}
+
+export type WorkforceLaborCostComparisonDto = {
+  basePeriod: string
+  comparisonPeriod: string
+  baseImport?: WorkforceImportDto | null
+  comparisonImport?: WorkforceImportDto | null
+  currency?: string | null
+  status: 'READY' | 'MISSING_IMPORT' | 'LEGACY_IMPORT' | 'CURRENCY_MISMATCH' | string
+  message: string
+  totals: WorkforceLaborCostComparisonTotalsDto
+  counts: WorkforceLaborCostComparisonCountsDto
+  gestores: WorkforceLaborCostComparisonManagerDto[]
+  comparableWorkers: WorkforceLaborCostComparisonWorkerDto[]
+  onlyBaseWorkers: WorkforceLaborCostComparisonWorkerDto[]
+  onlyComparisonWorkers: WorkforceLaborCostComparisonWorkerDto[]
+  reviewWorkers: WorkforceLaborCostComparisonWorkerDto[]
+}
+
+export async function getWorkforceSummary(companyId: number, workforceImportId?: number | null) {
+  const q = workforceImportId ? `?workforceImportId=${encodeURIComponent(String(workforceImportId))}` : ''
+  return request<WorkforceSummaryDto>(`/api/companies/${companyId}/workforce/summary${q}`)
+}
+
+export async function getWorkforceStatus(companyId: number) {
+  return request<WorkforceImportDto | null>(`/api/companies/${companyId}/workforce/status`)
+}
+
+export async function getWorkforceLaborCostsStatus(companyId: number) {
+  return request<WorkforceImportDto | null>(`/api/companies/${companyId}/workforce/costs/status`)
+}
+
+export async function getWorkforceLaborCostComparison(
+  companyId: number,
+  basePeriod: string,
+  comparisonPeriod: string,
+  options: { baseImportId?: number | null; comparisonImportId?: number | null } = {}
+) {
+  const params = new URLSearchParams({
+    basePeriod,
+    comparisonPeriod,
+  })
+  if (options.baseImportId) params.set('baseImportId', String(options.baseImportId))
+  if (options.comparisonImportId) params.set('comparisonImportId', String(options.comparisonImportId))
+  return request<WorkforceLaborCostComparisonDto>(`/api/companies/${companyId}/workforce/costs/comparison?${params.toString()}`)
+}
+
+export async function downloadWorkforceReportPdf(companyId: number, workforceImportId?: number | null) {
+  const q = workforceImportId ? `?workforceImportId=${encodeURIComponent(String(workforceImportId))}` : ''
+  const url = `${API_URL}/api/companies/${companyId}/workforce/report.pdf${q}`
+  const res = await fetchWithAuth(url, {}, { auth: true, retry: true, timeoutMs: 120_000 })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(text || `HTTP ${res.status}`)
+  }
+  return res.blob()
+}
+
 export type TribunalImportDto = {
   id: number
   companyId: number
@@ -1175,6 +1530,42 @@ export async function uploadTribunalImport(companyId: number, file: File) {
     throw new Error(text || `HTTP ${res.status}`)
   }
   return res.json()
+}
+
+export async function uploadWorkforceImport(companyId: number, file: File, referencePeriod?: string | null) {
+  const form = new FormData()
+  form.append('file', file)
+  if (referencePeriod) form.append('referencePeriod', referencePeriod)
+
+  const res = await fetchWithAuth(
+    `${API_URL}/api/companies/${companyId}/workforce/imports`,
+    { method: 'POST', body: form },
+    { auth: true, retry: true, timeoutMs: 120_000 }
+  )
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(text || `HTTP ${res.status}`)
+  }
+  return res.json() as Promise<WorkforceImportDto>
+}
+
+export async function uploadWorkforceLaborCostsImport(companyId: number, file: File, referencePeriod?: string | null) {
+  const form = new FormData()
+  form.append('file', file)
+  if (referencePeriod && referencePeriod.trim()) {
+    form.append('referencePeriod', referencePeriod.trim())
+  }
+
+  const res = await fetchWithAuth(
+    `${API_URL}/api/companies/${companyId}/workforce/costs/imports`,
+    { method: 'POST', body: form },
+    { auth: true, retry: true, timeoutMs: 120_000 }
+  )
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(text || `HTTP ${res.status}`)
+  }
+  return res.json() as Promise<WorkforceImportDto>
 }
 
 export type ImportJob = {
@@ -1849,7 +2240,7 @@ export async function getUniversalViewData(companyId: number, viewId: number) {
   const data = await request<any>(`/api/companies/${companyId}/universal/views/${viewId}/data`, { method: 'POST' })
   // Defensive: avoid blank screens if backend returns `null`/empty due to missing dataset/storage.
   if (!data || typeof data !== 'object') {
-    throw new Error('Respuesta vacía al cargar el dashboard. Sube/re-sube un dataset en Universal y reintenta.')
+    throw new Error('Respuesta vacia al cargar el dashboard. Sube o vuelve a subir un dataset en Universal y reintenta.')
   }
   return data as UniversalChartData
 }
@@ -1858,7 +2249,7 @@ export async function getUniversalViewDataForImport(companyId: number, viewId: n
   const qs = importId ? `?importId=${encodeURIComponent(String(importId))}` : ''
   const data = await request<any>(`/api/companies/${companyId}/universal/views/${viewId}/data${qs}`, { method: 'POST' })
   if (!data || typeof data !== 'object') {
-    throw new Error('Respuesta vacía al cargar el dashboard. Sube/re-sube un dataset en Universal y reintenta.')
+    throw new Error('Respuesta vacia al cargar el dashboard. Sube o vuelve a subir un dataset en Universal y reintenta.')
   }
   return data as UniversalChartData
 }

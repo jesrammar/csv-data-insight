@@ -89,7 +89,8 @@ public final class BudgetLongNormalizer {
     );
     private static final Set<String> SEMANTIC_HEADER_ALIASES = Set.of(
         "naturaleza", "tipo", "tipo partida", "tipo registro", "categoria", "clasificacion",
-        "financial nature", "row type", "nature", "classification", "line type", "category"
+        "financial nature", "financial group", "nature group", "semantic group", "semantic kind",
+        "financial bucket", "nature bucket", "row type", "nature", "classification", "line type", "category"
     );
     private static final Set<String> CODE_HEADER_ALIASES = Set.of(
         "codigo", "cuenta", "account", "code", "concept code", "plan item", "account code"
@@ -98,16 +99,25 @@ public final class BudgetLongNormalizer {
         "concepto", "descripcion", "description", "partida", "label", "concept", "detalle", "nombre"
     );
     private static final Set<String> SECTION_HEADER_ALIASES = Set.of(
-        "seccion", "section", "bloque", "area financiera", "financial block"
+        "seccion", "section", "bloque", "area financiera", "financial block",
+        "cuenta de resultados", "cuenta de explotacion", "profit and loss", "income statement", "p&l",
+        "cash flow", "flujo de caja", "treasury block", "bloque financiero", "statement block",
+        "report block", "financial section", "cash section"
     );
     private static final Set<String> ROW_ROLE_HEADER_ALIASES = Set.of(
-        "clase de registro", "tipo de fila", "tipo fila", "rol de fila", "row role", "row type", "line type", "clase", "registro"
+        "clase de registro", "tipo de fila", "tipo fila", "rol de fila", "row role", "row type",
+        "line type", "record role", "record class", "line class", "semantic role", "record category",
+        "line role", "clase", "registro"
     );
     private static final Set<String> FINANCIAL_GROUP_HEADER_ALIASES = Set.of(
-        "grupo financiero", "financial group", "grupo", "family", "financial family", "nature group"
+        "grupo financiero", "naturaleza financiera", "financial group", "financial nature",
+        "grupo economico", "economic group", "grupo", "family", "financial family", "nature group",
+        "semantic group", "financial bucket", "nature bucket", "economic bucket", "pl group"
     );
     private static final Set<String> DIRECTION_HEADER_ALIASES = Set.of(
-        "sentido", "direction", "sign", "nature sign", "flow direction"
+        "sentido", "sentido economico", "direction", "sign", "nature sign",
+        "flow direction", "cash direction", "movement direction", "entry direction", "flow type",
+        "polarity", "economic sign", "cash sign", "signo economico"
     );
     private static final Set<String> AGGREGATION_POLICY_HEADER_ALIASES = Set.of(
         "criterio de agregacion", "criterio de agregación", "politica de agregacion", "politica de agregación",
@@ -204,9 +214,11 @@ public final class BudgetLongNormalizer {
             resolution.headerFor("VARIANCE"),
             findHeaderByTokens(headers, "desviacion", "variance", "delta", "vs budget")
         );
-        String labelHeader = firstNonNull(
+        String labelHeader = selectLabelHeader(
+            headers,
+            sampleRows,
             resolution.headerFor("CONCEPT_NAME"),
-            findHeaderByTokens(headers, "concept label", "concepto", "partida", "label", "concept", "descripcion", "description"),
+            findHeaderByTokens(headers, "concept label", "concepto", "descripcion", "description", "detalle", "nombre", "label", "concept", "partida"),
             detectLabelHeader(headers, sampleRows)
         );
         String codeHeader = selectCodeHeader(headers, resolution.headerFor("CONCEPT_CODE"));
@@ -218,7 +230,19 @@ public final class BudgetLongNormalizer {
         String rowRoleHeader = findHeaderByTokens(headers, ROW_ROLE_HEADER_ALIASES.toArray(String[]::new));
         String financialGroupHeader = findHeaderByTokens(headers, FINANCIAL_GROUP_HEADER_ALIASES.toArray(String[]::new));
         String directionHeader = findHeaderByTokens(headers, DIRECTION_HEADER_ALIASES.toArray(String[]::new));
-        String aggregationPolicyHeader = findHeaderByTokens(headers, AGGREGATION_POLICY_HEADER_ALIASES.toArray(String[]::new));
+        String aggregationPolicyHeader = firstNonNull(
+            findHeaderByTokens(headers, AGGREGATION_POLICY_HEADER_ALIASES.toArray(String[]::new)),
+            findHeaderByTokens(headers,
+                "aggregation mode",
+                "aggregation type",
+                "rollup method",
+                "aggregation method",
+                "last value policy",
+                "policy",
+                "metodo de agregacion",
+                "modo de agregacion"
+            )
+        );
         Set<String> excludedHeaders = new LinkedHashSet<>();
         for (String header : Arrays.asList(
             monthNameHeader,
@@ -306,7 +330,9 @@ public final class BudgetLongNormalizer {
                                               StructuredInput structured) {
         BudgetSemanticResolver.Resolution resolution = BudgetSemanticResolver.resolve(headers, sampleRows, clientKey);
         BudgetSemanticResolver.HeaderInference natureInference = BudgetSemanticResolver.detectNatureHeader(headers, sampleRows);
-        String labelHeader = firstNonNull(
+        String labelHeader = selectLabelHeader(
+            headers,
+            sampleRows,
             resolution.headerFor("CONCEPT_NAME"),
             detectLabelHeader(headers, sampleRows)
         );
@@ -325,6 +351,7 @@ public final class BudgetLongNormalizer {
         int unknownDetailRows = 0;
         int reviewRows = 0;
         int reviewDetailRows = 0;
+        int classifiedFinancialDetailRows = 0;
         int inferredRows = 0;
         boolean headerConfirmation = resolution.requiresConfirmation() && natureHeader == null;
         NormalizationContext normalizationContext = NormalizationContext.initial();
@@ -382,6 +409,7 @@ public final class BudgetLongNormalizer {
                     detailRows++;
                     if ("UNKNOWN".equals(classification.semanticKind())) unknownDetailRows++;
                     if ("REVIEW".equals(mappingStatus)) reviewDetailRows++;
+                    if (hasComparableFinancialClassification(classification)) classifiedFinancialDetailRows++;
                 }
                 if ("REVIEW".equals(mappingStatus)) reviewRows++;
                 if ("INFERRED".equals(mappingStatus)) inferredRows++;
@@ -429,12 +457,12 @@ public final class BudgetLongNormalizer {
             }
         } catch (Exception ex) {
             List<String> notes = mergeNotes(resolution.notes(), detailRows, unknownDetailRows, reviewRows, inferredRows);
-            boolean requiresConfirmation = requiresConfirmation(detailRows, unknownDetailRows, reviewDetailRows, false);
+            boolean requiresConfirmation = requiresConfirmation(detailRows, unknownDetailRows, reviewDetailRows, classifiedFinancialDetailRows, false);
             return new Result(List.copyOf(monthHeader.keySet()), labelHeader, produced, sample, requiresConfirmation, notes, out.toString().getBytes(StandardCharsets.UTF_8), resultStatus(monthHeader.size(), requiresConfirmation, detailRows), structured.headerRowIndex() + 1, structured.headerScore());
         }
 
         List<String> notes = mergeNotes(resolution.notes(), detailRows, unknownDetailRows, reviewRows, inferredRows);
-        boolean requiresConfirmation = requiresConfirmation(detailRows, unknownDetailRows, reviewDetailRows, false);
+        boolean requiresConfirmation = requiresConfirmation(detailRows, unknownDetailRows, reviewDetailRows, classifiedFinancialDetailRows, false);
         return new Result(List.copyOf(monthHeader.keySet()), labelHeader, produced, sample, requiresConfirmation, notes, out.toString().getBytes(StandardCharsets.UTF_8), resultStatus(monthHeader.size(), requiresConfirmation, detailRows), structured.headerRowIndex() + 1, structured.headerScore());
     }
 
@@ -470,6 +498,7 @@ public final class BudgetLongNormalizer {
         int unknownDetailRows = 0;
         int reviewRows = 0;
         int reviewDetailRows = 0;
+        int classifiedFinancialDetailRows = 0;
         int inferredRows = 0;
         boolean longSemanticSupport = countNonNull(sectionHeader, rowRoleHeader, financialGroupHeader, directionHeader, aggregationPolicyHeader) >= 2;
         boolean headerConfirmation = resolution.requiresConfirmation() && natureHeader == null && !longSemanticSupport;
@@ -556,6 +585,7 @@ public final class BudgetLongNormalizer {
                     detailRows++;
                     if ("UNKNOWN".equals(classification.semanticKind())) unknownDetailRows++;
                     if ("REVIEW".equals(mappingStatus)) reviewDetailRows++;
+                    if (hasComparableFinancialClassification(classification)) classifiedFinancialDetailRows++;
                 }
                 if ("REVIEW".equals(mappingStatus)) reviewRows++;
                 if ("INFERRED".equals(mappingStatus)) inferredRows++;
@@ -596,12 +626,12 @@ public final class BudgetLongNormalizer {
             }
         } catch (Exception ex) {
             List<String> notes = mergeNotes(resolution.notes(), detailRows, unknownDetailRows, reviewRows, inferredRows);
-            boolean requiresConfirmation = requiresConfirmation(detailRows, unknownDetailRows, reviewDetailRows, headerConfirmation);
+            boolean requiresConfirmation = requiresConfirmation(detailRows, unknownDetailRows, reviewDetailRows, classifiedFinancialDetailRows, headerConfirmation);
             return new Result(List.copyOf(monthSeen.keySet()), labelHeader, produced, sample, requiresConfirmation, notes, out.toString().getBytes(StandardCharsets.UTF_8), resultStatus(monthSeen.size(), requiresConfirmation, detailRows), structured.headerRowIndex() + 1, structured.headerScore());
         }
 
         List<String> notes = mergeNotes(resolution.notes(), detailRows, unknownDetailRows, reviewRows, inferredRows);
-        boolean requiresConfirmation = requiresConfirmation(detailRows, unknownDetailRows, reviewDetailRows, headerConfirmation);
+        boolean requiresConfirmation = requiresConfirmation(detailRows, unknownDetailRows, reviewDetailRows, classifiedFinancialDetailRows, headerConfirmation);
         return new Result(List.copyOf(monthSeen.keySet()), labelHeader, produced, sample, requiresConfirmation, notes, out.toString().getBytes(StandardCharsets.UTF_8), resultStatus(monthSeen.size(), requiresConfirmation, detailRows), structured.headerRowIndex() + 1, structured.headerScore());
     }
 
@@ -665,8 +695,14 @@ public final class BudgetLongNormalizer {
         if ("CASHFLOW_TAX".equals(semanticKind)) {
             return "";
         }
+        if ("OTHER_OPERATING_INCOME".equals(semanticKind)) {
+            return "REVENUE";
+        }
         if ("INVENTORY_VARIATION".equals(semanticKind)) {
             return "OPERATING_ADJUSTMENT";
+        }
+        if ("FINANCIAL_RESULT".equals(semanticKind)) {
+            return "FINANCING";
         }
         if ("FINANCIAL_EXPENSE".equals(semanticKind) || "FINANCIAL_INCOME".equals(semanticKind)) {
             return "FINANCING";
@@ -1219,19 +1255,49 @@ public final class BudgetLongNormalizer {
     private static String detectLabelHeader(List<String> headers, List<Map<String, String>> sampleRows) {
         List<String> candidates = headers.stream()
             .filter(Objects::nonNull)
-            .limit(6)
+            .limit(8)
             .toList();
         String best = null;
-        int bestScore = -1;
+        int bestScore = Integer.MIN_VALUE;
         for (String candidate : candidates) {
-            int score = 0;
+            int score = labelHeaderNameScore(candidate);
             for (Map<String, String> row : sampleRows) {
                 if (row == null) continue;
-                String value = clean(row.get(candidate));
-                if (value == null) continue;
-                String up = value.toUpperCase(Locale.ROOT);
-                if (up.contains("TOTAL") || looksLikePartida(up)) {
-                    score++;
+                score += labelValueScore(clean(row.get(candidate)));
+            }
+            if (score > bestScore) {
+                bestScore = score;
+                best = candidate;
+            }
+        }
+        return bestScore < 2 ? null : best;
+    }
+
+    private static String selectLabelHeader(List<String> headers, List<Map<String, String>> sampleRows, String... hints) {
+        List<String> candidates = new ArrayList<>();
+        if (hints != null) {
+            for (String hint : hints) {
+                if (hint != null && !hint.isBlank() && !candidates.contains(hint)) {
+                    candidates.add(hint);
+                }
+            }
+        }
+        if (headers != null) {
+            for (String header : headers) {
+                if (header != null && !header.isBlank() && !candidates.contains(header)) {
+                    candidates.add(header);
+                }
+            }
+        }
+
+        String best = null;
+        int bestScore = Integer.MIN_VALUE;
+        for (String candidate : candidates) {
+            int score = labelHeaderNameScore(candidate);
+            if (sampleRows != null) {
+                for (Map<String, String> row : sampleRows) {
+                    if (row == null) continue;
+                    score += labelValueScore(clean(row.get(candidate)));
                 }
             }
             if (score > bestScore) {
@@ -1239,7 +1305,48 @@ public final class BudgetLongNormalizer {
                 best = candidate;
             }
         }
-        return bestScore < 1 ? null : best;
+        return bestScore < 2 ? null : best;
+    }
+
+    private static int labelHeaderNameScore(String header) {
+        if (header == null || header.isBlank()) return Integer.MIN_VALUE / 4;
+        String normalized = BudgetSemanticResolver.normalize(header);
+        int score = 0;
+        if (normalized.contains("descripcion") || normalized.contains("description")) score += 160;
+        if (normalized.contains("concept label") || normalized.contains("concepto")) score += 140;
+        if (normalized.contains("detalle") || normalized.contains("nombre")) score += 120;
+        if (normalized.contains("label")) score += 90;
+        if (normalized.contains("concept")) score += 70;
+        if (normalized.contains("partida")) score += 32;
+        if (looksLikeCodeHeader(header)) score -= 120;
+        return score;
+    }
+
+    private static int labelValueScore(String value) {
+        if (value == null || value.isBlank()) return 0;
+        int score = 0;
+        String upper = value.toUpperCase(Locale.ROOT);
+        boolean hasLetters = containsLetters(value);
+        boolean looksLikeCodeOnly = looksLikePartida(upper) && !hasDescriptiveSuffix(value);
+        if (upper.contains("TOTAL")) score += 2;
+        if (hasLetters) score += 3;
+        if (hasDescriptiveSuffix(value)) score += 6;
+        if (looksLikeCodeOnly) score -= 10;
+        return score;
+    }
+
+    private static boolean containsLetters(String value) {
+        if (value == null) return false;
+        return value.chars().anyMatch(Character::isLetter);
+    }
+
+    private static boolean hasDescriptiveSuffix(String value) {
+        ParsedLabel parsed = parsePartidaLabel(value);
+        return parsed != null
+            && parsed.code() != null
+            && parsed.label() != null
+            && !parsed.label().equals(parsed.code())
+            && containsLetters(parsed.label());
     }
 
     private static String selectCodeHeader(List<String> headers, String resolvedHeader) {
@@ -1458,12 +1565,32 @@ public final class BudgetLongNormalizer {
         return out;
     }
 
-    private static boolean requiresConfirmation(int detailRows, int unknownDetailRows, int reviewDetailRows, boolean headerConfirmation) {
+    private static boolean requiresConfirmation(int detailRows,
+                                                int unknownDetailRows,
+                                                int reviewDetailRows,
+                                                int classifiedFinancialDetailRows,
+                                                boolean headerConfirmation) {
         if (headerConfirmation) return true;
+        if (detailRows > 0 && classifiedFinancialDetailRows == 0) return true;
         if (detailRows <= 0) return reviewDetailRows > 0 || unknownDetailRows > 0;
         int unknownThreshold = Math.max(2, (int) Math.ceil(detailRows * 0.12d));
         int reviewThreshold = Math.max(2, (int) Math.ceil(detailRows * 0.18d));
         return unknownDetailRows >= unknownThreshold || reviewDetailRows >= reviewThreshold;
+    }
+
+    private static boolean hasComparableFinancialClassification(BudgetCanonicalClassifier.Classification classification) {
+        if (classification == null || classification.rowType() != RowType.DETAIL) {
+            return false;
+        }
+        String semanticKind = upper(classification.semanticKind());
+        String sectionKind = upper(classification.sectionKind());
+        if ("UNKNOWN".equals(semanticKind) || "ASSUMPTION".equals(semanticKind)) {
+            return false;
+        }
+        if ("UNKNOWN".equals(sectionKind) || "ASSUMPTION".equals(sectionKind)) {
+            return false;
+        }
+        return true;
     }
 
     private static String detectMonthKey(String monthNameRaw, String monthNumberRaw) {
