@@ -106,9 +106,13 @@ jobs:
     runs-on: ubuntu-latest
     env:
       VPS_HOST: ${{ secrets.VPS_HOST }}
-    if: ${{ env.VPS_HOST != '' }}
     steps:
+      - name: Deployment not configured
+        if: ${{ env.VPS_HOST == '' }}
+        run: echo "VPS deployment skipped because VPS_HOST is not configured."
+
       - name: Copy docker-compose.prod.yml
+        if: ${{ env.VPS_HOST != '' }}
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.VPS_HOST }}
@@ -118,6 +122,7 @@ jobs:
           source: "docker-compose.prod.yml"
           target: "/opt/enterpriseiq"
       - name: Deploy on VPS
+        if: ${{ env.VPS_HOST != '' }}
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.VPS_HOST }}
