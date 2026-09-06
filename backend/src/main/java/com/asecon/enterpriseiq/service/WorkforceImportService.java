@@ -55,6 +55,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVParser;
 import org.apache.commons.csv.CSVRecord;
@@ -174,10 +175,14 @@ public class WorkforceImportService {
     public WorkforceImportDto importLaborCosts(Long companyId, MultipartFile file, String referencePeriod) throws IOException {
         Company company = companyRepository.findById(companyId).orElseThrow();
         TemporalReference explicitReference = parseWorkforceReference(referencePeriod);
-        WorkforceContext workforceContext = resolveWorkforceContextForLaborCosts(companyId, explicitReference);
+        TabularFileService.TabularCsv tabularCsv = tabularFileService.toCsv(file, null);
+        TemporalReference filenameReference = inferWorkforceReferenceFromFilename(tabularCsv.filename());
+        WorkforceContext workforceContext = resolveWorkforceContextForLaborCosts(
+            companyId,
+            explicitReference.known() ? explicitReference : filenameReference
+        );
         WorkforceSummaryDto workforceSummary = workforceContext.summary();
 
-        TabularFileService.TabularCsv tabularCsv = tabularFileService.toCsv(file, null);
         byte[] bytes = tabularCsv.bytes();
         Charset charset = tabularCsv.charset() == null ? detectCharset(bytes) : tabularCsv.charset();
         String firstLine = stripBom(readFirstLine(bytes, charset));
@@ -192,6 +197,7 @@ public class WorkforceImportService {
         List<String> warningDetails = new ArrayList<>();
         WorkforceLaborCostImportSummaryDto summary;
         TemporalCoverageAccumulator coverage = new TemporalCoverageAccumulator(explicitReference);
+        coverage.registerDetectedReference(filenameReference);
 
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(new ByteArrayInputStream(bytes), charset));
              CSVParser parser = buildParser(firstLine, reader)) {
@@ -237,7 +243,7 @@ public class WorkforceImportService {
             summary = buildLaborCostSummary(detected, workers, workforceContext.imported());
         }
 
-        TemporalReference temporalReference = coverage.toTemporalReference(warningDetails);
+        TemporalReference temporalReference = resolveLaborCostReference(explicitReference, coverage);
         supersedeActiveImport(companyId, WorkforceImportKind.LABOR_COSTS, temporalReference.referencePeriod());
 
         WorkforceImport workforceImport = new WorkforceImport();
@@ -336,9 +342,11 @@ public class WorkforceImportService {
                                                                   Long comparisonImportId) {
         String normalizedBasePeriod = normalizeReferencePeriod(basePeriod);
         String normalizedComparisonPeriod = normalizeReferencePeriod(comparisonPeriod);
-        boolean sameImportSelection = baseImportId != null && comparisonImportId != null && Objects.equals(baseImportId, comparisonImportId);
-        if (Objects.equals(normalizedBasePeriod, normalizedComparisonPeriod) && !sameImportSelection) {
+        if (Objects.equals(normalizedBasePeriod, normalizedComparisonPeriod)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Los periodos base y comparado deben ser distintos.");
+        }
+        if (baseImportId != null && comparisonImportId != null && Objects.equals(baseImportId, comparisonImportId)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Las importaciones base y comparada deben ser distintas.");
         }
 
         List<WorkforceImport> laborCostImports = listImports(companyId, WorkforceImportKind.LABOR_COSTS);
@@ -473,18 +481,29 @@ public class WorkforceImportService {
                                                                      Long laborCostImportId,
                                                                      String referencePeriod,
                                                                      List<WorkforceImport> laborCostImports) {
-        if (laborCostImportId != null) {
-            Optional<WorkforceImport> stored = optional(
-                importRepository.findByIdAndCompanyIdAndImportKind(laborCostImportId, companyId, WorkforceImportKind.LABOR_COSTS)
-            );
-            if (stored.isPresent()) {
-                return stored;
-            }
-            return laborCostImports.stream()
-                .filter(imported -> Objects.equals(imported.getId(), laborCostImportId))
-                .findFirst();
-        }
         String normalizedPeriod = normalizeReferencePeriod(referencePeriod);
+        if (laborCostImportId != null) {
+            Optional<WorkforceImport> selected = optional(
+                importRepository.findByIdAndCompanyIdAndImportKind(laborCostImportId, companyId, WorkforceImportKind.LABOR_COSTS)
+            ).or(() -> laborCostImports.stream()
+                .filter(imported -> Objects.equals(imported.getId(), laborCostImportId))
+                .findFirst());
+            if (selected.isEmpty()) {
+                throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "La importacion de costes laborales seleccionada no existe o no pertenece a la empresa."
+                );
+            }
+            WorkforceImport imported = selected.orElseThrow();
+            if (!UNKNOWN_REFERENCE_PERIOD.equals(normalizedPeriod)
+                && !Objects.equals(normalizeReferencePeriod(imported.getReferencePeriod()), normalizedPeriod)) {
+                throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "La importacion de costes laborales seleccionada no corresponde al periodo " + normalizedPeriod + "."
+                );
+            }
+            return Optional.of(imported);
+        }
         if (!UNKNOWN_REFERENCE_PERIOD.equals(normalizedPeriod)) {
             Optional<WorkforceImport> activeExact = laborCostImports.stream()
                 .filter(imported -> Objects.equals(normalizeReferencePeriod(imported.getReferencePeriod()), normalizedPeriod))
@@ -499,11 +518,137 @@ public class WorkforceImportService {
             if (latestExact.isPresent()) {
                 return latestExact;
             }
+            return Optional.empty();
         }
         return laborCostImports.stream()
             .filter(imported -> imported.getImportStatus() == WorkforceImportStatus.ACTIVE)
             .max(WorkforceImportService::compareImportsByReference)
             .or(() -> laborCostImports.stream().max(WorkforceImportService::compareImportsByReference));
+    }
+
+    private TemporalReference resolveLaborCostReference(TemporalReference explicitReference,
+                                                        TemporalCoverageAccumulator coverage) {
+        Integer detectedYear = coverage.detectedYear();
+        Integer detectedMonth = coverage.detectedMonth();
+        Integer explicitYear = explicitReference != null && explicitReference.known() ? explicitReference.referenceYear() : null;
+        Integer explicitMonth = explicitReference != null && explicitReference.known() ? explicitReference.referenceMonth() : null;
+
+        if (coverage.hasAmbiguousYears()) {
+            throw laborCostTemporalError(
+                "No se pudo determinar un periodo mensual unico para el fichero de costes laborales.",
+                explicitReference,
+                coverage
+            );
+        }
+
+        if (coverage.hasAmbiguousMonths()) {
+            if (explicitMonth != null) {
+                throw laborCostTemporalError(
+                    "No se pudo determinar un periodo mensual unico para el fichero de costes laborales.",
+                    explicitReference,
+                    coverage
+                );
+            }
+            if (coverage.isAnnualCoverage()) {
+                Integer resolvedYear = detectedYear != null ? detectedYear : explicitYear;
+                if (resolvedYear != null) {
+                    return annualTemporalReference(resolvedYear);
+                }
+            }
+            throw laborCostTemporalError(
+                "No se pudo determinar un periodo mensual unico para el fichero de costes laborales.",
+                explicitReference,
+                coverage
+            );
+        }
+
+        if (explicitMonth != null) {
+            if (detectedMonth != null && !explicitMonth.equals(detectedMonth)) {
+                throw laborCostTemporalError(
+                    "El periodo declarado y el detectado en el fichero no coinciden.",
+                    explicitReference,
+                    coverage
+                );
+            }
+            if (explicitYear != null && detectedYear != null && !explicitYear.equals(detectedYear)) {
+                throw laborCostTemporalError(
+                    "El periodo declarado y el detectado en el fichero no coinciden.",
+                    explicitReference,
+                    coverage
+                );
+            }
+            return explicitReference;
+        }
+
+        if (detectedMonth != null) {
+            if (explicitYear != null && detectedYear != null && !explicitYear.equals(detectedYear)) {
+                throw laborCostTemporalError(
+                    "El periodo declarado y el detectado en el fichero no coinciden.",
+                    explicitReference,
+                    coverage
+                );
+            }
+            Integer resolvedYear = detectedYear != null ? detectedYear : explicitYear;
+            if (resolvedYear != null) {
+                return monthlyTemporalReference(resolvedYear, detectedMonth);
+            }
+        }
+
+        throw laborCostTemporalError(
+            "No se pudo resolver un periodo mensual canonico para la importacion de costes laborales.",
+            explicitReference,
+            coverage
+        );
+    }
+
+    private ResponseStatusException laborCostTemporalError(String message,
+                                                           TemporalReference explicitReference,
+                                                           TemporalCoverageAccumulator coverage) {
+        List<String> details = new ArrayList<>();
+        String declaredLabel = referenceDebugLabel(explicitReference);
+        String detectedLabel = coverage.describeDetectedReference();
+        if (declaredLabel != null) {
+            details.add("declarado " + declaredLabel);
+        }
+        if (detectedLabel != null) {
+            details.add("detectado " + detectedLabel);
+        }
+        String suffix = details.isEmpty() ? "" : " (" + String.join(" | ", details) + ")";
+        return new ResponseStatusException(HttpStatus.BAD_REQUEST, message + suffix);
+    }
+
+    private static TemporalReference monthlyTemporalReference(int year, int month) {
+        String key = "%04d-%02d".formatted(year, month);
+        return new TemporalReference(
+            key,
+            year,
+            month,
+            month,
+            month,
+            false,
+            referenceLabel(year, month, month, false),
+            true
+        );
+    }
+
+    private static TemporalReference annualTemporalReference(int year) {
+        return new TemporalReference(
+            String.valueOf(year),
+            year,
+            null,
+            1,
+            12,
+            true,
+            referenceLabel(year, 1, 12, true),
+            true
+        );
+    }
+
+    private static String referenceDebugLabel(TemporalReference reference) {
+        if (reference == null || !reference.known()) {
+            return null;
+        }
+        return reference.referencePeriod();
     }
 
     private Optional<WorkforceImport> resolveWorkforceImportForLaborCosts(TemporalReference explicitReference,
@@ -2902,8 +3047,17 @@ public class WorkforceImportService {
 
         private TemporalCoverageAccumulator(TemporalReference explicitReference) {
             this.explicitReference = explicitReference == null ? unknownTemporalReference() : explicitReference;
-            if (this.explicitReference.known() && this.explicitReference.referenceYear() != null) {
-                candidateYears.add(this.explicitReference.referenceYear());
+        }
+
+        private void registerDetectedReference(TemporalReference reference) {
+            if (reference == null || !reference.known()) {
+                return;
+            }
+            if (reference.referenceYear() != null) {
+                candidateYears.add(reference.referenceYear());
+            }
+            if (reference.startMonth() != null && reference.endMonth() != null && reference.startMonth().equals(reference.endMonth())) {
+                months.add(reference.startMonth());
             }
         }
 
@@ -2939,32 +3093,57 @@ public class WorkforceImportService {
             return MONTH_SEQUENCE.get(index);
         }
 
-        private TemporalReference toTemporalReference(List<String> warningDetails) {
-            if (months.isEmpty()) {
-                if (explicitReference.known() && explicitReference.referenceMonth() != null) {
-                    return explicitReference;
-                }
-                return unknownTemporalReference();
+        private Integer detectedYear() {
+            return candidateYears.size() == 1 ? candidateYears.iterator().next() : null;
+        }
+
+        private Integer detectedMonth() {
+            return months.size() == 1 ? months.iterator().next() : null;
+        }
+
+        private boolean hasAmbiguousYears() {
+            return candidateYears.size() > 1;
+        }
+
+        private boolean hasAmbiguousMonths() {
+            return months.size() > 1;
+        }
+
+        private boolean isAnnualCoverage() {
+            return months.size() == 12
+                && months.containsAll(java.util.stream.IntStream.rangeClosed(1, 12).boxed().toList());
+        }
+
+        private String describeDetectedReference() {
+            TemporalReference detectedReference = toTemporalReference();
+            if (detectedReference.known()) {
+                return detectedReference.referencePeriod();
             }
-            Integer detectedYear = candidateYears.size() == 1 ? candidateYears.iterator().next() : null;
-            Integer explicitYear = explicitReference.known() ? explicitReference.referenceYear() : null;
-            if (explicitYear != null && detectedYear != null && !explicitYear.equals(detectedYear)) {
-                if (warningDetails.size() < 5) {
-                    warningDetails.add("Cobertura temporal ambigua en costes laborales: ejercicio indicado y meses detectados no coinciden.");
-                }
-                return unknownTemporalReference();
+            if (hasAmbiguousYears()) {
+                return "anios multiples " + candidateYears;
             }
-            if (explicitReference.known() && explicitReference.referenceMonth() != null) {
-                if (!months.contains(explicitReference.referenceMonth())) {
-                    if (warningDetails.size() < 5) {
-                        warningDetails.add("Cobertura temporal ambigua en costes laborales: el mes indicado no coincide con los meses detectados.");
-                    }
-                    return unknownTemporalReference();
-                }
-                return explicitReference;
+            if (hasAmbiguousMonths()) {
+                String monthsLabel = months.stream()
+                    .sorted()
+                    .map(WorkforceImportService::monthLabel)
+                    .collect(Collectors.joining(", "));
+                return detectedYear() == null ? "meses " + monthsLabel : monthsLabel + " " + detectedYear();
             }
-            Integer resolvedYear = explicitYear != null ? explicitYear : detectedYear;
-            if (resolvedYear == null) {
+            if (detectedYear() != null && detectedMonth() != null) {
+                return "%04d-%02d".formatted(detectedYear(), detectedMonth());
+            }
+            if (detectedMonth() != null) {
+                return monthLabel(detectedMonth());
+            }
+            if (detectedYear() != null) {
+                return String.valueOf(detectedYear());
+            }
+            return null;
+        }
+
+        private TemporalReference toTemporalReference() {
+            Integer resolvedYear = detectedYear();
+            if (months.isEmpty() || resolvedYear == null) {
                 return unknownTemporalReference();
             }
             int start = months.stream().min(Integer::compareTo).orElse(1);

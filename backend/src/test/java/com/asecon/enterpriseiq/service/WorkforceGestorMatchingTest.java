@@ -100,7 +100,7 @@ class WorkforceGestorMatchingTest {
         );
         MockMultipartFile file = new MockMultipartFile("file", "labor-costs.csv", "text/csv", csv.getBytes());
 
-        var dto = workforceImportService.importLaborCosts(7L, file);
+        var dto = workforceImportService.importLaborCosts(7L, file, "2026-01");
         assertEquals(1, dto.warningCount());
         assertTrue(dto.errorSummary().contains("match ambiguo"));
 

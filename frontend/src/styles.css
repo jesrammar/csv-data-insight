@@ -2754,6 +2754,19 @@ button.badge:disabled {
   flex: 0 0 12px;
 }
 
+.budget-driver-legend-dot-income-0 { background: #6ea8ff; box-shadow: 0 0 24px rgba(110, 168, 255, 0.32); }
+.budget-driver-legend-dot-income-1 { background: #27d3c3; box-shadow: 0 0 24px rgba(39, 211, 195, 0.3); }
+.budget-driver-legend-dot-income-2 { background: #3ec8ff; box-shadow: 0 0 24px rgba(62, 200, 255, 0.28); }
+.budget-driver-legend-dot-income-3 { background: #4ade80; box-shadow: 0 0 24px rgba(74, 222, 128, 0.24); }
+.budget-driver-legend-dot-income-4 { background: #8b5cf6; box-shadow: 0 0 24px rgba(139, 92, 246, 0.24); }
+.budget-driver-legend-dot-income-5 { background: #64748b; box-shadow: 0 0 24px rgba(100, 116, 139, 0.18); }
+.budget-driver-legend-dot-expense-0 { background: #ff8a3d; box-shadow: 0 0 24px rgba(255, 138, 61, 0.3); }
+.budget-driver-legend-dot-expense-1 { background: #ff5d73; box-shadow: 0 0 24px rgba(255, 93, 115, 0.28); }
+.budget-driver-legend-dot-expense-2 { background: #f97316; box-shadow: 0 0 24px rgba(249, 115, 22, 0.28); }
+.budget-driver-legend-dot-expense-3 { background: #ef4444; box-shadow: 0 0 24px rgba(239, 68, 68, 0.26); }
+.budget-driver-legend-dot-expense-4 { background: #facc15; box-shadow: 0 0 24px rgba(250, 204, 21, 0.22); }
+.budget-driver-legend-dot-expense-5 { background: #64748b; box-shadow: 0 0 24px rgba(100, 116, 139, 0.18); }
+
 .budget-driver-legend-copy {
   min-width: 0;
 }
@@ -3854,7 +3867,7 @@ button.badge:disabled {
   min-width: 0;
 }
 
-/* Reduce the �everything is too tall� feeling on 1366�768-ish screens. */
+/* Reduce the "everything is too tall" feeling on 1366 x 768-ish screens. */
 @media (max-height: 820px) {
   body {
     --ui-container-pad-y: 28px;

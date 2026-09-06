@@ -16,6 +16,8 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
@@ -24,7 +26,7 @@ import static org.mockito.Mockito.when;
 class BudgetWorkflowServiceTest {
 
     @Test
-    void builds_official_workflow_with_real_vs_budget_comparison() {
+    void builds_plan_only_workflow_when_legacy_actual_kpis_exist() {
         BudgetService budgetService = mock(BudgetService.class);
         UniversalImportFileService universalImportFileService = mock(UniversalImportFileService.class);
         KpiMonthlyRepository kpiMonthlyRepository = mock(KpiMonthlyRepository.class);
@@ -40,8 +42,18 @@ class BudgetWorkflowServiceTest {
         UniversalImport imp = new UniversalImport();
         imp.setFilename("presupuesto-2026.xlsx");
         imp.setCreatedAt(Instant.parse("2026-01-15T10:00:00Z"));
-        when(universalImportFileService.latestList(7L, 2)).thenReturn(List.of(imp));
-        when(universalImportFileService.latestAnnualBudgetList(7L, 2)).thenReturn(List.of(imp));
+        BudgetSourceMetaDto meta = new BudgetSourceMetaDto(
+            41L,
+            "budget-41-1",
+            imp.getFilename(),
+            imp.getCreatedAt(),
+            "XLSX",
+            0,
+            "Escenario 2026",
+            3,
+            "Concepto",
+            2
+        );
 
         BudgetSummaryDto summary = new BudgetSummaryDto(
             "presupuesto-2026.xlsx",
@@ -100,6 +112,9 @@ class BudgetWorkflowServiceTest {
             List.of()
         );
         when(budgetService.latestBudgetLongInsights(7L)).thenReturn(insights);
+        when(budgetService.latestAnalysisSnapshot(7L)).thenReturn(
+            new BudgetService.BudgetAnalysisSnapshot(meta, summary, cashflow, insights, null)
+        );
 
         KpiMonthly latest = new KpiMonthly();
         latest.setPeriod("2026-02");
@@ -124,18 +139,18 @@ class BudgetWorkflowServiceTest {
 
         var workflow = service.getWorkflow(7L);
 
-        assertThat(workflow.status()).isEqualTo("COMPARISON_READY");
+        assertThat(workflow.status()).isEqualTo("WAITING_ACTUALS");
         assertThat(workflow.sourcePresent()).isTrue();
-        assertThat(workflow.comparisonReady()).isTrue();
-        assertThat(workflow.actualMonthsAvailable()).isEqualTo(2);
+        assertThat(workflow.comparisonReady()).isFalse();
+        assertThat(workflow.actualMonthsAvailable()).isZero();
         assertThat(workflow.comparisonSummary()).isNotNull();
-        assertThat(workflow.comparisonSummary().comparisonYear()).isEqualTo(2026);
-        assertThat(workflow.comparisonSummary().commonMonths()).isEqualTo(2);
-        assertThat(workflow.comparisonSummary().plannedNetYtd()).isEqualByComparingTo("350.00");
-        assertThat(workflow.comparisonSummary().actualNetYtd()).isEqualByComparingTo("380.00");
-        assertThat(workflow.comparisonSummary().netVarianceYtd()).isEqualByComparingTo("30.00");
+        assertThat(workflow.comparisonSummary().comparisonYear()).isNull();
+        assertThat(workflow.comparisonSummary().commonMonths()).isZero();
+        assertThat(workflow.comparisonSummary().plannedNetYtd()).isNull();
+        assertThat(workflow.comparisonSummary().actualNetYtd()).isNull();
+        assertThat(workflow.comparisonSummary().netVarianceYtd()).isNull();
         assertThat(workflow.comparisonMonths()).hasSize(2);
-        assertThat(workflow.comparisonMonths().get(0).actualPeriod()).isEqualTo("2026-01");
+        assertThat(workflow.comparisonMonths().get(0).actualPeriod()).isNull();
     }
 
     @Test
@@ -165,6 +180,8 @@ class BudgetWorkflowServiceTest {
 
         when(universalImportFileService.latestList(7L, 2)).thenReturn(List.of(newerGeneric, annual));
         when(universalImportFileService.latestAnnualBudgetList(7L, 2)).thenReturn(List.of(annual));
+        when(budgetService.latestAnalysisSnapshot(7L))
+            .thenThrow(new ResponseStatusException(HttpStatus.NOT_FOUND));
 
         BudgetSummaryDto summary = new BudgetSummaryDto(
             "presupuesto-2026.xlsx",

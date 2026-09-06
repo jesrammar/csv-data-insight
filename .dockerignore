@@ -26,6 +26,10 @@ backend/storage/
 # Temp
 tmp-*.pdf
 .codex_tmp/
+.tmp/
+.tmp*/
+samples/
+legacy/
 
 # OS
 .DS_Store

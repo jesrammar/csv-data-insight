@@ -11,7 +11,7 @@
 
 Plataforma orientada a consultoria y analitica operativa con **backend en Spring Boot**, **frontend en React**, **PostgreSQL + Flyway**, **JWT con refresh token**, **ingesta CSV/XLSX**, **reportes PDF/HTML** y un stack de **observabilidad y operacion** preparado para despliegue.
 
-> Nota: la version antigua permanece en `legacy/csv-data-insight/`. La aplicacion actual esta en `backend/` + `frontend/`.
+Todos los datos incluidos en pruebas y plantillas descargables son **sinteticos**. Los datos de clientes, organismos o fuentes oficiales no deben versionarse.
 
 ## Que resuelve
 
@@ -97,7 +97,8 @@ Decision de dominio:
 - `frontend/`: interfaz React + TypeScript.
 - `docs/`: runbooks y documentacion operativa.
 - `ops/`: configuracion de Prometheus, Grafana, Alertmanager y backups.
-- `legacy/`: version previa del proyecto.
+- `scripts/`: controles automatizados de calidad y limpieza del repositorio.
+- `backend/src/test/resources/fixtures/`: fixtures sinteticos usados exclusivamente por las pruebas.
 
 ## Arranque en local
 
@@ -121,6 +122,22 @@ Solo para entorno `dev` definido en `docker-compose.yml`:
 - `cliente@acme.local` / `password`
 
 En produccion no se cargan seeds automaticamente.
+
+## Calidad y seguridad del repositorio
+
+Antes de abrir una pull request:
+
+```bash
+node scripts/check-repository-hygiene.mjs
+node scripts/check-mojibake.mjs
+node scripts/check-inline-styles.mjs
+cd backend && mvn test
+cd ../frontend && npm ci && npm run build
+```
+
+- La politica de datos esta en [docs/data-handling.md](docs/data-handling.md).
+- Las pautas de contribucion estan en [CONTRIBUTING.md](CONTRIBUTING.md).
+- Los avisos de seguridad se gestionan segun [SECURITY.md](SECURITY.md).
 
 ## Produccion y operacion
 

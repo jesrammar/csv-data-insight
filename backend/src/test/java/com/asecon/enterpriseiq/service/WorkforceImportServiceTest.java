@@ -3,6 +3,7 @@ package com.asecon.enterpriseiq.service;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -24,9 +25,8 @@ import com.asecon.enterpriseiq.repo.WorkforceImportRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -40,6 +40,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.web.server.ResponseStatusException;
 
 @ExtendWith(MockitoExtension.class)
 class WorkforceImportServiceTest {
@@ -67,10 +68,16 @@ class WorkforceImportServiceTest {
         when(companyRepository.findById(7L)).thenReturn(Optional.of(company));
         when(importRepository.save(any(WorkforceImport.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
-        byte[] bytes = Files.readAllBytes(Path.of("..", "samples", "Workforce_Ficticio_Consultoria_2026.xlsx"));
+        byte[] bytes;
+        try (InputStream input = WorkforceImportServiceTest.class.getResourceAsStream(
+            "/fixtures/workforce/consulting-workforce-2026.xlsx"
+        )) {
+            assertNotNull(input);
+            bytes = input.readAllBytes();
+        }
         MockMultipartFile file = new MockMultipartFile(
             "file",
-            "Workforce_Ficticio_Consultoria_2026.xlsx",
+            "consulting-workforce-2026.xlsx",
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             bytes
         );
@@ -575,10 +582,14 @@ class WorkforceImportServiceTest {
             workforceRow("ALFA TEAM", 140, 5, 60, 220, 220),
             workforceRow("BETA TEAM", 90, 3, 55, 150, 150)
         ), "2027-09");
-        workforceImportService.importLaborCosts(7L, laborCostsCsvFile(
-            "legacy-costs.csv",
-            laborCostRow("GESTOR LEGACY", "OCTUBRE", 1000, 300)
-        ), "2027-09");
+        ResponseStatusException rejectedLegacyImport = assertThrows(
+            ResponseStatusException.class,
+            () -> workforceImportService.importLaborCosts(7L, laborCostsCsvFile(
+                "legacy-costs.csv",
+                laborCostRow("GESTOR LEGACY", "OCTUBRE", 1000, 300)
+            ), "2027-09")
+        );
+        assertEquals(400, rejectedLegacyImport.getStatusCode().value());
         workforceImportService.importLaborCosts(7L, laborCostsCsvFile(
             "labor-sep.csv",
             laborCostRow("ALFA TEAM", "SEPTIEMBRE", 2000, 600),
@@ -601,8 +612,7 @@ class WorkforceImportServiceTest {
         assertEquals(2600.0, alfa.costeLaboralAnual(), 0.01);
         assertNull(beta.costeLaboralAnual());
 
-        assertEquals(2, summary.laborCostsHistory().imports().size());
-        assertTrue(summary.laborCostsHistory().imports().stream().anyMatch(item -> "UNKNOWN".equals(item.referencePeriod())));
+        assertEquals(1, summary.laborCostsHistory().imports().size());
         assertTrue(summary.laborCostsHistory().imports().stream().anyMatch(item -> "2027-09".equals(item.referencePeriod())));
     }
 
@@ -930,6 +940,146 @@ class WorkforceImportServiceTest {
     }
 
     @Test
+    void returnsMissingImportInsteadOfFallingBackToLatestPeriod() throws IOException {
+        Company company = new Company();
+        company.setName("Empresa test");
+        company.setPlan(Plan.GOLD);
+        when(companyRepository.findById(7L)).thenReturn(Optional.of(company));
+
+        List<WorkforceImport> savedImports = new ArrayList<>();
+        wireRepository(company, savedImports);
+
+        workforceImportService.importLaborCosts(7L, laborCostsCsvFileWithHeader(
+            "labor-may-2026.csv",
+            "GESTOR,TRABAJADOR,ID EMPLEADO,MES,COSTE PERSONAL,SS EMPRESA,MONEDA",
+            "ALBA,ANA,EMP-1,2026-05,1000,300,EUR"
+        ), "2026-05");
+        workforceImportService.importLaborCosts(7L, laborCostsCsvFileWithHeader(
+            "labor-jun-2026.csv",
+            "GESTOR,TRABAJADOR,ID EMPLEADO,MES,COSTE PERSONAL,SS EMPRESA,MONEDA",
+            "ALBA,ANA,EMP-1,2026-06,1100,330,EUR"
+        ), "2026-06");
+
+        var comparison = workforceImportService.getLaborCostComparison(7L, "2026-04", "2026-05", null, null);
+
+        assertEquals("MISSING_IMPORT", comparison.status());
+        assertNull(comparison.baseImport());
+        assertNotNull(comparison.comparisonImport());
+        assertEquals("2026-05", comparison.comparisonImport().referencePeriod());
+    }
+
+    @Test
+    void rejectsComparisonWhenSelectedImportIdIsInvalidOrIncoherent() throws IOException {
+        Company company = new Company();
+        company.setName("Empresa test");
+        company.setPlan(Plan.GOLD);
+        when(companyRepository.findById(7L)).thenReturn(Optional.of(company));
+
+        List<WorkforceImport> savedImports = new ArrayList<>();
+        wireRepository(company, savedImports);
+
+        workforceImportService.importLaborCosts(7L, laborCostsCsvFileWithHeader(
+            "labor-apr-2026.csv",
+            "GESTOR,TRABAJADOR,ID EMPLEADO,MES,COSTE PERSONAL,SS EMPRESA,MONEDA",
+            "ALBA,ANA,EMP-1,2026-04,1000,300,EUR"
+        ), "2026-04");
+        workforceImportService.importLaborCosts(7L, laborCostsCsvFileWithHeader(
+            "labor-may-2026.csv",
+            "GESTOR,TRABAJADOR,ID EMPLEADO,MES,COSTE PERSONAL,SS EMPRESA,MONEDA",
+            "ALBA,ANA,EMP-1,2026-05,1100,330,EUR"
+        ), "2026-05");
+
+        WorkforceImport aprilImport = savedImports.stream()
+            .filter(imported -> imported.getImportKind() == WorkforceImportKind.LABOR_COSTS)
+            .filter(imported -> "2026-04".equals(imported.getReferencePeriod()))
+            .findFirst()
+            .orElseThrow();
+        WorkforceImport mayImport = savedImports.stream()
+            .filter(imported -> imported.getImportKind() == WorkforceImportKind.LABOR_COSTS)
+            .filter(imported -> "2026-05".equals(imported.getReferencePeriod()))
+            .findFirst()
+            .orElseThrow();
+
+        ResponseStatusException missingId = assertThrows(
+            ResponseStatusException.class,
+            () -> workforceImportService.getLaborCostComparison(7L, "2026-04", "2026-05", 999L, mayImport.getId())
+        );
+        assertEquals(400, missingId.getStatusCode().value());
+
+        ResponseStatusException wrongPeriod = assertThrows(
+            ResponseStatusException.class,
+            () -> workforceImportService.getLaborCostComparison(7L, "2026-04", "2026-05", mayImport.getId(), null)
+        );
+        assertEquals(400, wrongPeriod.getStatusCode().value());
+        assertTrue(wrongPeriod.getReason().contains("2026-04"));
+
+        ResponseStatusException sameImport = assertThrows(
+            ResponseStatusException.class,
+            () -> workforceImportService.getLaborCostComparison(7L, "2026-04", "2026-05", aprilImport.getId(), aprilImport.getId())
+        );
+        assertEquals(400, sameImport.getStatusCode().value());
+
+        ResponseStatusException samePeriod = assertThrows(
+            ResponseStatusException.class,
+            () -> workforceImportService.getLaborCostComparison(7L, "2026-05", "2026-05", null, null)
+        );
+        assertEquals(400, samePeriod.getStatusCode().value());
+    }
+
+    @Test
+    void rejectsComparisonWhenImportIdBelongsToAnotherCompanyOrWrongType() throws IOException {
+        Company company = new Company();
+        company.setName("Empresa test");
+        company.setPlan(Plan.GOLD);
+        when(companyRepository.findById(7L)).thenReturn(Optional.of(company));
+
+        List<WorkforceImport> savedImports = new ArrayList<>();
+        wireRepository(company, savedImports);
+
+        workforceImportService.importLaborCosts(7L, laborCostsCsvFileWithHeader(
+            "labor-may-2026.csv",
+            "GESTOR,TRABAJADOR,ID EMPLEADO,MES,COSTE PERSONAL,SS EMPRESA,MONEDA",
+            "ALBA,ANA,EMP-1,2026-05,1100,330,EUR"
+        ), "2026-05");
+
+        WorkforceImport mayImport = savedImports.stream()
+            .filter(imported -> imported.getImportKind() == WorkforceImportKind.LABOR_COSTS)
+            .findFirst()
+            .orElseThrow();
+
+        Company foreignCompany = new Company();
+        WorkforceImport foreignImport = new WorkforceImport();
+        foreignImport.setId(91L);
+        foreignImport.setCompany(foreignCompany);
+        foreignImport.setImportKind(WorkforceImportKind.LABOR_COSTS);
+        foreignImport.setImportStatus(WorkforceImportStatus.ACTIVE);
+        foreignImport.setReferencePeriod("2026-04");
+        foreignImport.setCreatedAt(Instant.parse("2026-04-01T00:00:00Z"));
+        savedImports.add(foreignImport);
+
+        WorkforceImport wrongTypeImport = new WorkforceImport();
+        wrongTypeImport.setId(92L);
+        wrongTypeImport.setCompany(company);
+        wrongTypeImport.setImportKind(WorkforceImportKind.WORKFORCE);
+        wrongTypeImport.setImportStatus(WorkforceImportStatus.ACTIVE);
+        wrongTypeImport.setReferencePeriod("2026-04");
+        wrongTypeImport.setCreatedAt(Instant.parse("2026-04-02T00:00:00Z"));
+        savedImports.add(wrongTypeImport);
+
+        ResponseStatusException foreignSelection = assertThrows(
+            ResponseStatusException.class,
+            () -> workforceImportService.getLaborCostComparison(7L, "2026-04", "2026-05", 91L, mayImport.getId())
+        );
+        assertEquals(400, foreignSelection.getStatusCode().value());
+
+        ResponseStatusException wrongTypeSelection = assertThrows(
+            ResponseStatusException.class,
+            () -> workforceImportService.getLaborCostComparison(7L, "2026-04", "2026-05", 92L, mayImport.getId())
+        );
+        assertEquals(400, wrongTypeSelection.getStatusCode().value());
+    }
+
+    @Test
     void blocksComparisonWhenCurrenciesDifferAcrossPeriods() throws IOException {
         Company company = new Company();
         company.setName("Empresa test");
@@ -957,6 +1107,107 @@ class WorkforceImportServiceTest {
         assertEquals("CURRENCY_MISMATCH", comparison.status());
         assertTrue(comparison.message().contains("monedas"));
         assertEquals(0, comparison.comparableWorkers().size());
+    }
+
+    @Test
+    void rejectsLaborCostImportWhenDeclaredAndDetectedPeriodsContradict() throws IOException {
+        Company company = new Company();
+        company.setName("Empresa test");
+        company.setPlan(Plan.GOLD);
+        when(companyRepository.findById(7L)).thenReturn(Optional.of(company));
+
+        List<WorkforceImport> savedImports = new ArrayList<>();
+        wireRepository(company, savedImports);
+
+        workforceImportService.importLaborCosts(7L, laborCostsCsvFileWithHeader(
+            "labor-may-2026.csv",
+            "GESTOR,TRABAJADOR,ID EMPLEADO,MES,COSTE PERSONAL,SS EMPRESA,MONEDA",
+            "ALBA,ANA,EMP-1,2026-05,1000,300,EUR"
+        ), "2026-05");
+
+        WorkforceImport activeImport = savedImports.stream()
+            .filter(imported -> imported.getImportKind() == WorkforceImportKind.LABOR_COSTS)
+            .findFirst()
+            .orElseThrow();
+
+        ResponseStatusException error = assertThrows(
+            ResponseStatusException.class,
+            () -> workforceImportService.importLaborCosts(7L, laborCostsCsvFileWithHeader(
+                "labor-may-2025.csv",
+                "GESTOR,TRABAJADOR,ID EMPLEADO,MES,COSTE PERSONAL,SS EMPRESA,MONEDA",
+                "ALBA,ANA,EMP-1,2025-05,1200,360,EUR"
+            ), "2026-05")
+        );
+
+        assertEquals(400, error.getStatusCode().value());
+        assertTrue(error.getReason().contains("declarado 2026-05"));
+        assertTrue(error.getReason().contains("detectado 2025-05"));
+        assertEquals(1, savedImports.stream().filter(imported -> imported.getImportKind() == WorkforceImportKind.LABOR_COSTS).count());
+        assertEquals(WorkforceImportStatus.ACTIVE, activeImport.getImportStatus());
+    }
+
+    @Test
+    void acceptsExplicitLaborCostPeriodWhenDetectedPeriodMatchesOrIsMissing() throws IOException {
+        Company company = new Company();
+        company.setName("Empresa test");
+        company.setPlan(Plan.GOLD);
+        when(companyRepository.findById(7L)).thenReturn(Optional.of(company));
+
+        List<WorkforceImport> savedImports = new ArrayList<>();
+        wireRepository(company, savedImports);
+
+        WorkforceImportDto matched = workforceImportService.importLaborCosts(7L, laborCostsCsvFileWithHeader(
+            "labor-may-2026.csv",
+            "GESTOR,TRABAJADOR,ID EMPLEADO,MES,COSTE PERSONAL,SS EMPRESA,MONEDA",
+            "ALBA,ANA,EMP-1,2026-05,1000,300,EUR"
+        ), "2026-05");
+        assertEquals("2026-05", matched.referencePeriod());
+
+        WorkforceImportDto explicitFallback = workforceImportService.importLaborCosts(7L, laborCostsCsvFileWithHeader(
+            "labor-without-period.csv",
+            "GESTOR,TRABAJADOR,ID EMPLEADO,MES,COSTE PERSONAL,SS EMPRESA,MONEDA",
+            "ALBA,ANA,EMP-1,,900,270,EUR"
+        ), "2026-06");
+        assertEquals("2026-06", explicitFallback.referencePeriod());
+    }
+
+    @Test
+    void resolvesLaborCostPeriodFromFilenameAndRejectsUnresolvableOrAmbiguousFiles() throws IOException {
+        Company company = new Company();
+        company.setName("Empresa test");
+        company.setPlan(Plan.GOLD);
+        when(companyRepository.findById(7L)).thenReturn(Optional.of(company));
+
+        List<WorkforceImport> savedImports = new ArrayList<>();
+        wireRepository(company, savedImports);
+
+        WorkforceImportDto inferred = workforceImportService.importLaborCosts(7L, laborCostsCsvFileWithHeader(
+            "Costes_Laborales_Marzo_2027.csv",
+            "GESTOR,TRABAJADOR,ID EMPLEADO,MES,COSTE PERSONAL,SS EMPRESA,MONEDA",
+            "ALBA,ANA,EMP-1,MARZO,1000,300,EUR"
+        ), (String) null);
+        assertEquals("2027-03", inferred.referencePeriod());
+
+        ResponseStatusException unresolved = assertThrows(
+            ResponseStatusException.class,
+            () -> workforceImportService.importLaborCosts(7L, laborCostsCsvFileWithHeader(
+                "labor-final.csv",
+                "GESTOR,TRABAJADOR,ID EMPLEADO,MES,COSTE PERSONAL,SS EMPRESA,MONEDA",
+                "ALBA,ANA,EMP-1,MARZO,1000,300,EUR"
+            ), (String) null)
+        );
+        assertEquals(400, unresolved.getStatusCode().value());
+
+        ResponseStatusException ambiguous = assertThrows(
+            ResponseStatusException.class,
+            () -> workforceImportService.importLaborCosts(7L, laborCostsCsvFileWithHeader(
+                "labor-ambiguous.csv",
+                "GESTOR,TRABAJADOR,ID EMPLEADO,MES,COSTE PERSONAL,SS EMPRESA,MONEDA",
+                "ALBA,ANA,EMP-1,ABRIL,1000,300,EUR",
+                "ALBA,ANA,EMP-1,MAYO,1000,300,EUR"
+            ), "2026-04")
+        );
+        assertEquals(400, ambiguous.getStatusCode().value());
     }
 
     @Test

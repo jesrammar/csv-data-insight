@@ -54,16 +54,20 @@ replay_pid*
 # Local artifacts
 DEMITO.png
 qc
+/tmp-*
+/*.tmp
 
-# Legacy app (moved out of EnterpriseIQ entrypoints)
-/legacy/**/target/
-/legacy/**/node_modules/
-
-# Local sample inputs
-/samples/incoming/
+# Repository-local datasets must never be committed. Test fixtures belong under
+# backend/src/test/resources/fixtures/ and must contain synthetic data only.
+/samples/
+/legacy/
+/backend/src/test/resources/**/*-real.*
+/backend/src/test/resources/**/real-*.*
 
 # Local Codex / scratch
 .codex/
+.codex_tmp/
+/.tmp/
 .tmp_*
 .tmp*/
 .tmp-*/

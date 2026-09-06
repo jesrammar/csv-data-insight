@@ -1,8 +1,7 @@
 package com.asecon.enterpriseiq.service;
 
 import java.io.ByteArrayOutputStream;
-import java.nio.file.Files;
-import java.nio.file.Path;
+import java.io.InputStream;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.junit.jupiter.api.Test;
@@ -51,10 +50,16 @@ public class TabularFileServiceLimitsTest {
 
     @Test
     void previewAndConvert_handleLocalizedEuroFormatsWithoutCrashing() throws Exception {
-        byte[] workbookBytes = Files.readAllBytes(Path.of("..", "samples", "Taller_MotorSur_Plan_Anual_2026 (1).xlsx"));
+        byte[] workbookBytes;
+        try (InputStream input = TabularFileServiceLimitsTest.class.getResourceAsStream(
+            "/fixtures/budget/auto-workshop-annual-plan-2026.xlsx"
+        )) {
+            assertNotNull(input);
+            workbookBytes = input.readAllBytes();
+        }
         MockMultipartFile file = new MockMultipartFile(
             "file",
-            "Taller_MotorSur_Plan_Anual_2026 (1).xlsx",
+            "auto-workshop-annual-plan-2026.xlsx",
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             workbookBytes
         );

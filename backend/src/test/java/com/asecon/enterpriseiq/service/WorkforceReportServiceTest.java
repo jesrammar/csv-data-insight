@@ -25,6 +25,7 @@ import com.asecon.enterpriseiq.repo.UniversalViewRepository;
 import com.asecon.enterpriseiq.repo.WorkforceImportRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -37,7 +38,7 @@ import org.springframework.mock.web.MockMultipartFile;
 
 class WorkforceReportServiceTest {
     @Test
-    void builds_html_and_renders_real_pdf_from_workforce_sample() throws Exception {
+    void builds_html_and_renders_pdf_from_synthetic_workforce_fixture() throws Exception {
         Company company = new Company();
         company.setName("Consultoria Demo");
         company.setPlan(Plan.GOLD);
@@ -57,10 +58,16 @@ class WorkforceReportServiceTest {
             return saved;
         });
 
-        byte[] workforceBytes = Files.readAllBytes(Path.of("..", "samples", "Workforce_Ficticio_Consultoria_2026.xlsx"));
+        byte[] workforceBytes;
+        try (InputStream input = WorkforceReportServiceTest.class.getResourceAsStream(
+            "/fixtures/workforce/consulting-workforce-2026.xlsx"
+        )) {
+            assertThat(input).isNotNull();
+            workforceBytes = input.readAllBytes();
+        }
         MockMultipartFile workforceFile = new MockMultipartFile(
             "file",
-            "Workforce_Ficticio_Consultoria_2026.xlsx",
+            "consulting-workforce-2026.xlsx",
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             workforceBytes
         );
@@ -70,7 +77,7 @@ class WorkforceReportServiceTest {
         String laborCostsCsv = String.join("\n",
             "GESTOR,MES,COSTE PERSONAL,SS EMPRESA",
             "ALBA,ENERO,1200,360",
-            "ALBA,FEBRERO,1200,360",
+            "ALBA,ENERO,1200,360",
             "BRUNO,ENERO,1400,420",
             "CLARA,ENERO,1300,390",
             "DIEGO,ENERO,1500,450",
@@ -87,7 +94,7 @@ class WorkforceReportServiceTest {
         when(importRepository.findFirstByCompanyIdAndImportKindOrderByCreatedAtDesc(7L, WorkforceImportKind.WORKFORCE))
             .thenReturn(Optional.of(savedWorkforce));
 
-        workforceImportService.importLaborCosts(7L, laborCostsFile);
+        workforceImportService.importLaborCosts(7L, laborCostsFile, "2026-01");
         WorkforceImport savedLaborCosts = savedImports.get(1);
 
         when(importRepository.findFirstByCompanyIdAndImportKindOrderByCreatedAtDesc(7L, WorkforceImportKind.LABOR_COSTS))
@@ -118,7 +125,7 @@ class WorkforceReportServiceTest {
         assertThat(html).contains("Distribucion operativa");
         assertThat(html).contains("Costes laborales");
         assertThat(html).contains("Coste vs actividad");
-        assertThat(html).contains("Workforce_Ficticio_Consultoria_2026");
+        assertThat(html).contains("consulting-workforce-2026");
         assertThat(html).contains("Coste laboral total");
 
         byte[] pdf = workforceReportService.renderWorkforcePdf(company, summary, workforceStatus, laborCostsStatus);

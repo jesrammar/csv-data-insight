@@ -834,7 +834,7 @@ export default function BudgetDashboardPage() {
                           <div className="upload-hint mt-1">Concentracion Top 3: {panel.concentrationPct.toFixed(2)}%</div>
                         </div>
                         <div className="budget-driver-legend-list">
-                          {panel.slices.map((slice) => (
+                          {panel.slices.map((slice, sliceIndex) => (
                             <div
                               key={slice.key}
                               className={`budget-driver-legend-item ${
@@ -856,8 +856,7 @@ export default function BudgetDashboardPage() {
                               }
                             >
                               <span
-                                className="budget-driver-legend-dot"
-                                style={{ background: slice.color, boxShadow: `0 0 24px ${slice.glow}` }}
+                                className={`budget-driver-legend-dot budget-driver-legend-dot-${panel.theme}-${sliceIndex}`}
                                 aria-hidden="true"
                               />
                               <div className="budget-driver-legend-copy">
