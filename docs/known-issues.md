@@ -1,14 +1,15 @@
-# Known issues (TFG)
+# Problemas conocidos
 
-## NPM audit (frontend)
+## Dependencias
 
-Estado a **2026-03-31**:
+Estado a **2026-09-06**:
 
-- Quedan **2 vulnerabilidades moderadas** en `vite`/`esbuild` que requieren actualizar a `vite@6` (breaking) para quedar en verde con `npm audit`.
-- Impacto: afecta al **servidor de desarrollo** de Vite (no al bundle de producción), por lo que para el TFG se deja como “known issue”.
+- `npm audit --audit-level=low`: **0 vulnerabilidades conocidas**.
+- Vite, ECharts y React Router se actualizaron a versiones corregidas y el build de producción permanece validado.
+- Apache POI se actualizó a `5.4.0` y la suite backend valida la lectura de XLSX.
+- Las alertas y actualizaciones de seguridad de Dependabot están activadas en GitHub.
 
-Decisión:
+## Seguimiento
 
-- Se ha aplicado fix **sin riesgo** y se ha actualizado `jspdf` para eliminar la vulnerabilidad **crítica**.
-- La migración a `vite@6` se difiere para no introducir cambios breaking fuera del alcance del TFG.
+La pestaña **Security** de GitHub es la fuente de verdad para nuevas alertas. Cualquier actualización debe conservar en verde las pruebas backend, el build frontend y los controles de `scripts/`.
 
