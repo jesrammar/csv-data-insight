@@ -11,6 +11,10 @@
 
 Plataforma orientada a consultoria y analitica operativa con **backend en Spring Boot**, **frontend en React**, **PostgreSQL + Flyway**, **JWT con refresh token**, **ingesta CSV/XLSX**, **reportes PDF/HTML** y un stack de **observabilidad y operacion** preparado para despliegue.
 
+<p align="center">
+  <img src="docs/architecture/enterpriseiq-overview.svg" alt="Arquitectura implementada de EnterpriseIQ" width="100%" />
+</p>
+
 Todos los datos incluidos en pruebas y plantillas descargables son **sinteticos**. Los datos de clientes, organismos o fuentes oficiales no deben versionarse.
 
 ## Que resuelve

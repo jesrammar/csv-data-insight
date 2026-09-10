@@ -112,7 +112,12 @@ export default function LoginPage() {
     <div className="login-shell">
       <div className="login-stage card">
         <div className="login-hero">
-        <div>
+        <div className="login-hero-copy">
+          <div className="login-brand-lockup">
+            <span className="login-brand-symbol" aria-hidden="true">EI</span>
+            <span>ASECON · Intelligence workspace</span>
+          </div>
+          <div className="login-eyebrow">Control financiero, sin ruido</div>
           <h1 className="hero-title">EnterpriseIQ</h1>
           <p className="hero-sub">
             Inteligencia financiera operativa para consultoras. KPIs, alertas e informes mensuales con control multiempresa.
@@ -127,13 +132,22 @@ export default function LoginPage() {
               <small>automatización de reporting</small>
             </div>
           </div>
+          <div className="login-signal" aria-hidden="true">
+            <div className="login-signal-head">
+              <span>Visibilidad operativa</span>
+              <strong>En tiempo real</strong>
+            </div>
+            <div className="login-signal-bars">
+              <i /><i /><i /><i /><i /><i /><i />
+            </div>
+          </div>
         </div>
         <div className="login-right">
           <div className="card login-panel fade-up">
             <div className="login-panel-head">
               <div className="login-badge">Acceso seguro</div>
             </div>
-            <h2 className="login-title">{hasTokenFlow ? (action === 'invite' ? 'Activar cuenta' : 'Restablecer contraseña') : 'Ingreso'}</h2>
+            <h2 className="login-title">{hasTokenFlow ? (action === 'invite' ? 'Activar cuenta' : 'Restablecer contraseña') : 'Accede a tu espacio'}</h2>
             <p className="hero-sub">
               {hasTokenFlow
                 ? 'Elige una nueva contraseña segura para continuar.'

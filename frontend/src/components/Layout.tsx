@@ -1,17 +1,29 @@
-import { useEffect } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { getCompanies, getCompanySettings, getUserRole, logout } from '../api'
 import CompanySelector from './CompanySelector'
 import Button from './ui/Button'
-import Icon from './ui/Icon'
+import Icon, { type IconName } from './ui/Icon'
 import { setActiveCompanySelection, useCompanySelection } from '../hooks/useCompany'
 import { getWorkPeriod, nowYm, setWorkPeriod } from '../utils/workPeriod'
+
+type WorkspaceNavItem = {
+  to: string
+  label: string
+  description: string
+  icon: IconName
+}
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate()
   const location = useLocation()
   const queryClient = useQueryClient()
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const [commandOpen, setCommandOpen] = useState(false)
+  const [commandQuery, setCommandQuery] = useState('')
+  const [activeCommand, setActiveCommand] = useState(0)
+  const commandTriggerRef = useRef<HTMLButtonElement>(null)
   const { id: companyId } = useCompanySelection()
   const { data: companies, error: companiesError, isPending: companiesPending } = useQuery({
     queryKey: ['companies'],
@@ -35,7 +47,80 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
   const role = getUserRole()
   const isClient = role === 'CLIENTE'
-  const isAdmin = role === 'ADMIN'
+  const primaryNavItems: WorkspaceNavItem[] = isClient
+    ? [
+        { to: '/home', label: 'Resumen', description: 'Situación y próximos pasos', icon: 'home' },
+        { to: '/cash', label: 'Caja', description: 'Entradas, salidas y saldo', icon: 'dashboard' },
+        { to: '/alerts', label: 'Alertas', description: 'Señales que requieren atención', icon: 'alerts' },
+        { to: '/reports', label: 'Informes', description: 'Entregables del periodo', icon: 'reports' },
+        { to: '/help', label: 'Ayuda', description: 'Guía de uso del panel', icon: 'help' }
+      ]
+    : [
+        { to: '/budget', label: 'Plan anual', description: 'Presupuesto y lectura ejecutiva', icon: 'overview' },
+        { to: '/imports', label: 'Cargar datos', description: 'Ingesta y validación de ficheros', icon: 'imports' },
+        { to: '/workforce', label: 'Trabajadores', description: 'Cartera, actividad y costes', icon: 'dashboard' },
+        { to: '/settings/company', label: 'Ajustes', description: 'Configuración por empresa', icon: 'settings' },
+        { to: '/pricing', label: 'Planes', description: 'Capacidades disponibles', icon: 'pricing' }
+      ]
+  const commandItems = primaryNavItems
+  const normalizedCommandQuery = commandQuery.trim().toLocaleLowerCase('es')
+  const filteredCommandItems = normalizedCommandQuery
+    ? commandItems.filter((item) => `${item.label} ${item.description}`.toLocaleLowerCase('es').includes(normalizedCommandQuery))
+    : commandItems
+  const routeLabel = (() => {
+    const path = location.pathname
+    if (path === '/home') return 'Resumen'
+    if (path === '/cash') return 'Caja'
+    if (path === '/alerts') return 'Alertas'
+    if (path === '/reports') return 'Informes'
+    if (path === '/help') return 'Ayuda'
+    if (path === '/budget/dashboard') return 'Análisis anual'
+    if (path === '/budget') return 'Plan anual'
+    if (path === '/imports') return 'Cargar datos'
+    if (path === '/workforce') return 'Trabajadores'
+    if (path === '/settings/company') return 'Ajustes'
+    if (path === '/audit') return 'Auditoría'
+    if (path === '/pricing') return 'Planes'
+    if (path === '/admin/users') return 'Usuarios'
+    if (path === '/admin/storage') return 'Almacenamiento'
+    if (path.startsWith('/admin')) return 'Administración'
+    return isClient ? 'Panel del cliente' : 'Ruta consultora'
+  })()
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault()
+        setCommandOpen((open) => {
+          if (open) window.requestAnimationFrame(() => commandTriggerRef.current?.focus())
+          return !open
+        })
+      } else if (event.key === 'Escape') {
+        closeCommand()
+        setMobileMenuOpen(false)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
+
+  useEffect(() => {
+    setMobileMenuOpen(false)
+    setCommandOpen(false)
+  }, [location.pathname])
+
+  useEffect(() => {
+    if (!commandOpen) {
+      setCommandQuery('')
+      setActiveCommand(0)
+    }
+    document.body.classList.toggle('command-open', commandOpen)
+    return () => document.body.classList.remove('command-open')
+  }, [commandOpen])
+
+  useEffect(() => {
+    setActiveCommand(0)
+  }, [commandQuery])
 
   useEffect(() => {
     const list = (companies || []) as any[]
@@ -101,79 +186,108 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     }
   }
 
+  function openCommand() {
+    setCommandOpen(true)
+    setActiveCommand(0)
+  }
+
+  function closeCommand() {
+    setCommandOpen((open) => {
+      if (open) window.requestAnimationFrame(() => commandTriggerRef.current?.focus())
+      return false
+    })
+  }
+
+  function runCommand(path: string) {
+    setCommandOpen(false)
+    navigate(path)
+  }
+
   return (
     <div className={`app-shell ${isClient ? 'mode-client' : 'mode-consultant'}`}>
+      <a className="skip-link" href="#workspace-main">Saltar al contenido</a>
       <div className="ambient-orb orb-1" aria-hidden="true" />
       <div className="ambient-orb orb-2" aria-hidden="true" />
       <div className="ambient-orb orb-3" aria-hidden="true" />
 
-      <aside className="side-nav">
+      <aside className={`side-nav ${mobileMenuOpen ? 'mobile-open' : ''}`}>
         <div className="brand-stack">
-          <div className="brand">EnterpriseIQ</div>
-          <span className="brand-sub">ASECON CONSULTING FLOW</span>
+          <div className="brand-mark" aria-hidden="true">
+            <span>EI</span>
+          </div>
+          <div className="brand-copy">
+            <div className="brand">EnterpriseIQ</div>
+            <span className="brand-sub">ASECON · Intelligence</span>
+          </div>
+          <button
+            className="mobile-menu-button"
+            type="button"
+            aria-label={mobileMenuOpen ? 'Cerrar navegación' : 'Abrir navegación'}
+            aria-expanded={mobileMenuOpen}
+            aria-controls="workspace-navigation"
+            onClick={() => setMobileMenuOpen((open) => !open)}
+          >
+            <Icon name={mobileMenuOpen ? 'close' : 'menu'} size={20} />
+          </button>
         </div>
 
-        <nav className="side-links">
-          {isClient ? (
-            <>
-              <div className="nav-section">Operativa</div>
-              <NavLink to="/home" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-                <Icon name="home" />
-                Resumen
-              </NavLink>
-              <NavLink to="/cash" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-                <Icon name="dashboard" />
-                Caja
-              </NavLink>
-              <NavLink to="/alerts" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-                <Icon name="alerts" />
-                Alertas
-              </NavLink>
-              <NavLink to="/reports" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-                <Icon name="reports" />
-                Informes
-              </NavLink>
-              <NavLink to="/help" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-                <Icon name="help" />
-                Ayuda
-              </NavLink>
-            </>
-          ) : (
-            <>
-              <div className="nav-section">Ruta consultora</div>
-              <NavLink to="/budget" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-                <Icon name="overview" />
-                Plan anual
-              </NavLink>
-              <NavLink to="/imports" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-                <Icon name="imports" />
-                Cargar datos
-              </NavLink>
-              <NavLink to="/workforce" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-                <Icon name="dashboard" />
-                Trabajadores
-              </NavLink>
-              <NavLink to="/settings/company" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-                <Icon name="settings" />
-                Ajustes
-              </NavLink>
-            </>
-          )}
+        <nav id="workspace-navigation" className="side-links" aria-label="Navegación principal">
+          <div className="nav-section">{isClient ? 'Operativa' : 'Ruta consultora'}</div>
+          {primaryNavItems.map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              onClick={() => setMobileMenuOpen(false)}
+              className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
+            >
+              <Icon name={item.icon} />
+              <span className="nav-link-copy">
+                <strong>{item.label}</strong>
+                <small>{item.description}</small>
+              </span>
+            </NavLink>
+          ))}
         </nav>
 
-        <div className="side-glow" />
+        <div className="side-footer">
+          <div className="side-footer-icon" aria-hidden="true"><Icon name="check" size={15} /></div>
+          <div>
+            <strong>Workspace seguro</strong>
+            <span>Datos aislados por empresa</span>
+          </div>
+        </div>
+        <div className="side-glow" aria-hidden="true" />
       </aside>
 
       <div className="main-area">
         <header className="top-bar">
           <div className="top-left">
-            <div className="status-dot" />
-            <span className="top-title">{isClient ? 'Panel del cliente' : 'Ruta consultora'}</span>
+            <div
+              className={`status-dot ${companiesError ? 'status-error' : companiesPending ? 'status-pending' : 'status-online'}`}
+              title={companiesError ? 'Conexión con datos interrumpida' : companiesPending ? 'Sincronizando datos' : 'Datos conectados'}
+              aria-hidden="true"
+            />
+            <span className="top-title">{isClient ? 'Panel cliente' : 'Consultoría'}</span>
+            <span className="top-divider" aria-hidden="true">/</span>
+            <span className="top-current">{routeLabel}</span>
             <span className={`pill ${isClient ? 'pill-client' : 'pill-consultant'}`}>{isClient ? 'Cliente' : 'Consultoria'}</span>
             {companiesPending ? <span className="pill">Cargando empresas...</span> : null}
             {companiesError ? <span className="pill pill-danger">Error cargando empresas</span> : null}
           </div>
           <div className="nav-actions">
+            <button
+              ref={commandTriggerRef}
+              className="command-trigger"
+              type="button"
+              onClick={openCommand}
+              aria-label="Buscar una sección"
+              aria-haspopup="dialog"
+              aria-expanded={commandOpen}
+            >
+              <Icon name="search" size={17} />
+              <span>Buscar</span>
+              <kbd>Ctrl K</kbd>
+            </button>
             <CompanySelector companies={companies || []} />
             {!isClient ? (
               <Button variant="ghost" size="sm" onClick={() => navigate('/settings/company')} disabled={!companyId} title="Ajustes por empresa gestionada">
@@ -195,12 +309,104 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             </Button>
           </div>
         </header>
-        <main className="container">
+        <main id="workspace-main" className="container" tabIndex={-1}>
           <div key={location.key} className="route-stage">
             {children}
           </div>
         </main>
       </div>
+
+      {commandOpen ? (
+        <div
+          className="command-overlay"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) closeCommand()
+          }}
+        >
+          <section
+            className="command-palette"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Navegación rápida"
+            onKeyDown={(event) => {
+              if (event.key !== 'Tab') return
+              const focusable = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('input, button, [tabindex]:not([tabindex="-1"])'))
+                .filter((element) => !element.hasAttribute('disabled'))
+              const first = focusable[0]
+              const last = focusable[focusable.length - 1]
+              if (event.shiftKey && document.activeElement === first) {
+                event.preventDefault()
+                last?.focus()
+              } else if (!event.shiftKey && document.activeElement === last) {
+                event.preventDefault()
+                first?.focus()
+              }
+            }}
+          >
+            <div className="command-search">
+              <Icon name="search" size={21} />
+              <input
+                autoFocus
+                value={commandQuery}
+                onChange={(event) => setCommandQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'ArrowDown') {
+                    event.preventDefault()
+                    setActiveCommand((index) => Math.max(0, Math.min(index + 1, filteredCommandItems.length - 1)))
+                  } else if (event.key === 'ArrowUp') {
+                    event.preventDefault()
+                    setActiveCommand((index) => Math.max(index - 1, 0))
+                  } else if (event.key === 'Enter' && filteredCommandItems[activeCommand]) {
+                    event.preventDefault()
+                    runCommand(filteredCommandItems[activeCommand].to)
+                  }
+                }}
+                placeholder="Buscar sección o función..."
+                aria-label="Buscar sección o función"
+              />
+              <button className="command-close" type="button" onClick={closeCommand} aria-label="Cerrar búsqueda">
+                <kbd>Esc</kbd>
+                <Icon name="close" size={15} />
+              </button>
+            </div>
+            <div className="command-context">
+              <span>Navegación rápida</span>
+              <small>{filteredCommandItems.length} {filteredCommandItems.length === 1 ? 'resultado' : 'resultados'} · {isClient ? 'Espacio cliente' : 'Consultoría'}</small>
+            </div>
+            <div className="command-results" role="listbox">
+              {filteredCommandItems.length ? filteredCommandItems.map((item, index) => (
+                <button
+                  key={item.to}
+                  type="button"
+                  className={`command-result ${index === activeCommand ? 'is-active' : ''}`}
+                  onMouseEnter={() => setActiveCommand(index)}
+                  onClick={() => runCommand(item.to)}
+                  role="option"
+                  aria-selected={index === activeCommand}
+                >
+                  <span className="command-result-icon"><Icon name={item.icon} size={19} /></span>
+                  <span className="command-result-copy">
+                    <strong>{item.label}</strong>
+                    <small>{item.description}</small>
+                  </span>
+                  <span className="command-result-arrow" aria-hidden="true">→</span>
+                </button>
+              )) : (
+                <div className="command-empty">
+                  <Icon name="search" size={22} />
+                  <strong>Sin coincidencias</strong>
+                  <span>Prueba con otro término.</span>
+                </div>
+              )}
+            </div>
+            <footer className="command-footer">
+              <span><kbd>↑</kbd><kbd>↓</kbd> para moverte</span>
+              <span><kbd>Enter</kbd> para abrir</span>
+            </footer>
+          </section>
+        </div>
+      ) : null}
     </div>
   )
 }

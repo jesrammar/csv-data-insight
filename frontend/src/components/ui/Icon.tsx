@@ -1,4 +1,4 @@
-type IconName =
+export type IconName =
   | 'overview'
   | 'home'
   | 'dashboard'
@@ -19,12 +19,34 @@ type IconName =
   | 'check'
   | 'warning'
   | 'danger'
+  | 'search'
+  | 'menu'
+  | 'close'
 
 export default function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
   const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', xmlns: 'http://www.w3.org/2000/svg' as const }
   const stroke = { stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const }
 
   switch (name) {
+    case 'search':
+      return (
+        <svg {...common}>
+          <circle {...stroke} cx="11" cy="11" r="7" />
+          <path {...stroke} d="m20 20-4-4" />
+        </svg>
+      )
+    case 'menu':
+      return (
+        <svg {...common}>
+          <path {...stroke} d="M4 7h16M4 12h16M4 17h16" />
+        </svg>
+      )
+    case 'close':
+      return (
+        <svg {...common}>
+          <path {...stroke} d="m6 6 12 12M18 6 6 18" />
+        </svg>
+      )
     case 'overview':
       return (
         <svg {...common}>

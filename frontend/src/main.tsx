@@ -5,6 +5,7 @@ import { BrowserRouter } from 'react-router-dom'
 import App from './App'
 import ToastProvider from './components/ui/ToastProvider'
 import './styles.css'
+import './executive-theme.css'
 
 const queryClient = new QueryClient()
 

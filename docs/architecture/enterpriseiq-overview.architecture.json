@@ -1,0 +1,293 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "EnterpriseIQ · arquitectura implementada",
+    "quality_profile": "showcase",
+    "visual_preset": "signal-flow",
+    "repository": {
+      "url": "https://github.com/jesrammar/EnterpriseIQ.git",
+      "revision": "6da81611d7bf9bba426e567b41231045ca828c69"
+    },
+    "viewBox": [1120, 650]
+  },
+  "components": [
+    {
+      "id": "browser",
+      "type": "external",
+      "label": "Usuario",
+      "sublabel": "Navegador web",
+      "pos": [20, 230],
+      "size": [140, 86],
+      "sources": [
+        { "path": "frontend/src/main.tsx", "label": "Entrada SPA" },
+        { "path": "frontend/src/App.tsx", "label": "Rutas de interfaz" }
+      ]
+    },
+    {
+      "id": "frontend",
+      "type": "frontend",
+      "brand": "react",
+      "label": "Frontend",
+      "sublabel": "React 18 · TypeScript · Vite",
+      "tag": "React Router · TanStack Query",
+      "pos": [220, 218],
+      "size": [190, 112],
+      "sources": [
+        { "path": "frontend/package.json", "label": "Stack frontend" },
+        { "path": "frontend/src/api.ts", "label": "Cliente REST" }
+      ]
+    },
+    {
+      "id": "secure-api",
+      "type": "security",
+      "label": "API REST Spring Boot",
+      "sublabel": "Monolito modular · Spring Security · JWT",
+      "tag": "ADMIN · CONSULTOR · CLIENTE",
+      "pos": [490, 198],
+      "size": [240, 148],
+      "sources": [
+        { "path": "backend/src/main/java/com/asecon/enterpriseiq/config/SecurityConfig.java", "label": "Filtros y autorización" },
+        { "path": "backend/src/main/java/com/asecon/enterpriseiq/security/JwtAuthFilter.java", "label": "Validación JWT" },
+        { "path": "backend/src/main/java/com/asecon/enterpriseiq/model/Role.java", "label": "Roles" }
+      ]
+    },
+    {
+      "id": "ingestion",
+      "type": "backend",
+      "label": "Ingesta tabular",
+      "sublabel": "CSV · XLSX → CSV normalizado",
+      "tag": "valida · normaliza · persiste",
+      "pos": [850, 218],
+      "size": [210, 112],
+      "sources": [
+        { "path": "backend/src/main/java/com/asecon/enterpriseiq/service/TabularFileService.java", "label": "Conversión XLSX" },
+        { "path": "backend/src/main/java/com/asecon/enterpriseiq/service/ImportService.java", "label": "Imports de caja" },
+        { "path": "backend/src/main/java/com/asecon/enterpriseiq/service/UniversalCsvService.java", "label": "Ingesta Universal" }
+      ]
+    },
+    {
+      "id": "analytics",
+      "type": "backend",
+      "label": "Módulos de análisis",
+      "sublabel": "Caja · Universal · Presupuesto · Workforce",
+      "tag": "KPIs · vistas · insights · costes",
+      "pos": [490, 395],
+      "size": [250, 125],
+      "sources": [
+        { "path": "backend/src/main/java/com/asecon/enterpriseiq/service/DashboardMetricsService.java", "label": "Caja y KPIs" },
+        { "path": "backend/src/main/java/com/asecon/enterpriseiq/service/BudgetService.java", "label": "Presupuesto" },
+        { "path": "backend/src/main/java/com/asecon/enterpriseiq/service/WorkforceImportService.java", "label": "Workforce" }
+      ]
+    },
+    {
+      "id": "automation",
+      "type": "backend",
+      "label": "Automatizaciones",
+      "sublabel": "Spring @Scheduled · worker persistido",
+      "tag": "KPIs · cierres · snapshots · informes",
+      "pos": [220, 403],
+      "size": [210, 110],
+      "sources": [
+        { "path": "backend/src/main/java/com/asecon/enterpriseiq/service/AutomationEnqueuer.java", "label": "Planificación" },
+        { "path": "backend/src/main/java/com/asecon/enterpriseiq/service/AutomationWorker.java", "label": "Ejecución y reintentos" },
+        { "path": "backend/src/main/resources/application.yml", "label": "Frecuencias" }
+      ]
+    },
+    {
+      "id": "reports",
+      "type": "backend",
+      "label": "Informes",
+      "sublabel": "HTML · PDF",
+      "tag": "plantillas · versiones · storage",
+      "pos": [850, 403],
+      "size": [180, 110],
+      "sources": [
+        { "path": "backend/src/main/java/com/asecon/enterpriseiq/service/ReportService.java", "label": "Render y persistencia" },
+        { "path": "backend/src/main/java/com/asecon/enterpriseiq/model/ReportFormat.java", "label": "Formatos" },
+        { "path": "backend/src/main/resources/reports/monthly-report-template.html", "label": "Plantilla" }
+      ]
+    },
+    {
+      "id": "postgres",
+      "type": "database",
+      "brand": "postgresql",
+      "label": "PostgreSQL 16",
+      "sublabel": "Spring Data JPA",
+      "tag": "Flyway · migraciones versionadas",
+      "pos": [10, 410],
+      "size": [170, 110],
+      "sources": [
+        { "path": "docker-compose.yml", "label": "Servicio PostgreSQL" },
+        { "path": "backend/src/main/resources/application.yml", "label": "Datasource y Flyway" },
+        { "path": "backend/src/main/resources/db/migration/V1__init.sql", "label": "Esquema inicial" }
+      ]
+    },
+    {
+      "id": "storage",
+      "type": "database",
+      "label": "Storage persistente",
+      "sublabel": "Filesystem · backend-storage",
+      "tag": "imports · universal · reports · inbox",
+      "pos": [850, 540],
+      "size": [180, 100],
+      "sources": [
+        { "path": "docker-compose.prod.yml", "label": "Volumen backend-storage" },
+        { "path": "backend/src/main/resources/application.yml", "label": "Rutas y retención" },
+        { "path": "backend/src/main/java/com/asecon/enterpriseiq/service/UniversalStorageService.java", "label": "Escritura de ficheros" }
+      ]
+    },
+    {
+      "id": "prometheus",
+      "type": "external",
+      "brand": "prometheus",
+      "label": "Prometheus",
+      "sublabel": "Scrape de Spring Actuator :8082",
+      "tag": "métricas · reglas",
+      "pos": [490, 30],
+      "size": [220, 104],
+      "sources": [
+        { "path": "ops/prometheus/prometheus.yml", "label": "Scrape y Alertmanager" },
+        { "path": "ops/prometheus/alerts.yml", "label": "Reglas de alerta" },
+        { "path": "docker-compose.prod.yml", "label": "Servicio productivo" }
+      ]
+    },
+    {
+      "id": "grafana",
+      "type": "external",
+      "brand": "grafana",
+      "label": "Grafana",
+      "sublabel": "Dashboards provisionados",
+      "tag": "fuente Prometheus",
+      "pos": [220, 35],
+      "size": [190, 96],
+      "sources": [
+        { "path": "ops/grafana/provisioning/datasources/datasource.yml", "label": "Datasource" },
+        { "path": "ops/grafana/provisioning/dashboards/dashboards.yml", "label": "Provisioning" },
+        { "path": "docker-compose.prod.yml", "label": "Servicio productivo" }
+      ]
+    },
+    {
+      "id": "alertmanager",
+      "type": "external",
+      "label": "Alertmanager",
+      "sublabel": "Enrutado por severidad",
+      "tag": "email · inhibiciones",
+      "pos": [800, 35],
+      "size": [210, 96],
+      "sources": [
+        { "path": "ops/alertmanager/alertmanager.yml", "label": "Rutas y receptores" },
+        { "path": "docker-compose.prod.yml", "label": "Servicio productivo" }
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Aplicación EnterpriseIQ · frontend + backend",
+      "wraps": ["frontend", "secure-api", "ingestion", "analytics", "automation", "reports"],
+      "pad": 28
+    },
+    {
+      "kind": "region",
+      "label": "Observabilidad · docker-compose.prod.yml",
+      "wraps": ["prometheus", "grafana", "alertmanager"],
+      "pad": 24
+    }
+  ],
+  "connections": [
+    {
+      "id": "user-ui",
+      "from": "browser",
+      "to": "frontend",
+      "label": "UI web",
+      "variant": "emphasis",
+      "width": 2.4
+    },
+    {
+      "id": "frontend-api",
+      "from": "frontend",
+      "to": "secure-api",
+      "label": "REST /api · JWT",
+      "variant": "security",
+      "width": 2.4
+    },
+    {
+      "id": "api-ingestion",
+      "from": "secure-api",
+      "to": "ingestion",
+      "label": "multipart CSV/XLSX",
+      "variant": "emphasis",
+      "width": 2.4
+    },
+    {
+      "id": "ingestion-analysis",
+      "from": "ingestion",
+      "to": "analytics",
+      "label": "datos normalizados",
+      "variant": "emphasis",
+      "width": 2.4,
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "analysis-reports",
+      "from": "analytics",
+      "to": "reports",
+      "label": "KPIs e insights",
+      "width": 2.4,
+      "fromSide": "right",
+      "toSide": "left",
+      "labelAt": [795, 380]
+    },
+    {
+      "id": "api-postgres",
+      "from": "secure-api",
+      "to": "postgres",
+      "label": "JPA / SQL",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "automation-analysis",
+      "from": "automation",
+      "to": "analytics",
+      "label": "KPIs y cierres",
+      "variant": "dashed",
+      "labelDy": -88
+    },
+    {
+      "id": "reports-storage",
+      "from": "reports",
+      "to": "storage",
+      "label": "HTML/PDF persistidos",
+      "variant": "dashed",
+      "labelAt": [1000, 530]
+    },
+    {
+      "id": "prometheus-scrape",
+      "from": "prometheus",
+      "to": "secure-api",
+      "label": "GET /actuator/prometheus",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDx": -50
+    },
+    {
+      "id": "grafana-prometheus",
+      "from": "grafana",
+      "to": "prometheus",
+      "label": "consultas PromQL",
+      "labelAt": [450, 148]
+    },
+    {
+      "id": "prometheus-alertmanager",
+      "from": "prometheus",
+      "to": "alertmanager",
+      "label": "alertas por severidad",
+      "variant": "dashed",
+      "labelAt": [755, 148]
+    }
+  ]
+}

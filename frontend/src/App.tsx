@@ -34,10 +34,22 @@ const MonthlyClosePage = lazy(() => import('./pages/MonthlyClosePage'))
 
 function RouteFallback() {
   return (
-    <div className="card section">
-      <Skeleton className="sk-w-42p sk-h-14" />
-      <Skeleton className="sk-w-78p sk-h-12 mt-12" />
-      <Skeleton className="sk-w-66p sk-h-12 mt-10" />
+    <div className="route-fallback" role="status" aria-live="polite">
+      <div className="route-fallback-heading">
+        <Skeleton className="route-fallback-kicker" />
+        <Skeleton className="route-fallback-title" />
+        <Skeleton className="route-fallback-copy" />
+      </div>
+      <div className="route-fallback-grid" aria-hidden="true">
+        {[0, 1, 2].map((item) => (
+          <div key={item} className="route-fallback-card">
+            <Skeleton className="route-fallback-card-label" />
+            <Skeleton className="route-fallback-card-value" />
+            <Skeleton className="route-fallback-card-copy" />
+          </div>
+        ))}
+      </div>
+      <span className="sr-only">Cargando espacio de trabajo…</span>
     </div>
   )
 }
